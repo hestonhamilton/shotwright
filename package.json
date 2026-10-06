@@ -1,0 +1,68 @@
+{
+  "name": "shotwright",
+  "version": "0.1.0",
+  "description": "Playwright-powered UI walkthrough harness: scripted flows that produce screenshots, videos, and traces for human review, plus local gallery/compare tooling and CI artifact integration.",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "author": "Heston Hamilton",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hestonhamilton/shotwright.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./capture": {
+      "types": "./dist/capture.d.ts",
+      "default": "./dist/capture.js"
+    },
+    "./reporter": {
+      "types": "./dist/reporter.d.ts",
+      "default": "./dist/reporter.js"
+    }
+  },
+  "bin": {
+    "shotwright": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "pnpm run build && tsc --noEmit",
+    "lint": "eslint . && pnpm run build && publint && attw --pack . --profile esm-only",
+    "test": "vitest run test/unit",
+    "leak-gate": "scripts/ci/leak-gate.sh",
+    "audit-gate": "scripts/ci/audit-gate.sh",
+    "smoke": "pnpm run build && vitest run test/smoke",
+    "demo:build": "vite build --config demo/vite.config.ts",
+    "demo:shots": "pnpm run build && node dist/cli.js run --config demo/shots.config.ts"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.60 <2"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@changesets/cli": "^3.0.3",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "~1.63.0",
+    "@types/node": "^26.6.3",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "publint": "^0.3.24",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.0",
+    "vite": "~8.3.1",
+    "vitest": "^5.0.2"
+  }
+}

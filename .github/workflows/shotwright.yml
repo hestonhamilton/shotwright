@@ -1,0 +1,136 @@
+name: shotwright
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "Invocation mode: consumer uses the installed package bin; self builds this repo and runs dist/cli.js."
+        required: false
+        type: string
+        default: consumer
+      config-path:
+        description: "Path to the shotwright config file."
+        required: false
+        type: string
+        default: shots.config.ts
+
+permissions:
+  contents: read
+
+jobs:
+  shots:
+    name: Shotwright artifacts
+    runs-on: ubuntu-latest
+    steps:
+      # Nothing here pushes, so the token is not left in .git/config for
+      # pnpm install, the build and the capture to read.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # This proves install -> default-resolution -> capture on the default Playwright path for self mode only.
+      # Consumer mode installs browsers but makes no browser-clean claim because consumers may legitimately
+      # override the browser executable. shotwright-746.11 will make this claim direct rather than proxied.
+      - name: Install default Playwright Chromium
+        run: |
+          set -euo pipefail
+          DEFAULT_BROWSER_CACHE="$HOME/.cache/ms-playwright"
+          rm -rf "$DEFAULT_BROWSER_CACHE"
+          mkdir -p "$DEFAULT_BROWSER_CACHE"
+          pnpm exec playwright install --with-deps chromium
+      # Self mode is shotwright testing itself, so its steps — build, the
+      # browser-clean proof, the capture, the exact demo shot set — live in
+      # scripts/ci/shots.sh, which the Forgejo wrapper runs too (shotwright-746.14).
+      # Consumer mode stays inline: a consumer's checkout has no scripts/ci.
+      # The inputs arrive through env, never as an expression inside the
+      # script: they come from the calling workflow, and a caller passing
+      # something like github.head_ref as config-path would otherwise have its
+      # value spliced into the shell source before bash ever parses it.
+      - name: Run shotwright
+        env:
+          SHOTWRIGHT_MODE: ${{ inputs.mode }}
+          SHOTWRIGHT_CONFIG_PATH: ${{ inputs.config-path }}
+        run: |
+          set -euo pipefail
+          case "$SHOTWRIGHT_MODE" in
+            consumer)
+              pnpm exec shotwright run --config "$SHOTWRIGHT_CONFIG_PATH" -- --workers=1
+              ;;
+            self)
+              scripts/ci/shots.sh "$SHOTWRIGHT_CONFIG_PATH"
+              ;;
+            *)
+              echo "Unsupported shotwright mode: $SHOTWRIGHT_MODE" >&2
+              exit 1
+              ;;
+          esac
+      - name: Resolve published run directory
+        id: resolve
+        run: |
+          set -euo pipefail
+          latest="$(readlink shots-output/latest)"
+          run_dir="shots-output/$latest"
+          if [ ! -d "$run_dir" ]; then
+            echo "Published run directory missing: $run_dir" >&2
+            exit 1
+          fi
+          echo "run-dir=$run_dir" >> "$GITHUB_OUTPUT"
+          echo "run-id=$latest" >> "$GITHUB_OUTPUT"
+      - name: Assert published run artifact shape
+        env:
+          RUN_DIR: ${{ steps.resolve.outputs.run-dir }}
+        run: |
+          set -euo pipefail
+          run_dir="$RUN_DIR"
+          test -f "$run_dir/manifest.json"
+          test -f "$run_dir/gallery.html"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import fs from 'node:fs'
+          import path from 'node:path'
+
+          const runDir = process.env.RUN_DIR
+          const manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'))
+          assert(Array.isArray(manifest.shots), 'manifest.shots must be an array')
+          assert(manifest.shots.length > 0, 'shotwright artifact is empty: manifest.shots.length must be > 0')
+          for (const shot of manifest.shots) {
+            assert.equal(typeof shot.file, 'string', 'manifest shot file must be a non-empty string')
+            assert.notEqual(shot.file.trim(), '', 'manifest shot file must be a non-empty string')
+            const png = path.join(runDir, shot.file)
+            const bytes = fs.readFileSync(png)
+            assert(bytes.length > 8, `${shot.file} is empty`)
+            assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', `${shot.file} is not a PNG`)
+          }
+          for (const staging of ['.sidecar', '.pw', '.manifest.tmp']) {
+            assert(!fs.existsSync(path.join(runDir, staging)), `${staging} should not be published`)
+          }
+          assert(
+            !fs.readdirSync(runDir).some((entry) => entry.startsWith('.gallery.')),
+            '.gallery.* should not be published',
+          )
+          NODE
+      - name: Upload shotwright run
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shotwright-${{ github.workflow }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.resolve.outputs.run-dir }}
+          if-no-files-found: error
+      - name: Write job summary
+        if: always() && steps.upload.outputs.artifact-url != ''
+        env:
+          RUN_ID: ${{ steps.resolve.outputs.run-id }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          {
+            printf '## Shotwright artifacts\n\n'
+            printf -- '- Run: `%s`\n' "$RUN_ID"
+            printf -- '- Artifact: %s\n\n' "$ARTIFACT_URL"
+            printf 'Download and extract the artifact, then open `gallery.html` from the run directory.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,79 @@
+# Version PR — Changesets, versioning and changelog ONLY.
+#
+# This workflow deliberately has NO `publish` input. changesets/action publishes
+# when given one, and that would put the irreversible command on a path that
+# fires on merge. Publishing lives in release.yml behind workflow_dispatch with
+# dry-run defaulting to true (ADR 0012, docs/shotwright-746.18.2-plan.md step 4).
+#
+# `changeset publish` is also avoided for a second reason: it delegates to the
+# detected package manager, and pnpm's OIDC support is unsettled — the feature
+# request is closed, the docs do not cover trusted publishing, and OIDC
+# publishing regressed to a 404 under pnpm 11.0.8 (E9.R section 4.5).
+#
+# So the flow is: merge PRs carrying .changeset/*.md -> this opens or updates a
+# Version PR -> merging that bumps the version and writes CHANGELOG.md -> a human
+# dispatches release.yml. Two human gates before anything ships.
+
+name: Version
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: version
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Open or update the Version PR
+    runs-on: ubuntu-latest
+
+    steps:
+      # This job holds contents: write and pull-requests: write, so the token
+      # is NOT persisted into .git/config: pnpm install and the version script
+      # run arbitrary dependency code and must not find a write token there.
+      # Nothing below needs git-level credentials — see the note on the
+      # changesets step for why its push still works.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # changesets/action v2 (shotwright-746.18.20): inputs were renamed
+      # (version -> version-script, title -> pr-title, commit -> commit-message),
+      # the token is an input rather than the GITHUB_TOKEN env var, and the
+      # action refuses Changesets CLI 2, which is why this moved together with
+      # the @changesets/cli 3 upgrade. v2 pushes the Version PR's commit through
+      # the GitHub API by default; it creates tags only after a publish, and
+      # there is deliberately no publish-script here.
+      #
+      # That API push is why persist-credentials: false above is safe. With
+      # push-with-git-cli left at its default (false), the version flow's git
+      # work is all local (checkout/reset of the version branch, reading the
+      # working tree), which needs no credentials; the commit then goes up through the GitHub API using the
+      # github-token input, not through git and not through .git/config. Even
+      # with push-with-git-cli true, v2 installs command-scoped auth from
+      # github-token for the push and does not rely on checkout's persisted
+      # header. Read from the action's source at the pinned commit, not run.
+      - name: Create or update the Version PR
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          version-script: pnpm exec changeset version
+          pr-title: 'chore: version packages'
+          commit-message: 'chore: version packages'
+          github-token: ${{ secrets.GITHUB_TOKEN }}

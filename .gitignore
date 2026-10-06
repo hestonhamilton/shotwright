@@ -1,0 +1,49 @@
+# Dependencies / build
+node_modules/
+dist/
+
+# Harness output — always regenerated, never committed
+shots-output/
+screenshots/
+playwright-report/
+test-results/
+
+# Session-ephemeral
+HANDOFF.md
+
+# Secrets and local-only material
+.env
+.env.*
+local/
+
+# Editor noise
+*.swp
+.DS_Store
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+
+# Deliberate divergence from bd's defaults (owner decision 2026-08-01).
+# bd tracks .beads/interactions.jsonl by design — it is absent from
+# .beads/.gitignore, which is what makes it tracked. In this repo it is a
+# local audit log that every bd command rewrites, so it sat permanently dirty
+# and got excluded from commit after commit by hand. Untracked instead.
+#
+# Kept HERE rather than in .beads/.gitignore because bd owns that file and may
+# rewrite it on upgrade or `bd doctor --fix`. If a bd command re-adds this to
+# the index, that is the divergence being undone, not a new file appearing.
+.beads/interactions.jsonl
+
+# `bd backup init` (shotwright-2sr.3) writes the backup destination here as an
+# ABSOLUTE PATH INCLUDING THE OPERATOR USERNAME, and bd does not ignore it. This
+# repository is headed public, and the tarball leak gate would NOT catch it —
+# that gate scans the packed tarball, and .beads/ is not in `files`. So the
+# ignore has to live here. If a bd upgrade starts ignoring these itself, this
+# becomes redundant rather than wrong.
+.beads/dolt-backup.json
+.beads/dolt-backup-state.json
+# bd worktree
+worktrees/shotwright-746.18.4/

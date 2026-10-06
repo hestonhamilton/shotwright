@@ -1,0 +1,25 @@
+name: Shotwright
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shotwright:
+    # Pinned to the release tag that matches the shotwright npm version you
+    # installed. A branch ref such as `@main` would mean every push to
+    # shotwright's main immediately changes what your CI runs; a tag only moves
+    # if the upstream tag is moved, and shotwright protects its release tags.
+    # Bump this line when you upgrade the package.
+    #
+    # Pinning this line alone would not be enough on its own — pinning a
+    # reusable workflow fixes only the workflow file, not the actions it calls
+    # internally. Those are SHA-pinned inside shotwright itself, which is what
+    # makes pinning this reference meaningful.
+    uses: hestonhamilton/shotwright/.github/workflows/shotwright.yml@v0.1.0
+    with:
+      mode: consumer
+      config-path: shots.config.ts

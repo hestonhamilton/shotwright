@@ -1,0 +1,89 @@
+# Layers B and C of the tarball leak gate.
+#
+# Layer C is gitleaks' default credential ruleset, pulled in by [extend] below.
+# Layer B is the four shotwright-specific rules that follow — those are the
+# load-bearing part. No secret scanner looks for host paths; that is not what
+# they are for.
+#
+# The design constraint that shapes every rule here, from E9.R section 3.1:
+# a naive scan for the bare username or for 127.0.0.1 fires THREE TIMES on a
+# clean tree. A gate that is wrong three times per release gets weakened or
+# disabled by the third release. So each rule below is written to miss the three
+# known-legitimate hits by construction, and test/unit/leak-gate.test.ts asserts
+# that it does.
+#
+# Scope note: this config is for the PACKED TARBALL only (dist/, templates/,
+# README.md, package.json). It is deliberately NOT the config for a full-history
+# scan — E9.R section 3.6 records that the repo's synthetic private-IP test
+# fixtures in test/ should be flagged for a human there, while never reaching
+# the tarball at all.
+
+title = "shotwright tarball leak gate — layer B only"
+
+# DELIBERATELY NO [extend] useDefault. Measured 2026-08-01 with gitleaks 8.30.1:
+# merging the default ruleset in SILENTLY SUPPRESSES the /home/ alternative of
+# host-path-posix. Same file, same rule, same 53 bytes — fires without extend,
+# reports "no leaks found" with it. /Users/ and /root/ still fire; only /home/
+# is swallowed, by a global allowlist in gitleaks' default config.
+#
+# That is a false negative on the single most important pattern in this repo:
+# the standing project lesson is about /home/<user>/ paths arriving in
+# dispatched documents. A gate that cannot see them fails at its primary job
+# while reporting green.
+#
+# So layers B and C are run as TWO SEPARATE gitleaks invocations by
+# leak-gate.sh — this config for the shotwright rules, and the stock default
+# ruleset for generic credential shapes. Each is then independently verifiable,
+# and neither can quietly disarm the other.
+#
+# Do not add [extend] useDefault here to "simplify". It re-breaks the gate in a
+# way that shows up as a pass. scripts/ci/leak-gate-selftest.sh asserts against
+# exactly this regression.
+
+# ---------------------------------------------------------------------------
+# Layer B — shotwright-specific
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "host-path-posix"
+description = "Absolute POSIX home or root path — permanent disclosure of the build machine's layout"
+# Uses \s rather than a POSIX [:space:] class so the pattern is valid in BOTH
+# Go RE2 (what gitleaks runs) and JS RegExp (what test/unit/leak-gate.test.ts
+# can exercise without the binary installed). Same reason for \d and \b below.
+regex = '''(?:/home/[^/\s"'`]+/|/Users/[^/\s"'`]+/|/root/)'''
+tags = ["shotwright", "host-path"]
+
+[[rules]]
+id = "host-path-windows"
+description = "Absolute Windows user-profile path"
+regex = '''[Cc]:\\Users\\'''
+tags = ["shotwright", "host-path"]
+
+# Loopback is EXCLUDED on purpose and must stay excluded. 127.0.0.1 is the
+# gallery server's correct bind and appears in three dist/ files; flagging it
+# is the single fastest way to get this gate switched off.
+[[rules]]
+id = "private-ipv4"
+description = "RFC1918 private-range IPv4 address — real LAN topology, not loopback"
+regex = '''\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b'''
+tags = ["shotwright", "lan"]
+
+# The username is legitimately present twice in a correct tarball:
+#   package.json          -> "git+https://github.com/hestonhamilton/shotwright.git"
+#   templates/github/...  -> "uses: hestonhamilton/shotwright/.github/workflows/..."
+# The second is already missed by construction (no leading separator). The first
+# is NOT — a URL contains slashes — so it needs the explicit line-level carve-out
+# below. This was found by writing the rule, not by reading the plan: "preceded
+# by a path separator" is necessary but not sufficient to exclude a URL.
+[[rules]]
+id = "operator-username-in-path"
+description = "Operator username in filesystem-path position"
+regex = '''[/\\]hestonhamilton\b'''
+tags = ["shotwright", "host-path"]
+
+  # Singular [rules.allowlist] — a map, not an array of tables. gitleaks 8.30.1
+  # rejects [[rules.allowlist]] with "expected a map, got 'slice'".
+  [rules.allowlist]
+  description = "Repository URLs are required by npm for package linking (package.json repository.url, ADR 0007's uses: reference)"
+  regexTarget = "line"
+  regexes = ['''(?:github\.com|git@github\.com)[:/]hestonhamilton''']

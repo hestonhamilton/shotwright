@@ -1,0 +1,90 @@
+# The blocking verify lane on GitHub (shotwright-746.20).
+#
+# Until this existed, scripts/ci/verify.sh was referenced by exactly one wrapper
+# — .forgejo/workflows/ci.yml — and the forge is ADVISORY, with nothing gating
+# merges on it. So no blocking verification ran on a GitHub PR at all. "CI green
+# on PR #26" in earlier handoffs referred to the demo-shots lane only.
+#
+# WHAT A LANE RUNS IS DEFINED ONCE, in scripts/ci/verify.sh. This wrapper and the
+# Forgejo one differ only in setup, per CLAUDE.md — a step added to the lane
+# belongs in the script, not here. The two setups genuinely differ (action
+# versions, and Forgejo's artifact fork), which is exactly why the shared part
+# must not be duplicated into either wrapper.
+#
+# THE TRIGGER IS LOAD-BEARING. A required status check only appears in the merge
+# checklist when it reports against the PR's head commit. A workflow triggered on
+# bare `push` and not `pull_request` never reports, and the PR is then
+# PERMANENTLY BLOCKED rather than merely ungated. Both pre-existing wrappers
+# trigger on bare push, so this file must land BEFORE any required-status-check
+# rule is enabled — enabling one first wedges every open PR.
+#
+# Check-name matching for such a rule is case- and string-exact: a ruleset
+# requiring `verify` is never satisfied by a check named `Verify`. The job name
+# below is set explicitly, in lowercase, so the string a future ruleset needs is
+# stable and obvious rather than derived from the workflow name.
+name: Verify
+
+on:
+  pull_request:
+  # Feature branches are covered via pull_request rather than push, so ordinary
+  # branch pushes do not burn a duplicate run. main is covered directly, because
+  # a PR merge advances main server-side without any pull_request event.
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A superseded run tells you about code nobody is proposing any more. Grouped by
+# ref, so pushing to a PR cancels that PR's previous run and nothing else.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # Lowercase and explicit — see the check-name note above.
+    name: verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token is not left in .git/config for
+          # pnpm install and the verify lane to read.
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+          # Deliberately NO registry-url. It exports NODE_AUTH_TOKEN, which
+          # breaks OIDC and surfaces as a bare 404 — the costliest defect the
+          # E9 dry-run rehearsal found (shotwright-746.18.3). Nothing here
+          # publishes, so there is no reason to set it.
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The unit suite is not browser-free: test/unit/gallery-browser.test.ts
+      # launches headless Chromium against a generated gallery. Skipping this
+      # fails that file, and it stayed invisible until a CI provider first ran
+      # `pnpm test`.
+      - name: Install Chromium for the browser-backed unit tests
+        run: pnpm exec playwright install --with-deps chromium
+
+      # verify.sh fails closed if either reviewed security tool is absent or has
+      # the wrong identity. Install both exact binaries before the shared lane.
+      - name: Install pinned security tools
+        run: |
+          scripts/ci/install-gitleaks.sh "$HOME/.local/bin"
+          scripts/ci/install-osv-scanner.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run verify lane
+        run: scripts/ci/verify.sh

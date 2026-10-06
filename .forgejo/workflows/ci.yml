@@ -1,0 +1,107 @@
+# Forgejo CI — the wrapper for the standby second-opinion lane (ADR 0008)
+# (shotwright-746.13/.14). GitHub stays canonical for code, PRs and review; this
+# only runs the lanes. Both providers call the same scripts/ci/*.sh, so what a
+# lane runs is defined once even though the wrappers differ.
+#
+# Forgejo ignores .github/workflows entirely once this directory exists, which is
+# also what keeps .github/workflows/shotwright.yml — a `workflow_call` reusable
+# workflow with no Forgejo equivalent — from being attempted here.
+#
+# PRs live on GitHub, so no pull_request event ever fires here: the trigger is a
+# bare push on every branch.
+on:
+  push:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          # Nothing here pushes, so the token is not left in .git/config for
+          # pnpm install and the lane to read.
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The unit suite is not browser-free: test/unit/gallery-browser.test.ts
+      # launches headless Chromium against a generated gallery. Skipping the
+      # download here fails that file — found on the first forge run, and
+      # invisible until now because no CI provider had ever run `pnpm test`.
+      - name: Install Chromium for the browser-backed unit tests
+        run: pnpm exec playwright install --with-deps chromium
+
+      # verify.sh fails closed if either reviewed security tool is absent or has
+      # the wrong identity. Install both exact binaries before the shared lane.
+      - name: Install pinned security tools
+        run: |
+          scripts/ci/install-gitleaks.sh "$HOME/.local/bin"
+          scripts/ci/install-osv-scanner.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run verify lane
+        run: scripts/ci/verify.sh
+
+  shots:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          # Nothing here pushes, so the token is not left in .git/config for
+          # pnpm install and the lane to read.
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Wiping the cache first is what makes the browser-path proof in
+      # scripts/ci/shots.sh mean something: chromium must resolve to the default
+      # Playwright location, not to whatever the runner image happened to ship.
+      - name: Install default Playwright Chromium
+        run: |
+          set -euo pipefail
+          DEFAULT_BROWSER_CACHE="$HOME/.cache/ms-playwright"
+          rm -rf "$DEFAULT_BROWSER_CACHE"
+          mkdir -p "$DEFAULT_BROWSER_CACHE"
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Run shots lane
+        id: shots
+        run: scripts/ci/shots.sh demo/shots.config.ts
+
+      # actions/upload-artifact@v4+ refuses to run here — @actions/artifact v2
+      # treats any non-github.com server as GHES and hard-fails with
+      # GHESNotSupportedError. Forgejo maintains a fork whose only change is
+      # disabling that check; it speaks the artifact API this instance serves.
+      # Measured on run #1, not assumed: the sibling repo whose runbook reports
+      # upload-artifact "working" guards the step with `if: failure()`, so a
+      # green run had never exercised it.
+      - name: Upload shotwright run
+        uses: forgejo/upload-artifact@v4
+        with:
+          name: shotwright-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.shots.outputs.run-dir }}
+          if-no-files-found: error

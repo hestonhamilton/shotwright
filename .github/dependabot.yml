@@ -1,0 +1,121 @@
+# Keeps the SHA-pinned actions in .github/workflows/ current (shotwright-746.22).
+#
+# THIS FILE IS NOT OPTIONAL COMPANION TOOLING — it is what makes SHA pinning a
+# security control rather than a freeze. A pinned SHA never updates itself, so
+# without an updater the workflows would sit on whatever was current the day
+# they were pinned, and drift from "immutable" to "immutably vulnerable". SHA
+# pinning and automated bumps are one decision, not two.
+#
+# WHY SHAs AT ALL: a version tag is mutable. A maintainer can move `v6` to new
+# code without the name changing, so pinning to `@v6` looks like a fix and
+# changes almost nothing. Only a full commit SHA is immutable. GitHub's own
+# guidance calls SHA pinning the only immutable release method, and the trailing
+# `# v6.1.0` comment is the standard idiom — it has no effect on execution
+# (Actions resolves the SHA) and exists for humans, Dependabot and scanners.
+#
+# One pin was worse than a mutable tag: `changesets/action@v1` resolved to
+# refs/heads/v1 — a BRANCH — in .github/workflows/version.yml, which runs with
+# `contents: write`, `pull-requests: write` and the GITHUB_TOKEN. Same
+# mutability class as `@main`, in the workflow that opens release PRs.
+#
+# NOT COVERED HERE: .forgejo/workflows/. Dependabot does not scan it, so pinning
+# those to SHAs would freeze them with nothing to thaw them — strictly worse
+# than the mutable tags they carry today. That lane is advisory (ADR 0008),
+# publishes nothing, and is tracked separately.
+#
+# THE NPM ECOSYSTEM IS NOW COVERED, added by shotwright-746.23 (ADR 0019) —
+# which is where this file said that decision belonged. Dependabot is the
+# remediation half of that decision; the blocking half is scripts/ci/audit-gate.sh
+# in the verify lane. They are different jobs: Dependabot proposes upgrades, the
+# gate refuses merges. Neither does the other's job well, which is why both exist.
+#
+# WHAT WORKS ON A PRIVATE REPO AND WHAT DOES NOT — measured, because the first
+# draft of this comment got it wrong in the safe-sounding direction:
+#
+#   VERSION UPDATES (this file) RUN ALREADY. Proof: dependabot[bot] opened
+#   "build(deps): bump the github-actions group with 2 updates" against this
+#   private repo on 2026-08-02, from the github-actions block below. So the npm
+#   block is live the moment it merges, not dormant until the flip.
+#
+#   ALERTS and SECURITY UPDATES — the alert-driven PRs that react to a published
+#   advisory — need a public repo or GitHub Advanced Security. Those are what the
+#   flip switches on.
+#
+# The distinction matters for what this file is relied on to do. Routine version
+# bumps are what actually keep a transitive off a vulnerable release most of the
+# time, and those are working now. The gap until the flip is reactive, not
+# routine: nothing here will hurry when an advisory lands mid-week. That is why
+# scripts/ci/audit-gate.sh exists rather than trusting Dependabot alone, and it
+# is why the gate is the blocking half.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    # For github-actions this means .github/workflows/, not a literal path.
+    directory: /
+    schedule:
+      interval: weekly
+
+    # Minimum release age. A compromised action release is typically caught
+    # within days of publication, so waiting before adopting a routine bump
+    # converts "we ran it first" into "someone else ran it first".
+    #
+    # This deliberately does NOT delay security updates — cooldown applies only
+    # to routine version updates, so CVE patches still flow immediately. That
+    # asymmetry is the entire reason it is safe to set.
+    cooldown:
+      default-days: 7
+
+    # One PR per batch rather than one per action. Reviewing five SHA bumps
+    # together is a review; reviewing five separate PRs is a rubber stamp.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Added by shotwright-746.23 / ADR 0019.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+    # Same reasoning as the github-actions cooldown above, and it matters more
+    # here: npm is where the install-script supply-chain attacks actually land.
+    # Routine bumps wait; security updates are exempt from cooldown and still
+    # flow immediately, which is what makes this safe rather than a delay on
+    # patching. E9.R section 5.3 flagged a minimumReleaseAge cooldown for
+    # shotwright's own dependencies as a cheap supply-chain win — this is it.
+    cooldown:
+      default-days: 7
+
+    # The commit hook enforces `<bead-id>: <subject>`. Dependabot commits
+    # server-side, so the local hook never fires on it — the same exemption the
+    # changesets Version PR already has (release runbook section 2.2). Recorded
+    # rather than discovered later in the log.
+    commit-message:
+      prefix: deps
+      prefix-development: deps-dev
+
+    # Grouped for the same reason as the actions above: reviewing a batch is a
+    # review, reviewing five separate PRs is a rubber stamp. Everything here is
+    # a devDependency today — shotwright ships zero runtime dependencies, and
+    # the local half of the vulnerability gate enforces that — so this group is
+    # in practice the whole tree. It is keyed on dependency-type rather than "*"
+    # so that if a runtime dependency ever IS added, its PR arrives on its own
+    # instead of buried in a batch.
+    groups:
+      dev-dependencies:
+        dependency-type: development
+
+    # typescript 7.x is rejected outright by typescript-eslint ("does not
+    # support TS 7.0"; support for >=7.1 is tracked at
+    # typescript-eslint/typescript-eslint#10940). Because the group bundles
+    # every devDependency into one PR, that single bump turned the whole batch
+    # red (PR #51, 2026-09-05) and nothing in it could land. 6.x is the bridge
+    # release typescript-eslint does support, so only 7 and later are held
+    # back. Remove this once typescript-eslint supports the TS 7 API
+    # (shotwright-746.18.17).
+    ignore:
+      - dependency-name: typescript
+        versions: [">=7.0.0"]

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shotwright demo</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/demo.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="wordmark" href="/" aria-label="Shotwright home">
+      <span class="wordmark-mark" aria-hidden="true">S</span>
+      <span>shotwright</span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a aria-current="page" href="/">Demo</a>
+      <a href="/about.html">About</a>
+    </nav>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">
+      Use dark theme
+    </button>
+  </header>
+
+  <main class="home-shell">
+    <section class="hero" aria-labelledby="hero-title">
+      <p class="eyebrow">A small interface. Five useful states.</p>
+      <h1 id="hero-title">Make every review <span>easy to see.</span></h1>
+      <p class="hero-copy">
+        Shotwright turns intentional browser walkthroughs into a tidy set of
+        screenshots, videos, and traces for human review.
+      </p>
+      <ul class="feature-list" aria-label="Demo highlights">
+        <li>Semantic browser interactions</li>
+        <li>Deterministic visual states</li>
+        <li>Review artifacts with context</li>
+      </ul>
+    </section>
+
+    <section class="review-card" aria-labelledby="request-title">
+      <div class="card-heading">
+        <p class="eyebrow">Try the walkthrough</p>
+        <h2 id="request-title">Request a review</h2>
+        <p>Describe the project and the UI state you want a teammate to inspect.</p>
+      </div>
+
+      <form class="review-form">
+        <div class="field">
+          <label for="project-name">Project name</label>
+          <input
+            id="project-name"
+            name="project-name"
+            type="text"
+            placeholder="e.g. Release dashboard"
+          >
+        </div>
+
+        <div class="field">
+          <label for="review-focus">Review focus</label>
+          <textarea
+            id="review-focus"
+            name="review-focus"
+            rows="5"
+            placeholder="What should reviewers pay attention to?"
+          ></textarea>
+        </div>
+
+        <button class="primary-button" id="review-summary" type="button">
+          Review summary
+        </button>
+      </form>
+    </section>
+  </main>
+
+  <dialog class="summary-dialog" aria-labelledby="review-summary-title">
+    <div class="dialog-accent" aria-hidden="true"></div>
+    <div class="dialog-content">
+      <p class="eyebrow">Ready for review</p>
+      <h2 id="review-summary-title">Review summary</h2>
+      <dl class="summary-list">
+        <div>
+          <dt>Project name</dt>
+          <dd id="summary-project"></dd>
+        </div>
+        <div>
+          <dt>Review focus</dt>
+          <dd id="summary-focus"></dd>
+        </div>
+      </dl>
+      <button class="secondary-button" id="close-dialog" type="button">Close</button>
+    </div>
+  </dialog>
+</body>
+</html>

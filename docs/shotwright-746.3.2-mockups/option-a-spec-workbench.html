@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Shotwright gallery mockup A — Spec workbench</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f5f7;
+      --panel: #ffffff;
+      --panel-2: #eef1f5;
+      --text: #18202b;
+      --muted: #5d6876;
+      --line: #cbd2dc;
+      --accent: #2855c7;
+      --accent-soft: #e7edff;
+      --good: #1d704d;
+      --warn: #9a4b09;
+      --bad: #ae2535;
+      --shadow: 0 10px 28px rgb(28 37 53 / 10%);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #11151b;
+        --panel: #1a2029;
+        --panel-2: #222a35;
+        --text: #edf1f7;
+        --muted: #aab4c2;
+        --line: #3b4655;
+        --accent: #91adff;
+        --accent-soft: #25345f;
+        --good: #78d9ae;
+        --warn: #ffc080;
+        --bad: #ff9aa8;
+        --shadow: 0 12px 32px rgb(0 0 0 / 28%);
+      }
+    }
+    html[data-theme="light"] {
+      --bg: #f4f5f7; --panel: #ffffff; --panel-2: #eef1f5; --text: #18202b;
+      --muted: #5d6876; --line: #cbd2dc; --accent: #2855c7; --accent-soft: #e7edff;
+      --good: #1d704d; --warn: #9a4b09; --bad: #ae2535;
+    }
+    html[data-theme="dark"] {
+      --bg: #11151b; --panel: #1a2029; --panel-2: #222a35; --text: #edf1f7;
+      --muted: #aab4c2; --line: #3b4655; --accent: #91adff; --accent-soft: #25345f;
+      --good: #78d9ae; --warn: #ffc080; --bad: #ff9aa8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, a, summary { font: inherit; }
+    a { color: var(--accent); }
+    :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .shell { width: min(1480px, 100%); margin: 0 auto; padding: 20px; }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .eyebrow { margin: 0 0 5px; color: var(--accent); font-weight: 750; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }
+    h1 { margin: 0; font-size: clamp(22px, 4vw, 34px); line-height: 1.1; overflow-wrap: anywhere; }
+    .status { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+    .badge, .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 13px;
+    }
+    .badge.good { color: var(--good); border-color: currentColor; }
+    .runfacts {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(110px, 1fr));
+      gap: 10px;
+      margin: 18px 0 0;
+    }
+    .runfacts div { padding: 10px; border-left: 2px solid var(--line); }
+    dt { color: var(--muted); font-size: 12px; }
+    dd { margin: 2px 0 0; font-weight: 650; }
+    .theme-switch { display: flex; gap: 4px; align-self: start; padding: 4px; border: 1px solid var(--line); border-radius: 10px; }
+    .theme-switch button {
+      min-height: 38px;
+      border: 0;
+      border-radius: 7px;
+      padding: 0 10px;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .theme-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+    .controls {
+      position: sticky;
+      z-index: 5;
+      top: 0;
+      display: grid;
+      grid-template-columns: minmax(230px, 1fr) auto;
+      gap: 12px;
+      margin: 16px 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      backdrop-filter: blur(10px);
+    }
+    .search { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 9px; padding: 0 13px; background: var(--panel); color: var(--text); }
+    .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+    .chip { cursor: pointer; min-height: 44px; }
+    .chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+    .keyboard { color: var(--muted); font-size: 12px; grid-column: 1 / -1; }
+    kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; background: var(--panel-2); color: var(--text); }
+    .spec {
+      margin: 18px 0 28px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      overflow: clip;
+    }
+    .spec-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .spec-head h2 { margin: 0; font-size: 20px; }
+    .spec-head p { margin: 2px 0 0; color: var(--muted); }
+    .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 16px; }
+    .card { min-width: 0; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); overflow: hidden; }
+    .card.wide { grid-column: 1 / -1; }
+    .media {
+      display: grid;
+      place-items: center;
+      min-height: 230px;
+      padding: 18px;
+      background:
+        linear-gradient(45deg, var(--panel-2) 25%, transparent 25%) 0 0/18px 18px,
+        linear-gradient(-45deg, var(--panel-2) 25%, transparent 25%) 0 0/18px 18px,
+        var(--bg);
+    }
+    .media svg { display: block; max-width: 100%; max-height: 480px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); }
+    .card-body { padding: 14px; }
+    .card-title { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+    .card-title h3 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+    .kind { color: var(--muted); white-space: nowrap; font-size: 12px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+    .meta span { padding: 4px 7px; border-radius: 6px; background: var(--panel-2); font-size: 12px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .action {
+      display: inline-flex;
+      align-items: center;
+      min-height: 40px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 650;
+    }
+    details { margin-top: 10px; }
+    summary { min-height: 38px; padding: 8px 0; cursor: pointer; color: var(--accent); font-weight: 650; }
+    .detailgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 0; }
+    .detailgrid div { padding: 8px; background: var(--panel-2); border-radius: 7px; overflow-wrap: anywhere; }
+    .artifacts {
+      margin: 0 16px 16px;
+      padding: 14px;
+      border: 1px dashed var(--line);
+      border-radius: 11px;
+      background: var(--panel-2);
+    }
+    .artifacts h3 { margin: 0 0 5px; font-size: 15px; }
+    .artifacts p { margin: 4px 0 10px; color: var(--muted); }
+    .artifact-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .artifact-preview { padding: 9px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--text); }
+    .artifact-preview.present { border-left: 4px solid var(--good); }
+    .artifact-preview.absent { color: var(--muted); }
+    .state-lab { margin: 28px 0; }
+    .state-lab h2 { margin-bottom: 5px; }
+    .state-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .state {
+      min-height: 150px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+    }
+    .state h3 { margin-top: 0; }
+    .broken { border-left: 5px solid var(--bad); }
+    .broken code { color: var(--bad); overflow-wrap: anywhere; }
+    footer { margin: 26px 0 8px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+    .hidden { display: none !important; }
+    @media (max-width: 760px) {
+      .shell { padding: 10px; }
+      .topbar { grid-template-columns: 1fr; padding: 16px; }
+      .runfacts { grid-template-columns: repeat(2, 1fr); }
+      .theme-switch { width: 100%; }
+      .theme-switch button { flex: 1; min-height: 44px; }
+      .controls { grid-template-columns: 1fr; }
+      .chips { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+      .chip { flex: 0 0 auto; }
+      .cards, .state-grid { grid-template-columns: 1fr; padding: 10px; }
+      .card.wide { grid-column: auto; }
+      .spec-head { align-items: start; }
+      .media { min-height: 160px; padding: 10px; }
+      .media svg { max-height: 420px; }
+      .detailgrid { grid-template-columns: 1fr 1fr; }
+      .actions .action { flex: 1 1 130px; justify-content: center; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Gallery mockup A · spec workbench</p>
+        <h1>2026-07-29T21-06-27_5c1f</h1>
+        <div class="status">
+          <span class="badge good">Latest fully passed run</span>
+          <span class="badge">5 shots</span>
+          <span class="badge">2 specs</span>
+          <span class="badge">No video or trace captured</span>
+        </div>
+        <dl class="runfacts">
+          <div><dt>Started</dt><dd>2026-07-29 21:06:27.382Z</dd></div>
+          <div><dt>Finished</dt><dd>2026-07-29 21:06:28.395Z</dd></div>
+          <div><dt>Elapsed</dt><dd>1.013 s</dd></div>
+          <div><dt>Versions</dt><dd>shotwright 0.1.0 · Playwright 1.62.0</dd></div>
+          <div><dt>Only filter</dt><dd>None</dd></div>
+          <div><dt>Video flag</dt><dd>Off</dd></div>
+          <div><dt>Trace flag</dt><dd>Off</dd></div>
+          <div><dt>Manifest</dt><dd>v1 · 2,155 bytes</dd></div>
+        </dl>
+      </div>
+      <div class="theme-switch" role="group" aria-label="Theme preference">
+        <button type="button" data-theme-choice="auto" aria-pressed="true">Auto</button>
+        <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
+    </header>
+
+    <section class="controls" aria-label="Gallery filters">
+      <label><span class="eyebrow">Find a shot</span><input id="search" class="search" type="search" placeholder="Name or spec, press / to focus"></label>
+      <div class="chips" aria-label="Viewport filters">
+        <button class="chip" type="button" data-filter="all" aria-pressed="true">All · 5</button>
+        <button class="chip" type="button" data-filter="desktop" aria-pressed="false">1440×960 @2 · 4</button>
+        <button class="chip" type="button" data-filter="mobile" aria-pressed="false">390×844 @2 · 1</button>
+        <button class="chip" type="button" data-filter="cropped" aria-pressed="false">Not full page · 1</button>
+      </div>
+      <div class="keyboard"><kbd>/</kbd> search · <kbd>Esc</kbd> clear · <kbd>Tab</kbd> actions. Primary actions always have visible focus and at least 40 px height.</div>
+    </section>
+
+    <section class="spec" data-spec="about.shots.ts">
+      <header class="spec-head">
+        <div><h2>about.shots.ts</h2><p>2 captures · manifest order</p></div>
+        <a class="action" href="#about-artifacts">Group artifacts</a>
+      </header>
+      <div class="cards">
+        <article class="card" data-search="about-desktop about.shots.ts" data-tags="desktop">
+          <div class="media">
+            <svg role="img" aria-label="Placeholder for about-desktop, 2880 by 2076 intrinsic pixels" viewBox="0 0 2880 2076" width="2880" height="2076">
+              <rect width="2880" height="2076" fill="#dce5f8"/><rect x="90" y="90" width="2700" height="180" rx="30" fill="#2855c7"/>
+              <rect x="150" y="390" width="1150" height="1300" rx="35" fill="#fff"/><rect x="1430" y="390" width="1300" height="700" rx="35" fill="#b8c9ee"/>
+              <text x="1440" y="1860" text-anchor="middle" font-size="112" font-family="system-ui" fill="#18202b">about-desktop · 2880×2076 PNG</text>
+            </svg>
+          </div>
+          <div class="card-body">
+            <div class="card-title"><h3>about-desktop</h3><span class="kind">full page</span></div>
+            <div class="meta"><span>1440×960 @2</span><span>223 ms</span><span>548,760 B derived</span></div>
+            <div class="actions"><a class="action" href="#inspect-about-desktop">Inspect 1:1</a><a class="action" href="#download-about-desktop">Download original</a></div>
+            <details><summary>All metadata</summary><dl class="detailgrid"><div><dt>Captured</dt><dd>21:06:27.731Z</dd></div><div><dt>Intrinsic</dt><dd>2880×2076 derived</dd></div><div><dt>File</dt><dd>shots/about.shots.ts/about-desktop.png</dd></div></dl></details>
+          </div>
+        </article>
+        <article class="card" data-search="mobile-layout about.shots.ts" data-tags="mobile">
+          <div class="media">
+            <svg role="img" aria-label="Placeholder for mobile-layout, 780 by 3228 intrinsic pixels" viewBox="0 0 780 3228" width="780" height="3228">
+              <rect width="780" height="3228" fill="#e3ecff"/><rect x="45" y="45" width="690" height="170" rx="35" fill="#2855c7"/>
+              <rect x="60" y="300" width="660" height="670" rx="28" fill="#fff"/><rect x="60" y="1030" width="660" height="900" rx="28" fill="#b8c9ee"/>
+              <rect x="60" y="1990" width="660" height="930" rx="28" fill="#fff"/><text x="390" y="3110" text-anchor="middle" font-size="48" font-family="system-ui" fill="#18202b">mobile-layout · 780×3228 PNG</text>
+            </svg>
+          </div>
+          <div class="card-body">
+            <div class="card-title"><h3>mobile-layout</h3><span class="kind">full page</span></div>
+            <div class="meta"><span>390×844 @2</span><span>153 ms</span><span>493,399 B derived</span></div>
+            <div class="actions"><a class="action" href="#inspect-mobile-layout">Inspect 1:1</a><a class="action" href="#download-mobile-layout">Download original</a></div>
+            <details><summary>All metadata</summary><dl class="detailgrid"><div><dt>Captured</dt><dd>21:06:27.956Z</dd></div><div><dt>Intrinsic</dt><dd>780×3228 derived</dd></div><div><dt>File</dt><dd>shots/about.shots.ts/mobile-layout.png</dd></div></dl></details>
+          </div>
+        </article>
+      </div>
+      <aside class="artifacts" id="about-artifacts">
+        <h3>Deduplicated artifact set</h3>
+        <p>Absent state from the real corpus. Identical per-shot paths collapse here once.</p>
+        <div class="artifact-row"><span class="artifact-preview absent">Video not captured</span><span class="artifact-preview absent">Trace not captured</span></div>
+      </aside>
+    </section>
+
+    <section class="spec" data-spec="home.shots.ts">
+      <header class="spec-head">
+        <div><h2>home.shots.ts</h2><p>3 captures · manifest order</p></div>
+        <a class="action" href="#home-artifacts">Group artifacts</a>
+      </header>
+      <div class="cards">
+        <article class="card" data-search="form-filled home.shots.ts" data-tags="desktop">
+          <div class="media"><svg role="img" aria-label="Placeholder for form-filled, 2880 by 1920 intrinsic pixels" viewBox="0 0 2880 1920" width="2880" height="1920"><rect width="2880" height="1920" fill="#e8edf7"/><rect x="100" y="90" width="2680" height="170" rx="28" fill="#2855c7"/><rect x="180" y="390" width="2520" height="1150" rx="45" fill="#fff"/><rect x="360" y="600" width="2160" height="170" rx="22" fill="#ccd8ee"/><rect x="360" y="850" width="2160" height="170" rx="22" fill="#ccd8ee"/><text x="1440" y="1740" text-anchor="middle" font-size="104" font-family="system-ui" fill="#18202b">form-filled · 2880×1920 PNG</text></svg></div>
+          <div class="card-body"><div class="card-title"><h3>form-filled</h3><span class="kind">full page</span></div><div class="meta"><span>1440×960 @2</span><span>187 ms</span><span>516,562 B derived</span></div><div class="actions"><a class="action" href="#inspect-form-filled">Inspect 1:1</a><a class="action" href="#download-form-filled">Download original</a></div><details><summary>All metadata</summary><dl class="detailgrid"><div><dt>Captured</dt><dd>21:06:27.762Z</dd></div><div><dt>Intrinsic</dt><dd>2880×1920 derived</dd></div><div><dt>File</dt><dd>shots/home.shots.ts/form-filled.png</dd></div></dl></details></div>
+        </article>
+        <article class="card" data-search="modal-open home.shots.ts" data-tags="desktop cropped">
+          <div class="media"><svg role="img" aria-label="Placeholder for modal-open, 1040 by 816 intrinsic pixels" viewBox="0 0 1040 816" width="1040" height="816"><rect width="1040" height="816" fill="#283248"/><rect x="90" y="90" width="860" height="636" rx="34" fill="#fff"/><rect x="170" y="220" width="700" height="70" rx="15" fill="#2855c7"/><rect x="170" y="355" width="700" height="180" rx="15" fill="#dce5f8"/><text x="520" y="670" text-anchor="middle" font-size="42" font-family="system-ui" fill="#18202b">modal-open · 1040×816 PNG</text></svg></div>
+          <div class="card-body"><div class="card-title"><h3>modal-open</h3><span class="kind">not full page</span></div><div class="meta"><span>1440×960 @2</span><span>89 ms</span><span>46,513 B derived</span></div><div class="actions"><a class="action" href="#inspect-modal-open">Inspect 1:1</a><a class="action" href="#download-modal-open">Download original</a></div><details><summary>All metadata</summary><dl class="detailgrid"><div><dt>Captured</dt><dd>21:06:27.983Z</dd></div><div><dt>Intrinsic</dt><dd>1040×816 derived</dd></div><div><dt>Capture kind</dt><dd>Unknown: locator or clip</dd></div></dl></details></div>
+        </article>
+        <article class="card wide" data-search="theme-dark home.shots.ts" data-tags="desktop">
+          <div class="media"><svg role="img" aria-label="Placeholder for theme-dark, 2880 by 1920 intrinsic pixels" viewBox="0 0 2880 1920" width="2880" height="1920"><rect width="2880" height="1920" fill="#111827"/><rect x="100" y="90" width="2680" height="170" rx="28" fill="#91adff"/><rect x="180" y="390" width="2520" height="1150" rx="45" fill="#202b3d"/><rect x="360" y="600" width="2160" height="170" rx="22" fill="#33435e"/><rect x="360" y="850" width="2160" height="170" rx="22" fill="#33435e"/><text x="1440" y="1740" text-anchor="middle" font-size="104" font-family="system-ui" fill="#edf1f7">theme-dark · 2880×1920 PNG</text></svg></div>
+          <div class="card-body"><div class="card-title"><h3>theme-dark</h3><span class="kind">full page</span></div><div class="meta"><span>1440×960 @2</span><span>201 ms</span><span>573,162 B derived</span></div><div class="actions"><a class="action" href="#inspect-theme-dark">Inspect 1:1</a><a class="action" href="#download-theme-dark">Download original</a></div><details><summary>All metadata</summary><dl class="detailgrid"><div><dt>Captured</dt><dd>21:06:28.143Z</dd></div><div><dt>Intrinsic</dt><dd>2880×1920 derived</dd></div><div><dt>File</dt><dd>shots/home.shots.ts/theme-dark.png</dd></div></dl></details></div>
+        </article>
+      </div>
+      <aside class="artifacts" id="home-artifacts">
+        <h3>Deduplicated artifact set · present-state preview</h3>
+        <p>The real run is all-null. This hypothetical linked state shows one placement for a path repeated across three shots; sibling files require the run directory.</p>
+        <div class="artifact-row">
+          <span class="artifact-preview present">Video available · inline player opens here</span>
+          <a class="action" href="video/example-test.webm">Download sibling WebM</a>
+          <a class="action" href="trace/example-test.zip">Download sibling trace ZIP</a>
+        </div>
+      </aside>
+    </section>
+
+    <section class="state-lab" aria-labelledby="states-title">
+      <h2 id="states-title">Boundary states</h2>
+      <p>These are component states, not additional corpus shots.</p>
+      <div class="state-grid">
+        <article class="state"><h3>No screenshots in this run</h3><p>The manifest is valid and contains <code>shots: []</code>. Try a run without <code>--only</code>, or check the active filter.</p><a href="#run-help">Run help</a></article>
+        <article class="state"><h3>Original queued</h3><p>The aspect-ratio placeholder reserves space. The original data URI is inserted only when this card approaches the viewport.</p><button class="action" type="button">Load screenshot now</button></article>
+        <article class="state broken"><h3>Screenshot unavailable</h3><p><strong>checkout-error</strong> remains in the gallery, but its referenced PNG could not be decoded.</p><p><code>shots/cart.shots.ts/checkout-error.png</code></p><a href="#manifest-help">Show manifest metadata</a></article>
+      </div>
+    </section>
+
+    <footer>
+      <strong>Direction A:</strong> dense desktop workbench, spec-first grouping, search + viewport chips, expandable details, inline sibling video, and a persistent Auto/Light/Dark choice. Terminal recommendation: print a QR only when one LAN URL is unambiguous. Responsive check noted for 390 px: one-column cards, horizontal filter rail, 44 px controls, no clipped run ID, and tall mobile art capped for overview.
+    </footer>
+  </main>
+  <script>
+    (() => {
+      const storedTheme = (() => {
+        try { return localStorage.getItem('shotwright-gallery-theme'); } catch { return null; }
+      })();
+      if (storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'auto') {
+        document.documentElement.dataset.theme = storedTheme;
+        document.querySelectorAll('[data-theme-choice]').forEach((item) => item.setAttribute('aria-pressed', String(item.dataset.themeChoice === storedTheme)));
+      }
+      const search = document.querySelector('#search');
+      let activeFilter = 'all';
+      const apply = () => {
+        const query = search.value.trim().toLowerCase();
+        document.querySelectorAll('.card[data-search]').forEach((card) => {
+          const matchesText = !query || card.dataset.search.includes(query);
+          const matchesFilter = activeFilter === 'all' || card.dataset.tags.split(' ').includes(activeFilter);
+          card.classList.toggle('hidden', !(matchesText && matchesFilter));
+        });
+        document.querySelectorAll('.spec').forEach((spec) => {
+          spec.classList.toggle('hidden', !spec.querySelector('.card:not(.hidden)'));
+        });
+      };
+      search.addEventListener('input', apply);
+      document.querySelectorAll('[data-filter]').forEach((button) => button.addEventListener('click', () => {
+        activeFilter = button.dataset.filter;
+        document.querySelectorAll('[data-filter]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+        apply();
+      }));
+      document.addEventListener('keydown', (event) => {
+        if (event.key === '/' && document.activeElement !== search) { event.preventDefault(); search.focus(); }
+        if (event.key === 'Escape') { search.value = ''; activeFilter = 'all'; apply(); search.blur(); }
+      });
+      document.querySelectorAll('[data-theme-choice]').forEach((button) => button.addEventListener('click', () => {
+        document.documentElement.dataset.theme = button.dataset.themeChoice;
+        document.querySelectorAll('[data-theme-choice]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+        try { localStorage.setItem('shotwright-gallery-theme', button.dataset.themeChoice); } catch {}
+      }));
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+# Dependency vulnerability exceptions (shotwright-746.23, ADR 0019).
+#
+# Empty is the correct state. Any known advisory blocks by default. Fix the
+# dependency first, normally with an upgrade or a narrow pnpm override.
+#
+# If an advisory genuinely cannot be fixed, an exception must use exactly this
+# shape. The CI policy rejects missing reasons, missing or non-future expiry
+# dates, duplicate IDs, unknown fields, and package-wide overrides.
+#
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# reason = "Why this advisory cannot affect this build"
+# ignoreUntil = 2026-10-01

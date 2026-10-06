@@ -1,0 +1,14 @@
+name: Demo shots
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  demo-shots:
+    uses: ./.github/workflows/shotwright.yml
+    with:
+      mode: self
+      config-path: demo/shots.config.ts
