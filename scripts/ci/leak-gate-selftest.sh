@@ -117,6 +117,107 @@ else
   echo '  ok    a login that is not a plain token is refused'
 fi
 
+# --- Bypass paths, end to end ------------------------------------------------
+# The 2026-10-05 audit (C7) ran gitleaks over a seeded token three ways and got
+# exit 0 each time: with GITLEAKS_CONFIG exported, with a .gitleaksignore in the
+# working directory, and with a `gitleaks:allow` comment on the line. These
+# cases drive the REAL gate (leak-gate.sh with a prebuilt tarball, so no
+# `npm pack`) over a miniature package and assert it fails anyway. The seed is
+# generated here and never lands in the repo tree.
+
+echo '==> leak-gate-selftest: the gate cannot be switched off from outside the repo'
+
+# head reads a bounded slice BEFORE tr filters it, so no producer is left
+# writing into a closed pipe — `tr | head` dies of SIGPIPE under pipefail.
+seed="ghp_$(head -c 4096 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-36)"
+[[ ${#seed} -eq 40 ]] || { echo 'leak-gate-selftest: could not generate a seed token' >&2; exit 2; }
+
+# A config that parses but can never fire. If the gate honoured GITLEAKS_CONFIG,
+# layer C would run under this and the seed would pass.
+empty_rules="$work/empty-rules.toml"
+cat >"$empty_rules" <<'TOML'
+title = "selftest: a ruleset that never fires"
+[[rules]]
+id = "never"
+regex = '''\bselftest-never-matches-[0-9]{40}\b'''
+TOML
+
+# Builds package/{README.md,package.json,dist/cli.js} with the given cli.js body
+# and packs it the way npm would, so layer A sees an allowlisted file set.
+make_tarball() {
+  local body="$1" name="$2"
+  local dir="$work/tarball-$name"
+  mkdir -p "$dir/package/dist"
+  printf '# probe\n' >"$dir/package/README.md"
+  printf '{"name":"probe","version":"0.0.0"}\n' >"$dir/package/package.json"
+  printf '%s\n' "$body" >"$dir/package/dist/cli.js"
+  tar czf "$dir.tgz" -C "$dir" package
+  printf '%s' "$dir.tgz"
+}
+
+# Runs the real gate quietly; echoes its exit status; captures stderr for a
+# message assertion.
+run_gate() {
+  local tarball="$1" log="$2"
+  shift 2
+  set +e
+  env "$@" "$root/scripts/ci/leak-gate.sh" "$tarball" >"$log" 2>&1
+  local status=$?
+  set -e
+  printf '%s' "$status"
+}
+
+expect_gate() {
+  local want="$1" tarball="$2" label="$3" needle="$4"
+  shift 4
+  local log got
+  log="$work/gate-$(basename "$tarball" .tgz).log"
+  got="$(run_gate "$tarball" "$log" "$@")"
+  if [[ "$got" == "$want" ]] && { [[ -z "$needle" ]] || grep -qF -- "$needle" "$log"; }; then
+    echo "  ok    exit $want on $label"
+  else
+    echo "  FAIL  wanted exit $want on $label, got $got${needle:+ (or missing '$needle')}" >&2
+    sed 's/^/        | /' "$log" >&2
+    failures=$((failures + 1))
+  fi
+}
+
+clean_tgz="$(make_tarball 'export const ok = true' clean)"
+seeded_tgz="$(make_tarball "const token = \"$seed\"" seeded)"
+allowed_tgz="$(make_tarball "const token = \"$seed\" // gitleaks:allow" allowed)"
+
+expect_gate 0 "$clean_tgz"  'a clean miniature tarball' 'leak gate: PASSED'
+expect_gate 1 "$seeded_tgz" 'a seeded token, plain' '' \
+  SHOTWRIGHT_OPERATOR_LOGIN=
+expect_gate 1 "$seeded_tgz" 'a seeded token with GITLEAKS_CONFIG pointed at a ruleset that never fires' '' \
+  SHOTWRIGHT_OPERATOR_LOGIN= GITLEAKS_CONFIG="$empty_rules"
+expect_gate 1 "$seeded_tgz" 'a seeded token with GITLEAKS_CONFIG_TOML carrying that ruleset' '' \
+  SHOTWRIGHT_OPERATOR_LOGIN= GITLEAKS_CONFIG_TOML="$(cat "$empty_rules")"
+expect_gate 1 "$allowed_tgz" 'a seeded token marked gitleaks:allow' 'gitleaks:allow marker' \
+  SHOTWRIGHT_OPERATOR_LOGIN=
+
+# The ignore-file path, at the scanner level: a .gitleaksignore in the working
+# directory is honoured by default, so the gate's explicit empty ignore path is
+# what keeps the repo's own ignore list away from shipped files. Both halves are
+# asserted so the second cannot pass vacuously.
+probe="$work/ignore-probe"
+mkdir -p "$probe/tree"
+printf 'const token = "%s"\n' "$seed" >"$probe/tree/dist.js"
+printf 'tree/dist.js:github-pat:1\n' >"$probe/.gitleaksignore"
+: >"$probe/empty.gitleaksignore"
+if (cd "$probe" && gitleaks dir --no-banner --redact tree >/dev/null 2>&1); then
+  echo '  ok    a .gitleaksignore in the working directory suppresses the seed by default'
+else
+  echo '  FAIL  the default ignore path did not suppress the seed; the next assertion proves nothing' >&2
+  failures=$((failures + 1))
+fi
+if (cd "$probe" && gitleaks dir --no-banner --redact --gitleaks-ignore-path "$probe/empty.gitleaksignore" tree >/dev/null 2>&1); then
+  echo '  FAIL  the explicit empty ignore path still let the working-directory .gitleaksignore apply' >&2
+  failures=$((failures + 1))
+else
+  echo '  ok    the explicit empty ignore path keeps the working-directory .gitleaksignore out'
+fi
+
 if [[ $failures -gt 0 ]]; then
   echo >&2
   echo "leak-gate-selftest: FAILED — $failures expectation(s) not met." >&2

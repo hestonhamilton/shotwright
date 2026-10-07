@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 export const GALLERY_CSS = `
 :root {
   color-scheme: light dark;

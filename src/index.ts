@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // shotwright — public entry: the Playwright config factory.
 //
 // defineShotsConfig() wraps the consumer's defineConfig (peer resolution guarantees

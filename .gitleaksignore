@@ -1,0 +1,21 @@
+# Findings gitleaks reports on THIS REPOSITORY that are fixtures, not secrets.
+# Adjudicated by the 2026-10-05 security audit: all three are self-test seeds
+# for the inspector's credential classifier, built from sequential alphabets,
+# and a public scanner raising them after the flip would be noise.
+#
+# This file is consumed only when gitleaks is run over the repository itself
+# (`gitleaks git .`, `gitleaks dir .`, GitHub secret scanning, third-party bots).
+# The tarball leak gate (scripts/ci/leak-gate.sh) points gitleaks at an EMPTY
+# ignore file on purpose, so nothing listed here can ever suppress a finding in
+# a shipped file. Adding a line here is never a way to make the gate pass.
+#
+# Fingerprint forms: `path:rule:line` for a working-tree scan and
+# `commit:path:rule:line` for a history scan. The history entries name the
+# single root commit of the recreated repository (ADR 0020).
+
+scripts/dolt-ref-inspect-selftest.sh:generic-api-key:108
+scripts/dolt-ref-inspect-selftest.sh:aws-access-token:109
+scripts/dolt-ref-inspect-selftest.sh:aws-access-token:125
+7af1f064f0b00f2ffcc2531e884429e313c45d1e:scripts/dolt-ref-inspect-selftest.sh:generic-api-key:108
+7af1f064f0b00f2ffcc2531e884429e313c45d1e:scripts/dolt-ref-inspect-selftest.sh:aws-access-token:109
+7af1f064f0b00f2ffcc2531e884429e313c45d1e:scripts/dolt-ref-inspect-selftest.sh:aws-access-token:125

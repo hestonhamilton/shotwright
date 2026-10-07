@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // In-spec capture API — public as 'shotwright/capture'.
 //
 // shot() writes the PNG into the run layout and records a manifest sidecar; the
