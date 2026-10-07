@@ -68,6 +68,23 @@ complete screenshot review artifact. Video and trace files stay beside it in the
 run directory; moving `gallery.html` away breaks those links. Serve the run
 directory when video or trace review matters.
 
+## Compare
+
+Put two runs side by side and mark what changed:
+
+```bash
+pnpm shots:compare latest <run-id>
+pnpm shots:compare <run-a> <run-b>
+```
+
+`latest` resolves to the last fully passed run, not simply the most recent one.
+Run ids are the directory names under the output directory; `pnpm shots` prints
+the id of the run it just wrote. The result is one self-contained file,
+`<outputDir>/compare/<run-a>.vs.<run-b>.html`, with the original screenshots
+embedded — open it directly, or serve the output directory. Changed pairs are
+marked for a human to read; the comparison is review material, not a pass/fail
+verdict, and must not be turned into one.
+
 ## Project Notes
 
 Add project-specific capture notes below this line. `shotwright init` never
