@@ -1,75 +1,17 @@
-# Beads - AI-Native Issue Tracking
+# .beads
 
-Welcome to Beads! This repository uses **Beads** for issue tracking - a modern, AI-native tool designed to live directly in your codebase alongside your code.
+This directory is managed by [bd (beads)](https://github.com/gastownhall/beads),
+the issue tracker this project uses. The tracked files here are bd's own
+config and git hooks; the issue database itself lives on a Dolt sql-server and
+is not in git.
 
-## What is Beads?
+How this project uses bd — including what is deliberately different from bd's
+defaults — is documented in `CLAUDE.md` (section "Beads"). The two rules that
+matter most:
 
-Beads is issue tracking that lives in your repo, making it perfect for AI coding agents and developers who want their issues close to their code. No web UI required - everything works through the CLI and integrates seamlessly with git.
+- **Never run `bd dolt push`.** The Dolt ref was removed from the git remote
+  on purpose; see `docs/backup.md` for the backup that replaced it.
+- **Never run raw `dolt` CLI commands** while the server is running — use
+  `bd dolt …`.
 
-**Learn more:** [github.com/steveyegge/beads](https://github.com/steveyegge/beads)
-
-## Quick Start
-
-### Essential Commands
-
-```bash
-# Create new issues
-bd create "Add user authentication"
-
-# View all issues
-bd list
-
-# View issue details
-bd show <issue-id>
-
-# Update issue status
-bd update <issue-id> --claim
-bd update <issue-id> --status done
-
-```
-
-Do not run `bd dolt push` in this repository: the Dolt ref was removed from GitHub on purpose, see docs/backup.md
-
-### Working with Issues
-
-Issues in Beads are:
-- **Git-native**: Stored in Dolt database with version control and branching
-- **AI-friendly**: CLI-first design works perfectly with AI coding agents
-- **Branch-aware**: Issues can follow your branch workflow
-- **Backed up**: see docs/backup.md
-
-## Why Beads?
-
-**Developer Focused**
-- Issues live in your repo, right next to your code
-- Works offline
-- Fast, lightweight, and stays out of your way
-
-**Git Integration**
-- Branch-aware issue tracking
-- Dolt-native three-way merge resolution
-
-## Get Started with Beads
-
-Try Beads in your own projects:
-
-```bash
-# Install Beads
-curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
-
-# Initialize in your repo
-bd init
-
-# Create your first issue
-bd create "Try out Beads"
-```
-
-## Learn More
-
-- **Documentation**: [github.com/steveyegge/beads/docs](https://github.com/steveyegge/beads/tree/main/docs)
-- **Quick Start Guide**: Run `bd quickstart`
-- **Examples**: [github.com/steveyegge/beads/examples](https://github.com/steveyegge/beads/tree/main/examples)
-
----
-
-*Beads: Issue tracking that moves at the speed of thought* ⚡
+`bd prime` prints the full workflow reference.

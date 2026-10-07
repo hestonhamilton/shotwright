@@ -312,4 +312,10 @@ Stated as gaps rather than rounded up.
    (lowercase, string-exact), now that rulesets are available.
 7. Confirm Dependabot **alerts and security updates** are active — the narrow claim
    from §7.2, not the broad one.
-8. Record the flip date and this pack's path on `shotwright-746.18.6`, then close it.
+8. Check that GitHub detected the license: the repository header should read
+   "AGPL-3.0". `LICENSE` carries a 17-line copyright notice above the verbatim
+   text, and some detectors (licensee) mis-classify a file with a preamble. If
+   it shows "Other" or nothing, move the notice into `NOTICE` (or README) and
+   leave `LICENSE` as the verbatim text — the `expected-files.txt` allowlist
+   must then admit `NOTICE`, which npm ships unconditionally.
+9. Record the flip date and this pack's path on `shotwright-746.18.6`, then close it.

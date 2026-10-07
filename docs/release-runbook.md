@@ -115,7 +115,7 @@ wrong code with no diff to review.
 git clone git@github.com:hestonhamilton/shotwright.git /tmp/shotwright-release
 cd /tmp/shotwright-release
 git checkout v0.1.0-rc.1
-scripts/ci/install-gitleaks.sh "$HOME/.local/bin"   # if not already present
+scripts/ci/install-gitleaks.sh "$HOME/.local/bin"   # always downloads and hashes; see section 4
 scripts/ci/install-osv-scanner.sh "$HOME/.local/bin"
 export PATH="$HOME/.local/bin:$PATH"
 scripts/ci/verify.sh                                 # the whole lane, must exit 0
@@ -463,6 +463,28 @@ not weaken the assertions.
 It **fails closed** when gitleaks is missing. That is deliberate: a gate that
 skips its scan and reports green launders the absence of a check as a passing
 one. If it fails that way, install the pin — do not work around it.
+
+**It cannot be switched off from outside the repo.** The 2026-10-05 audit found
+three ways a scan is normally neutralised without touching the scanned files —
+`GITLEAKS_CONFIG` / `GITLEAKS_CONFIG_TOML` in the environment, a
+`.gitleaksignore` in the working directory, and a `gitleaks:allow` comment on
+the leaking line — and measured each as exit 0 on a seeded token. The gate now
+unsets the variables, points both layers at an empty ignore file, tells the
+scanner to disregard the marker, and fails outright if the marker appears in a
+shipped file. The self-test drives the real gate over a miniature tarball under
+each of those conditions and asserts it still fails. The repository's own
+`.gitleaksignore` exists only for the fixture seeds in
+`scripts/dolt-ref-inspect-selftest.sh`, so a public scanner stays quiet after
+the flip; it never reaches the tarball.
+
+**The installer trusts only the hash committed here.** `scripts/ci/gitleaks-pin.sh`
+carries the version and the per-platform sha256 of each release archive,
+confirmed against an independently downloaded copy; `install-gitleaks.sh`
+downloads and hashes every time and never accepts a `gitleaks` already on
+PATH on the strength of its version string. To bump: take the hashes from the
+upstream release manifest, confirm at least one by hashing a download, then
+change the pin file in a reviewed PR — the gate asserts the version it runs
+under, so the two cannot drift.
 
 **What it does not catch** is in plan section 2.5 and is worth reading before you
 trust it. In short: any encoding, anything derived at runtime, non-path PII, and

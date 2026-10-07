@@ -59,7 +59,20 @@
   },
   "permissions": {
     "allow": [
-      "Bash(bd *)",
+      "Bash(bd show*)",
+      "Bash(bd ready*)",
+      "Bash(bd list*)",
+      "Bash(bd search*)",
+      "Bash(bd blocked*)",
+      "Bash(bd stats*)",
+      "Bash(bd stale*)",
+      "Bash(bd orphans*)",
+      "Bash(bd lint*)",
+      "Bash(bd memories*)",
+      "Bash(bd prime*)",
+      "Bash(bd dep list*)",
+      "Bash(bd worktree list*)",
+      "Bash(bd backup status*)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
@@ -83,7 +96,13 @@
       "Bash(git push -f*)",
       "Bash(git reset --hard*)",
       "Bash(git clean -f*)",
-      "Bash(rm -rf /*)"
+      "Bash(rm -rf /*)",
+      "Bash(bd dolt push*)",
+      "Bash(find * -exec*)",
+      "Bash(find * -ok*)",
+      "Bash(find * -delete*)",
+      "Bash(find * -fprint*)",
+      "Bash(find * -fls*)"
     ]
   },
   "statusLine": {

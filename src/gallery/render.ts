@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { GALLERY_CSS, GALLERY_SCRIPT } from './assets.js'
 import type {
   ArtifactReference,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Manifest v1 — the public contract consumed by gallery/compare/trace/CI tooling.
 // Semantics (per docs/shotwright-746.1.1-research.md Axis 2): `video`/`trace` keys
 // always present (null when off), duplicate shot names fail the run, `shots` sorted

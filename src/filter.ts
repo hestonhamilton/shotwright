@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // `--only` substring filtering — the original consumer's SHOTS_ONLY semantics: the
 // walkthrough still runs; only shot *writes* are filtered.
 

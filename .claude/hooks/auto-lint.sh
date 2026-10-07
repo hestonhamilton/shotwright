@@ -19,6 +19,24 @@ file_path="$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.
 
 [ -z "$file_path" ] && exit 0
 
+# Only lint files inside this project. The resolution below walks UP from the
+# edited file and executes the first .venv/bin or node_modules/.bin copy of the
+# lint binary it finds — so an edit anywhere else on disk (a cloned repo under
+# review, a scratch dir) would run whatever binary that tree carries. Compare
+# physical paths so a symlinked checkout still qualifies.
+project="${CLAUDE_PROJECT_DIR:-}"
+[ -n "$project" ] || exit 0
+project="$(cd "$project" 2>/dev/null && pwd -P)" || exit 0
+case "$file_path" in
+  /*) file_dir="$(dirname "$file_path")" ;;
+  *)  file_dir="$(dirname "$PWD/$file_path")" ;;
+esac
+file_dir="$(cd "$file_dir" 2>/dev/null && pwd -P)" || exit 0
+case "$file_dir" in
+  "$project"|"$project"/*) ;;
+  *) exit 0 ;;
+esac
+
 # Bail if the extension isn't configured.
 ext="${file_path##*.}"
 matched=0

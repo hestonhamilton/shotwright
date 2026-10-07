@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import type { CompareModel, ComparePair, ComparePairState } from './compare-model.js'
 import type { GalleryShot } from './model.js'
 import { escapeHtml } from './render.js'

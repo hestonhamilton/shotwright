@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The shotwright reporter — the manifest's single writer. Collects the per-shot
 // sidecars written by workers, maps each test's video/trace attachments into the
 // run layout, and publishes manifest.json atomically in onEnd. The `latest`

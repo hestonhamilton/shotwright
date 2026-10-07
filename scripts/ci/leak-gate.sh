@@ -20,17 +20,12 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
 
-# Pinned so a scanner whose rule engine drifts under a pinned config cannot
-# change this gate's meaning silently.
-#
-# Confirmed against the release list on 2026-08-01: v8.30.1, published
-# 2026-03-21, is the latest release.
-#
-# Do not take the version from the gitleaks README — its pre-commit example
-# still shows 8.24.2, which was published 2025-03-22 and is over a year stale.
-# Since gitleaks is feature-frozen and ships security patches only, running an
-# old build forfeits the one kind of update it still receives.
-GITLEAKS_PIN="8.30.1"
+# The pinned gitleaks version and its per-platform hashes live in
+# scripts/ci/gitleaks-pin.sh, shared with the installer. Pinned so a scanner
+# whose rule engine drifts under a pinned config cannot change this gate's
+# meaning silently.
+# shellcheck source=scripts/ci/gitleaks-pin.sh
+source "$root/scripts/ci/gitleaks-pin.sh"
 
 # Recorded baseline, re-measured on main after the four public-release changes
 # landed (746.18.8 LICENSE, 746.23 audit gate, 746.18.9 README, 746.18.10
@@ -99,6 +94,34 @@ if [[ "$installed" != "$GITLEAKS_PIN" ]]; then
   exit 1
 fi
 
+# THREE WAYS TO SWITCH THIS SCAN OFF WITHOUT TOUCHING THE REPO, each measured by
+# the 2026-10-05 audit (C7) as exit 0 on a seeded token, each closed here:
+#
+#   1. GITLEAKS_CONFIG / GITLEAKS_CONFIG_TOML in the environment. Layer C runs
+#      with no --config so that it gets the stock ruleset; gitleaks resolves
+#      that absence through these variables first, so an exported empty
+#      ruleset replaced the stock one silently. Unset both. Layer B passes an
+#      explicit --config, which outranks them, but is cleared the same way so
+#      the two layers cannot drift apart on this point.
+#   2. A .gitleaksignore. gitleaks reads one from the current directory by
+#      default, and this script runs from the repo root, which carries one for
+#      the repository's own fixtures. Both layers are pointed at an EMPTY ignore
+#      file instead, so the repo's ignore list can never reach a shipped file.
+#   3. A `gitleaks:allow` comment on the leaking line. Refused twice: the
+#      scanner is told to disregard the marker, and the marker is grepped for
+#      below so its presence is itself a failure with a readable reason, rather
+#      than a finding that may or may not surface.
+unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
+empty_ignore="$work/empty.gitleaksignore"
+: > "$empty_ignore"
+
+if grep -rIn --fixed-strings 'gitleaks:allow' "$pkg" >"$work/allow-markers.txt" 2>/dev/null; then
+  echo 'leak gate: FAILED — a shipped file carries a gitleaks:allow marker:' >&2
+  sed "s|^$pkg/|    |" "$work/allow-markers.txt" >&2
+  echo 'The marker would ask the scanner to skip that line. Nothing shipped may opt out of the gate.' >&2
+  exit 1
+fi
+
 # TWO invocations, not one. Merging the shotwright rules into the default
 # ruleset via [extend] suppresses the /home/ host-path detection outright — see
 # the header of gitleaks-tarball.toml for the measurement. Keeping them separate
@@ -121,12 +144,16 @@ gitleaks dir \
   --no-banner \
   --redact \
   --config "$config" \
+  --gitleaks-ignore-path "$empty_ignore" \
+  --ignore-gitleaks-allow \
   "$pkg"
 
 echo "==> leak gate: layer C — default credential ruleset (gitleaks ${GITLEAKS_PIN})"
 gitleaks dir \
   --no-banner \
   --redact \
+  --gitleaks-ignore-path "$empty_ignore" \
+  --ignore-gitleaks-allow \
   "$pkg"
 
 # --- Report ---------------------------------------------------------------

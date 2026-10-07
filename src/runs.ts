@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Run directory lifecycle: id generation, creation, atomic manifest publish,
 // and the `latest` symlink (POSIX-only in v1, per plan deferral).
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // shotwright CLI. E1 ships `run`; gallery/compare/trace/init land in E3+/E6.
 //
 // `run` resolves the *consumer's* @playwright/test (the peer — never npx, which
