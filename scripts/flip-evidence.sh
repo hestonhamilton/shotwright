@@ -94,12 +94,37 @@ else
   # read, the script then reported "0 finding(s)" over a history gitleaks had
   # just exited 1 on (redteam 2, 2026-10-05). The exit status is the contract:
   # 0 means clean, 1 means findings, anything else means the scan did not run.
+  #
+  # Scan RAW, over a clone with NO WORKING TREE. gitleaks honours three
+  # out-of-band suppressions: a GITLEAKS_CONFIG/GITLEAKS_CONFIG_TOML ruleset
+  # from the environment, gitleaks:allow comments, and the scanned repository's
+  # own .gitleaksignore. The first two have flags; the third does not —
+  # measured on 8.30.1 (shotwright-746.18.32): in `git` mode the file is read
+  # from the repository root whatever --gitleaks-ignore-path says, and when
+  # .gitleaksignore arrived the three fixture findings vanished from this
+  # evidence and the digest moved. That is the script reporting a change in the
+  # repo's IGNORE LIST as a change in the repo's HISTORY. The pack adjudicates
+  # findings; nothing in the tree may pre-adjudicate them. A --no-checkout
+  # clone carries the identical history and no files at all, so there is
+  # nothing for the scanner to read suppressions from. Same closure as
+  # leak-gate.sh, which scans an extracted tarball for the same reason.
+  unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
+  gl_src="$(mktemp -d)"
+  gl_empty_ignore="$(mktemp)"
   gl_err="$(mktemp)"
-  gl_out="$(gitleaks git . --redact --report-format json --report-path - 2>"$gl_err")"
-  gl_status=$?
+  if ! git clone -q --no-local --no-checkout . "$gl_src" 2>"$gl_err"; then
+    fail "could not clone the repository for a raw scan: $(tr '\n' ' ' <"$gl_err")"
+    record 'gitleaks: NOT RUN'
+    gl_status=2
+    gl_out=''
+  else
+    gl_out="$(gitleaks git "$gl_src" --redact --report-format json --report-path - \
+      --gitleaks-ignore-path "$gl_empty_ignore" --ignore-gitleaks-allow 2>"$gl_err")"
+    gl_status=$?
+  fi
   gl_n="$(printf '%s' "$gl_out" | grep -c '"RuleID"' || true)"
   gl_commits="$(grep -oE '[0-9]+ commits scanned' "$gl_err" | head -1 || true)"
-  rm -f "$gl_err"
+  rm -rf "$gl_err" "$gl_empty_ignore" "$gl_src"
   if [[ "$gl_status" -ne 0 && "$gl_status" -ne 1 ]]; then
     fail "gitleaks exited $gl_status — the history was NOT scanned. FAILS CLOSED."
     record 'gitleaks: NOT RUN'

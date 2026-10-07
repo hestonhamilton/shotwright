@@ -477,6 +477,15 @@ each of those conditions and asserts it still fails. The repository's own
 `scripts/dolt-ref-inspect-selftest.sh`, so a public scanner stays quiet after
 the flip; it never reaches the tarball.
 
+**Authoritative scans run over a copy that carries no `.gitleaksignore`.**
+gitleaks reads suppression state from the tree it scans, and in `git` mode it
+reads the repository's `.gitleaksignore` whatever `--gitleaks-ignore-path` says
+(measured on 8.30.1). The repository's ignore file exists for third-party
+scanners' benefit only. The tarball gate therefore scans an extracted archive
+and `scripts/flip-evidence.sh` scans a `--no-checkout` clone; a new scan added
+to this repo that is meant to be believed must do the same, or a line in
+`.gitleaksignore` becomes a way to remove a finding from the evidence.
+
 **The installer trusts only the hash committed here.** `scripts/ci/gitleaks-pin.sh`
 carries the version and the per-platform sha256 of each release archive,
 confirmed against an independently downloaded copy; `install-gitleaks.sh`

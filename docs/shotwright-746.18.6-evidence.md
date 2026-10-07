@@ -74,18 +74,30 @@ of silently passing.
 
 ## 1. Full-history secret scan
 
-`gitleaks 8.30.1`, **1 commit scanned** (89 at first assembly on 2026-09-03; 96 at the 2026-10-05 re-run after PR #53; 109 on the first recreation after PR #69; 1 since the second recreation squashed main to a single commit — the same three findings every time) — the count is taken from gitleaks' own
+`gitleaks 8.30.1`, **3 commits scanned** (89 at first assembly on 2026-09-03; 96 at the 2026-10-05 re-run after PR #53; 109 on the first recreation after PR #69; 1 after the second recreation squashed main to a single commit; 3 after PRs #1 and #2 on the recreated repository — the same three findings every time) — the count is taken from gitleaks' own
 output, not from `git rev-list --all --count`, which answers a different question
 and would overstate coverage by roughly fifty commits while looking like a
 measurement.
+
+**The scan runs over a `--no-checkout` clone of the same history, not the
+working tree.** gitleaks reads a `.gitleaksignore` from the root of whatever
+repository it is pointed at, and in `git` mode it does so whatever
+`--gitleaks-ignore-path` says (measured on 8.30.1, `shotwright-746.18.32`
+follow-up). The repository carries one, for these three fixtures, so that
+third-party scanners stay quiet after the flip — and the moment it landed, this
+script reported 0 findings and a different digest. A clone with no working tree
+has the identical commits and no file for the scanner to read suppressions
+from, so the three findings below are reported raw and adjudicated **here**,
+by a reader, never by a line in the tree. The same reasoning is why the tarball
+gate scans an extracted archive.
 
 **3 findings. All benign, all in one file, all deliberate.**
 
 | Fingerprint | Rule |
 |---|---|
-| `f69e1f9…:scripts/dolt-ref-inspect-selftest.sh:aws-access-token:107` | AWS access key |
-| `f69e1f9…:scripts/dolt-ref-inspect-selftest.sh:aws-access-token:123` | AWS access key |
-| `f69e1f9…:scripts/dolt-ref-inspect-selftest.sh:generic-api-key:106` | generic API key |
+| `7af1f06…:scripts/dolt-ref-inspect-selftest.sh:generic-api-key:108` | generic API key |
+| `7af1f06…:scripts/dolt-ref-inspect-selftest.sh:aws-access-token:109` | AWS access key |
+| `7af1f06…:scripts/dolt-ref-inspect-selftest.sh:aws-access-token:125` | AWS access key |
 
 All three are synthetic seeds in the self-test that proves the dolt-ref classifier
 fires: a GitHub token of ascending hex, an AWS key id that is literally the
@@ -94,7 +106,7 @@ alphabet, and a connection string whose password is `hunter2` on an
 writing them into this document would make the evidence pack itself a source of
 three more gitleaks findings, and would put credential-shaped strings in a file
 that is about to be public. Read them at
-`scripts/dolt-ref-inspect-selftest.sh:103-110` if you want to confirm the
+`scripts/dolt-ref-inspect-selftest.sh:105-112` if you want to confirm the
 adjudication. They are textbook-fake by construction: a self-test that proves a credential detector works has to contain
 things shaped like credentials, and the alternative — a detector never
 demonstrated firing — is worse.
