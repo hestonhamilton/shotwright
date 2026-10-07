@@ -56,6 +56,7 @@ Then:
 pnpm shots:install      # download the browser, once
 pnpm shots              # capture
 pnpm shots:gallery      # review
+pnpm shots:compare latest <run-id>   # once there is a second run to compare against
 ```
 
 ## Writing a walkthrough

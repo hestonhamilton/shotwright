@@ -64,6 +64,7 @@ type InitNextSteps = 'vite' | 'placeholder'
 export interface DesiredScripts {
   shots: string
   'shots:gallery': string
+  'shots:compare': string
   'shots:install': string
 }
 
@@ -71,6 +72,7 @@ const INIT_USAGE = 'Usage: shotwright init [--dry-run]'
 const desiredScripts: DesiredScripts = {
   shots: 'shotwright run',
   'shots:gallery': 'shotwright gallery',
+  'shots:compare': 'shotwright compare',
   'shots:install': 'playwright install chromium',
 }
 

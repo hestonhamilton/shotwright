@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { parseGalleryArgs, parseRunArgs } from '../../src/cli.js'
+import { parseCompareArgs, parseGalleryArgs, parseRunArgs } from '../../src/cli.js'
 import {
   applyInitPlan,
   classifyInitOutcome,
@@ -407,6 +407,21 @@ describe('planInit', () => {
 })
 
 describe('mutatePackageJsonScripts', () => {
+  // Every subcommand the skill and README tell an agent to run must have a
+  // script, and every script must name a subcommand the CLI actually parses.
+  // compare was shipped without one (shotwright-746.18.33); an agent reading
+  // the installed skill had no way to reach it.
+  it('writes one script per documented subcommand, each parseable by the CLI', () => {
+    const pkg = JSON.parse(mutatePackageJsonScripts('{\n  "name": "app"\n}\n').raw) as {
+      scripts: Record<string, string>
+    }
+    expect(Object.keys(pkg.scripts)).toEqual(['shots', 'shots:gallery', 'shots:compare', 'shots:install'])
+    expect(pkg.scripts['shots']).toBe('shotwright run')
+    expect(pkg.scripts['shots:gallery']).toBe('shotwright gallery')
+    expect(pkg.scripts['shots:compare']).toBe('shotwright compare')
+    expect(parseCompareArgs(['latest', '20260101-000000'])).toMatchObject({ a: 'latest', b: '20260101-000000' })
+  })
+
   it('creates scripts as the last key when absent', () => {
     const result = mutatePackageJsonScripts('{\n  "name": "app"\n}\n').raw
     expect(Object.keys(JSON.parse(result))).toEqual(['name', 'scripts'])
