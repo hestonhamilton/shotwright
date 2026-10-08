@@ -29,7 +29,7 @@ Two principles that shape most decisions:
 2. **Consumers stay thin.** Anything a second project would copy-paste belongs
    in the package (or its `templates/`), not in the consumer.
 
-**Repo visibility: private, headed public** — no host paths, LAN IPs, usernames,
+**This repository is public-facing** — no host paths, LAN IPs, usernames,
 or personal data in committed files.
 
 ## Project config

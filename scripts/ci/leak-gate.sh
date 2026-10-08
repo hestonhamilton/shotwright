@@ -38,8 +38,11 @@ source "$root/scripts/ci/gitleaks-pin.sh"
 # which is how this number was briefly wrong. REPORTED, never asserted: a legitimate
 # dist/ change moves these numbers, and a hard equality check would be edited
 # away within two releases. Layer A is the check; this is situational awareness.
-BASELINE_FILES=44
-BASELINE_PACKED="57.2 kB"
+# NOTICE became the 45th file on 2026-10-07 when the copyright notice moved out
+# of LICENSE (shotwright-746.18.36); npm does not ship it unconditionally, so it
+# is in package.json `files` and in the allowlist.
+BASELINE_FILES=45
+BASELINE_PACKED="59.8 kB"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

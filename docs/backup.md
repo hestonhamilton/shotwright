@@ -27,7 +27,7 @@ Nothing in this repo reads it. Use `scripts/backup-verify.sh`.
 | `scripts/backup-install.sh` | Installs the systemd user timer that runs the push. |
 
 The destination is `<host>:<path>` in `SHOTWRIGHT_BACKUP_DEST`. It is **not in
-this repository and must not be** — the repo is headed public and a NAS address
+this repository and must not be** — the repo is public-facing and a NAS address
 is exactly the shape of string the leak gate does not catch
 (`shotwright-746.18.3`). The systemd unit carries it and is generated at install
 time.

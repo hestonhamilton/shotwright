@@ -26,7 +26,7 @@
 #
 # The listings quote ref contents verbatim, so --out must be OUTSIDE this
 # repository or under the gitignored local/ scratch home. This repository is
-# headed public.
+# public-facing.
 set -euo pipefail
 
 LC_ALL=C

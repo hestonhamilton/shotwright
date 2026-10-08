@@ -30,8 +30,15 @@
 # AGPL-3.0-or-later relicense (ADR 0018, shotwright-746.18.8) and this line is
 # the deliberate widening that admitted it — the gate correctly failed on the
 # new file until it was added here, which is the layer working, not breaking.
+#
+# NOTICE carries the copyright notice that used to sit above the license text.
+# It moved out of LICENSE on 2026-10-07 (shotwright-746.18.36) because GitHub's
+# detector classified the preamble-plus-text file as "Other". npm does NOT ship
+# NOTICE unconditionally (measured with `npm pack --dry-run`), so it is listed
+# in package.json `files` and admitted here.
 
 LICENSE
+NOTICE
 README.md
 dist/capture.d.ts
 dist/capture.js

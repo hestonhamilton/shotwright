@@ -419,9 +419,12 @@ canaries, identity mismatches, and two-source failure remain non-green.
 A diff to `osv-scanner.toml` **accepts a vulnerability**. Review it as the
 security-relevant part of a release PR, exactly as with `expected-files.txt`.
 
-The two `pnpm.overrides` entries in `pnpm-workspace.yaml` pin transitive
-`brace-expansion` and `nanoid` versions. Removing them to tidy up can reintroduce
-both advisories; the gate is what catches that.
+The `overrides` entries in `pnpm-workspace.yaml` pin transitive versions
+(`brace-expansion`, `nanoid`, `source-map-js` at the time of writing — read the
+file, not this sentence). Each names the advisory it closes. Removing one to tidy
+up can reintroduce the advisory; the gate is what catches that. An override that
+matches no package in the lockfile is dead and should go, which is how the
+`js-yaml` pair left on 2026-10-07.
 
 ---
 

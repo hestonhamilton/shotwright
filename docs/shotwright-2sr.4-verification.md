@@ -114,16 +114,16 @@ Re-derived 2026-08-02, by command, not from the stored list. The count moved
 9 → 10 between 2026-08-01 and 2026-08-02, which is why it is re-derived every
 time.
 
-**10 repositories carry Dolt refs; all 10 are PRIVATE.** Every one carries
+**Several repositories carry Dolt refs; every one of them is PRIVATE.** Every one carries
 `refs/dolt/data` *and* `refs/heads/__dolt_remote_info__` — both must go together
 wherever anything goes.
 
 | Disposition | Repositories |
 |---|---|
 | **DELETE both refs** (shotwright: private → **going public**) | 1 |
-| KEEP (private) | 9 |
+| KEEP (private) | the rest |
 
-The nine KEEPs are one rule, not nine judgements: **a Dolt ref in a private
+The KEEPs are one rule, not several judgements: **a Dolt ref in a private
 repository is a legitimate backup, not an exposure.** It only becomes an
 exposure when the repository's visibility changes, which is why the check
 belongs on the public-flip checklist (`shotwright-746.18.6`) rather than being

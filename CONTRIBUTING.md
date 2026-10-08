@@ -66,12 +66,14 @@ Two caveats, so this section is not making a promise the repo does not keep:
 - **Issues and tasks live in [beads](https://github.com/gastownhall/beads)**, not
   in GitHub Issues, under the `shotwright` umbrella. Bug reports and questions in
   GitHub Issues are welcome and get triaged into beads.
-- **Branches** are `feat/<bead-id>-<kebab-slug>`. A hook enforces it.
+- **Branches** are `feat/<bead-id>-<kebab-slug>`. A maintainer-side agent hook
+  enforces it locally; PRs are checked by hand.
 - **Commits** are `<bead-id>: <subject>`. Say what was wrong, not what you typed.
 - **No AI attribution** on commits or PRs — no co-author trailer naming an
   assistant, no "Generated with" footer. A hook blocks it. Using an AI assistant
   is fine; crediting it as an author is not, because a commit's author is who is
-  accountable for it.
+  accountable for it. (The hook is a maintainer-side agent hook, not a git hook,
+  so it does not run on a contributor's clone; the ban is enforced at review.)
 
 ## 4. Before you open a PR
 
@@ -107,13 +109,14 @@ more attention than the rest of the change:
   tarball. Adding a line widens it.
 - `osv-scanner.toml` — adding an `[[IgnoredVulns]]` record **accepts a known
   vulnerability**. Every exception needs an advisory ID, a reason, and a future
-  expiry. Try a `pnpm.overrides` pin first; the two advisories this gate shipped
-  with both looked unfixable and were not.
+  expiry. Try an `overrides` pin in `pnpm-workspace.yaml` first (pnpm 11 ignores
+  the `pnpm` key in package.json); the advisories this gate shipped with all
+  looked unfixable and were not.
 
 ### The house rule that catches people out
 
 **No host paths, LAN IPs, usernames, or personal data in committed files.** This
-repository is headed public and an npm tarball is permanent once published. Use
+repository is public-facing and an npm tarball is permanent once published. Use
 `/home/someone`, `192.168.0.42`, `example.invalid` and similar in tests and docs —
 the existing fixtures are the pattern to copy. `local/` is gitignored scratch
 space for anything real.

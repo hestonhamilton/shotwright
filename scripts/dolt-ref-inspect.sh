@@ -56,7 +56,7 @@
 # measured exactly this: the leak gate did not catch a self-hosted forge
 # hostname, because it is not a host path, a LAN IP, or a username. Pass those
 # names in via --hostnames or $DOLT_REF_INSPECT_HOSTNAMES rather than committing
-# them — this repository is headed public.
+# them — this repository is public-facing.
 #
 # What this script does NOT do: adjudicate. Third-party names, financial or
 # personal content, and candid internal prose are judgement calls (plan §7).

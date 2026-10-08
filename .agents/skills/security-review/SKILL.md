@@ -38,7 +38,7 @@ web-app themes that have no surface in this repo.
    interpolated into `run:`; `persist-credentials: false`; action refs pinned.
    A change to one lane's wrapper that belongs in `scripts/ci/*.sh` is a
    finding (CLAUDE.md: steps live in the script, wrappers differ only in setup).
-5. **Headed-public invariant** — no host paths, LAN IPs, usernames, or personal
+5. **Public-repo invariant** — no host paths, LAN IPs, usernames, or personal
    data in committed files or in anything that ships. `git ls-files` for
    `.env`, keys, `local/`; fixtures must use `.invalid`/`.example` and
    sequential-alphabet seeds and be listed in `.gitleaksignore`.

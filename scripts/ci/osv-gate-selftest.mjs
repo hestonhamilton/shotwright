@@ -205,7 +205,40 @@ await check('runtime dependency names are reported as a policy failure', () => {
     (error) =>
       error instanceof GateError &&
       error.kind === 'policy' &&
-      error.message.includes('alpha, zeta'),
+      error.message.includes('alpha (dependencies), zeta (dependencies)'),
+  )
+})
+
+await check('optional, peer and bundled dependencies are runtime dependencies too', () => {
+  for (const [key, value] of [
+    ['optionalDependencies', '{"opt":"1"}'],
+    ['peerDependencies', '{"peer":"1"}'],
+    ['bundledDependencies', '["bun"]'],
+    ['bundleDependencies', '["bun"]'],
+  ]) {
+    assert.throws(
+      () => validateRuntimePackage(`{"${key}":${value}}`),
+      (error) =>
+        error instanceof GateError && error.kind === 'policy' && error.message.includes(`(${key})`),
+      key,
+    )
+  }
+  assert.throws(
+    () => validateRuntimePackage('{"peerDependencies":"nope"}'),
+    (error) => error instanceof GateError && error.kind === 'indeterminate',
+  )
+})
+
+await check('the ADR 0002 peer dependency is the only peer the gate accepts', () => {
+  validateRuntimePackage('{"peerDependencies":{"@playwright/test":">=1.60 <2"}}')
+  assert.throws(
+    () => validateRuntimePackage(
+      '{"peerDependencies":{"@playwright/test":">=1.60 <2","left-pad":"1"}}',
+    ),
+    (error) =>
+      error instanceof GateError &&
+      error.kind === 'policy' &&
+      error.message === 'shotwright has runtime dependencies: left-pad (peerDependencies)',
   )
 })
 

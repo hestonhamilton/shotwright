@@ -1,6 +1,7 @@
 # ADR 0007 — CI ships as a same-owner-private reusable workflow with a two-input surface
 
-- **Status:** accepted (mechanism moot per ADR 0011)
+- **Status:** accepted (mechanism moot per ADR 0011; decision 3 superseded — the
+  consumer template pins a release tag, `shotwright-746.18.28`, 2026-10-05)
 - **Date:** 2026-07-30
 - **Bead:** `shotwright-746.7` (E7 CI workflow)
 - **Phase the decision landed in:** R (sharing scope), P (input surface, ref pinning)
@@ -41,7 +42,9 @@ Detail in `docs/shotwright-746.7.1-research.md` and
 2. **The reusable workflow exposes exactly two inputs:** `mode`
    (`consumer` | `self`) and `config-path`. A generic `run-command` input is
    forbidden — it would turn the workflow into arbitrary shell plumbing.
-3. **The generated consumer template pins `@main`.**
+3. **The generated consumer template pins `@main`.** *(Superseded 2026-10-05:
+   the template pins the release tag, `@v0.1.0` at 0.1.0, so a breaking change
+   to the reusable workflow no longer reaches consumers silently.)*
 
 `mode` exists for an empirical reason, not a stylistic one: `pnpm exec
 shotwright` does **not** resolve inside shotwright's own repo (a package is not
@@ -79,7 +82,13 @@ one. Two values, both exercised today.
 
 ## Reversal
 
-Supersedes nothing. Amends the acceptance criterion on `shotwright-746.7`, which
+Decision 3 was reversed by `shotwright-746.18.28` on 2026-10-05: with the
+repository public and the package on npm, a mutable `@main` ref would let a
+breaking change to the workflow reach every consumer at once, which the private,
+same-owner premise had made acceptable. The template now pins the release tag,
+and `docs/release-runbook.md` 2.4b protects tags after publishing.
+
+Supersedes nothing else. Amends the acceptance criterion on `shotwright-746.7`, which
 originally read "callable from another repo" without qualification — that
 wording was written before anyone checked GitHub's private-repo constraint, and
 it could not have been satisfied as literally stated while the repo stayed
