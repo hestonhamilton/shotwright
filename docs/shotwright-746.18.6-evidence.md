@@ -286,8 +286,10 @@ Stated as gaps rather than rounded up.
    service versions and billing state gone, delegated-agent provenance made
    neutral, the orchestrator skill removed from the tree. Accepted and left as
    is, with reasons: the four commit author identities (owner-accepted,
-   `2sr.1-research`); the word "Codex" where it names the `codex-jobs` tooling
-   itself; "private, headed public" wording, which the flip corrects. The
+   `2sr.1-research`); "private, headed public" wording, which the flip corrects.
+   (The `codex-jobs` skill and the `.codex/` CLI config, accepted at the time
+   as named tooling, were removed from the tree on 2026-10-07 by owner
+   decision, `shotwright-746.18.35`.) The
    mockup HTML files were grepped for the same identifier list and are clean.
    This script's digest did not change, because the sweep it digests covers
    identifiers, not prose.
