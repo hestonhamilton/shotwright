@@ -135,8 +135,25 @@ grep -q '"version": "0.1.0-rc.1"' package.json       # the version you mean to b
 npm publish "$tarball" --tag next --access public
 ```
 
-`--tag next` is explicit. npm now requires a tag for prereleases and only applies
-`latest` above the current highest non-prerelease, but do not lean on the guard.
+`--tag next` is explicit, and npm requires a tag for prereleases. **It did not
+keep the rc off `latest`.** Measured at the bootstrap (2026-10-08): with no
+non-prerelease version in existence, the registry set `latest` to `0.1.0-rc.1`
+as well as `next`, so a bare `npm install shotwright` resolved the rc until
+`0.1.0` was published 49 minutes later and took `latest` over. Nothing needs
+doing about it, but do not announce the package name between the two publishes,
+and check the tags in 2.5 once the stable version is out.
+
+**A second version appears that you did not publish.** The same publish left a
+two-file `shotwright@0.0.0-stage` on the registry, timestamped two and a half
+minutes before `0.1.0-rc.1` — npm's staged-publish placeholder. The owner
+unpublished it after `0.1.0` shipped. If it reappears on a future laptop
+publish, `npm unpublish shotwright@0.0.0-stage` is the command, and any login
+session opened for it is closed as in 1.4. That is the one
+unpublish this runbook has ever sanctioned: the version number it burns is one
+nobody wants, and section 3's rule against unpublishing as a *mitigation* is
+unaffected. The registry's `time` map still lists `0.0.0-stage` afterwards;
+`versions` does not, and that is the field to read.
+
 Passing the tarball path to `npm publish` is what makes "the file the gate
 scanned" and "the file npm uploads" the same bytes; `realpath` matters because
 npm reads a bare relative path with a slash as GitHub shorthand (section 2.3).
@@ -178,13 +195,24 @@ step; the branch policy lives in repository settings, where a branch cannot
 edit it.
 
 **Then the trusted publisher.** On `npmjs.com/package/shotwright/access` — the
-**package's** access page, not account settings — or from the terminal (needs
-npm ≥ 11.10.0; local npm was 11.13.0 as of 2026-10-05):
+**package's** access page, not account settings — or from the terminal, which
+needs **npm ≥ 11.15.0**:
 
 ```
-npm trust github shotwright --file release.yml --repo hestonhamilton/shotwright --environment npm-publish
+npm --version                 # 11.15.0 or newer, or stop and upgrade first
+npm trust github shotwright --file release.yml --repo hestonhamilton/shotwright --environment npm-publish --allow-publish
 npm trust list shotwright     # confirm exactly one relationship: release.yml, environment npm-publish
 ```
+
+Both the version floor and `--allow-publish` are load-bearing. Since 2026-05-20
+the registry requires every trust relationship to name a permission
+(`--allow-publish` or `--allow-stage-publish`). npm 11.15.0 and later refuse
+client-side with a message when the flag is missing; older CLIs that have the
+`trust` command (11.10.0 onward) send the old payload and get a **bare
+`400 Bad Request`** with no explanation. Measured 2026-10-08 on npm 11.13.0,
+which an earlier revision of this section named as sufficient. `release.yml`
+runs a plain `npm publish`, so `--allow-publish` is the one that matches;
+`--allow-stage-publish` would register a relationship the workflow cannot use.
 
 The `--file` is the workflow filename as it appears under `.github/workflows/`;
 the trust check matches on it, so renaming the workflow later silently breaks
@@ -238,6 +266,42 @@ very first release after the rc bootstrap, pick `patch` (section 1.5).
 Pushing to `main` runs `.github/workflows/version.yml`, which opens or updates a
 Version PR bumping the version and writing `CHANGELOG.md`. Merging it is
 **human gate 1**.
+
+**The Version PR is only opened if a repository setting allows it.** *Settings →
+Actions → General → Workflow permissions → Allow GitHub Actions to create and
+approve pull requests* must be on. It was off at the first release (2026-10-08),
+and with it off `changesets/action` cannot open a pull request with
+`GITHUB_TOKEN`: the changeset merges and no Version PR ever appears. Check it
+before the first changeset lands, and after anything that resets repository
+settings:
+
+```
+gh api repos/hestonhamilton/shotwright/actions/permissions/workflow
+# want: "can_approve_pull_request_reviews": true
+gh api -X PUT repos/hestonhamilton/shotwright/actions/permissions/workflow \
+  -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+```
+
+Keep `default_workflow_permissions` at `read` in that call; the endpoint sets
+both fields.
+
+**The Version PR does not get a `verify` run by itself, and cannot merge
+without one.** GitHub does not start `pull_request` workflows for events caused
+by `GITHUB_TOKEN`, so a PR opened by `changesets/action` arrives with only the
+CodeQL default-setup checks. The required `verify` check never reports and the
+`main` ruleset blocks the merge (`mergeStateStatus: BLOCKED`). Measured on the
+first Version PR, #9. To get the check, the **owner closes the PR and reopens
+it**: the reopen is an owner-caused event, `verify` runs on it, and the PR
+becomes mergeable when it passes. The same rule means a later update of the
+Version PR by the bot (another changeset merging to `main`) is also unverified
+— that case has not been exercised here yet — so close and reopen again after
+the last update, and merge only on a `verify` run for the PR's current head.
+
+**The forge lane is absent for a Version PR by construction.** The bot's branch
+is pushed by Actions to GitHub only, never through the two-URL `origin` that
+reaches the forge, so `scripts/forge-ci-status.sh` reports no runs for its
+head, which that script treats as not-green. That is expected here, not a
+standby failure, and the forge is advisory in any case.
 
 > Known convention friction: the Version PR's commit is
 > `chore: version packages`, which does not match this repo's
@@ -311,8 +375,12 @@ irreversible one. Check before you click:
       for **this run** is green and the packed file set in its log matches the
       check below. Approval is the last point at which nothing has happened.
 - [ ] The packed file set in the run log is what you expect — baseline is
-      **44 files, 57.2 kB packed**, and `scripts/ci/expected-files.txt` lists
-      every one of them. A jump to 200 files is a caught mistake.
+      **45 files, 59.8 kB packed** (since `NOTICE` shipped,
+      `shotwright-746.18.36`), and `scripts/ci/expected-files.txt` lists every
+      one of them. The authoritative figures are `BASELINE_FILES` and
+      `BASELINE_PACKED` in `scripts/ci/leak-gate.sh`, which the gate prints; if
+      this line disagrees with them, this line is stale. A jump to 200 files is
+      a caught mistake.
 - [ ] `dist-tag` is right. `next` for anything with a prerelease suffix. The
       workflow also enforces the pairing, so a mismatch fails before packing.
 - [ ] The version number is one you are willing to burn permanently.
@@ -354,6 +422,19 @@ pnpm exec shotwright --help                      # exit 0, usage on stdout
 ```
 
 No credentials configured — that is the point of the check.
+
+After a **stable** publish, also confirm the tags and the version list, because
+the bootstrap left `latest` on the rc until the first stable version replaced it
+(section 1.2):
+
+```
+npm view shotwright dist-tags versions --json
+# latest must be the stable version just published; next stays on the newest
+# prerelease; versions must not contain 0.0.0-stage
+```
+
+As of 2026-10-08 that reads `latest: 0.1.0`, `next: 0.1.0-rc.1`, and exactly
+those two versions.
 
 Then open `npmjs.com/package/shotwright` and confirm the **provenance
 attestation badge**. npm's docs say trusted publishing generates provenance

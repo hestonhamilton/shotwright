@@ -338,3 +338,7 @@ Stated as gaps rather than rounded up.
    `scripts/dolt-ref-inspect-selftest.sh`, dismiss them as test fixtures — they
    are the adjudicated findings in section 1 and listed in `.gitleaksignore`.
 10. Record the flip date and this pack's path on `shotwright-746.18.6`, then close it.
+11. Added after the flip (`shotwright-746.18.37`): turn on *Allow GitHub Actions
+    to create and approve pull requests* (Settings → Actions → General). It was
+    off at the first release and the Version PR could not be opened until it was
+    enabled; `docs/release-runbook.md` section 2.2 has the check and the command.
