@@ -55,7 +55,7 @@
 #               immediately, which is better than this timer's interval.
 #
 # NO HOST NAMES IN THIS FILE. The forge URL is derived at runtime from git
-# config, never hardcoded. This repository is headed public, and the forge
+# config, never hardcoded. This repository is public-facing, and the forge
 # hostname is exactly the shape of string the leak gate does NOT catch — it is
 # not a host path, a private IP, or a username (shotwright-746.18.3).
 set -euo pipefail

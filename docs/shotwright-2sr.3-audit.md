@@ -10,7 +10,7 @@
 
 It records **classifications**. It does not reproduce the values behind them.
 
-This repository is private and headed public (`ADR 0011`), so a document listing
+This repository is public-facing (`ADR 0011`), so a document listing
 the operator username, LAN addresses and machine layout that the sweep found
 would recreate, inside a public repository, exactly the exposure the sweep exists
 to measure. The raw distinct-value listings stay **outside the repository** — the
@@ -32,10 +32,10 @@ git ls-remote https://github.com/<owner>/<repo>.git 'refs/dolt/*' 'refs/heads/*d
 
 | | |
 |---|---|
-| Carrying Dolt refs | **10** |
+| Carrying Dolt refs | several (count withheld; see `shotwright-uke`) |
 | Unreachable (sweep incompleteness) | **0** |
 | Refs present, in every case | `refs/dolt/data` **and** `refs/heads/__dolt_remote_info__` |
-| Visibility of all ten | **private** |
+| Visibility of every one | **private** |
 
 **The count moved.** `shotwright-2sr.1` found **nine** repositories carrying Dolt
 refs on 2026-08-01. This sweep found **ten** on 2026-08-02. This is the reason

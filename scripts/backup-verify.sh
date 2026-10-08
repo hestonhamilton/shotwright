@@ -61,7 +61,7 @@
 # green on exactly the day the NAS is off.
 #
 # NO HOST NAMES OR PATHS IN THIS FILE. The destination comes from
-# SHOTWRIGHT_BACKUP_DEST at runtime. This repository is headed public, and a NAS
+# SHOTWRIGHT_BACKUP_DEST at runtime. This repository is public-facing, and a NAS
 # address is the same shape of string the leak gate does NOT catch
 # (shotwright-746.18.3).
 #
@@ -267,6 +267,6 @@ if is_commit_hash "${remote_commit:-}"; then
   grep -q '"n"' <<<"$known_json" || commit_known=0
 fi
 
-note "destination: $name at ${SHOTWRIGHT_BACKUP_DEST%%:*} (path not logged — headed public)"
+note "destination: $name at ${SHOTWRIGHT_BACKUP_DEST%%:*} (path not logged — public-facing)"
 compare "$local_head" "$work/state.json" "$commit_known" "${darc_count:-0}" \
         "$(date -u +%s)" "$max_age"

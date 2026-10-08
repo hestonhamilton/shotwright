@@ -39,7 +39,7 @@ local/
 
 # `bd backup init` (shotwright-2sr.3) writes the backup destination here as an
 # ABSOLUTE PATH INCLUDING THE OPERATOR USERNAME, and bd does not ignore it. This
-# repository is headed public, and the tarball leak gate would NOT catch it —
+# repository is public-facing, and the tarball leak gate would NOT catch it —
 # that gate scans the packed tarball, and .beads/ is not in `files`. So the
 # ignore has to live here. If a bd upgrade starts ignoring these itself, this
 # becomes redundant rather than wrong.

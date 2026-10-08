@@ -36,10 +36,14 @@ jobs:
 
     steps:
       # This job holds contents: write and pull-requests: write, so the token
-      # is NOT persisted into .git/config: pnpm install and the version script
-      # run arbitrary dependency code and must not find a write token there.
-      # Nothing below needs git-level credentials — see the note on the
-      # changesets step for why its push still works.
+      # is NOT persisted into .git/config: pnpm install runs arbitrary
+      # dependency code and must not find a write token there. What this does
+      # NOT achieve, stated plainly (audit 2026-10-07, C-03): changesets/action
+      # itself runs `changeset version` with GITHUB_TOKEN in its environment,
+      # so the changesets dependency tree executes with the write token on
+      # every push to main. That is inherent to the action; the exposure is
+      # this repository's integrity, not the published package, and the
+      # action is SHA-pinned. Nothing else below needs git-level credentials.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0

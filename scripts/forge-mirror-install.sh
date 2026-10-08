@@ -10,7 +10,7 @@
 #
 # The unit files are GENERATED here rather than committed, because a systemd
 # unit needs an absolute ExecStart path and this repository must not carry host
-# paths (headed public). The path is taken from wherever this script is run
+# paths (public-facing). The path is taken from wherever this script is run
 # from, so a worktree installs a timer pointing at that worktree.
 #
 # Requires lingering if the timer should run while logged out:

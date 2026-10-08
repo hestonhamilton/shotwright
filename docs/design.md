@@ -50,7 +50,7 @@ import { shot, walkthrough } from 'shotwright/capture'  // in-spec helpers
 shotwright run [--only checkout,cart] [--video] [--trace]   # drive a shots run
 shotwright gallery [run-id]        # (re)generate + serve the gallery over LAN
 shotwright compare A B             # paired before/after gallery of two runs
-shotwright trace <shot-name>       # open the right trace in show-trace
+shotwright trace <shot-name>       # PLANNED (E5, not yet implemented) — open the trace
 shotwright init                    # scaffold config/spec/skill/CI into a project
 ```
 

@@ -14,7 +14,7 @@
 #
 # The unit files are GENERATED here rather than committed, because a systemd
 # unit needs an absolute ExecStart path and a destination host, and this
-# repository must not carry either (headed public). Same arrangement as
+# repository must not carry either (public-facing). Same arrangement as
 # scripts/forge-mirror-install.sh.
 #
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ command -v systemctl >/dev/null 2>&1 || { echo 'backup-install: systemctl not fo
 # PATH does not include ~/.local/bin, so a timed run would fail at exactly the
 # step that proves the push worked. Resolved at install time and baked into the
 # unit, which lives outside the repository — the path itself must not be
-# committed (headed public).
+# committed (public-facing).
 bd_bin="$(command -v bd || true)"
 [[ -n "$bd_bin" ]] || { echo 'backup-install: bd is not on PATH, so the installed timer could not verify its own pushes' >&2; exit 1; }
 unit_path="$(dirname "$bd_bin"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

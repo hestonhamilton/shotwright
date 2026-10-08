@@ -313,8 +313,8 @@ git ls-remote <remote> 'refs/dolt/*' 'refs/heads/*dolt*'
 
 Verified this phase: the `ls-remote` form returns
 `refs/dolt/data` and `refs/heads/__dolt_remote_info__` for shotwright. R found
-nine repositories carrying Dolt refs on 2026-08-01; the sweep re-derives that set
-rather than trusting the number, since repositories are created between runs.
+other repositories carrying Dolt refs on 2026-08-01; the sweep re-derives that
+set rather than trusting a count, since repositories are created between runs.
 
 Run `dolt-ref-inspect.sh` against every repository that has a ref. Classify per
 §7. **Read-only** — the sweep deletes nothing.
@@ -324,7 +324,7 @@ Run `dolt-ref-inspect.sh` against every repository that has a ref. Classify per
 ### Step B3 — Write the dispositions
 
 One disposition per repository, using the §8 template. shotwright's is already
-decided (delete); the other eight are open and are this epic's work.
+decided (delete); the others are open and are this epic's work.
 
 - **Rollback:** a disposition is a document until Part C actions it.
 

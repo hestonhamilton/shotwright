@@ -80,7 +80,7 @@ walkthrough('checkout', async ({ page }) => {
 ```
 
 `shot(page, name, opts?)` writes `<runDir>/shots/<spec>/<name>.png` and records a
-manifest sidecar. Options: `fullPage` (default true), `clip`, `locator`.
+manifest sidecar. Options: `fullPage` (default true unless `clip` or `locator` is given), `clip`, `locator`.
 
 ## Commands
 
@@ -146,11 +146,12 @@ block a merge at 2am.
 | `src/` | The package: config factory, `shot()` helpers, gallery/compare/CLI |
 | `templates/` | Files `init` scaffolds into a consuming project |
 | `demo/` | Tiny static demo app the harness self-tests against |
-| `docs/` | Design doc, ADRs, release runbook |
+| `docs/` | Design doc, ADRs, release runbook. PR numbers and short SHAs cited in documents dated before 2026-10-05 refer to the private pre-release history, not to this repository's PRs |
 
 ## License
 
-**AGPL-3.0-or-later.** See [`LICENSE`](LICENSE).
+**AGPL-3.0-or-later.** See [`LICENSE`](LICENSE) (the verbatim license text) and
+[`NOTICE`](NOTICE) (the copyright notice); both ship in the npm package.
 
 Two consequences worth knowing before you adopt it, both intended:
 
@@ -163,10 +164,16 @@ Two consequences worth knowing before you adopt it, both intended:
    plain GPL leaves open. The unmodified package carries no such duty; if you do
    modify it and serve the gallery to others, the usual way to comply is a
    visible link to your modified source.
+3. **What `init` writes into your project is yours.** The files `shotwright init`
+   copies into your repository (`shots.config.ts`, the example spec, the CI
+   workflow, the agent skill) are templates for you to edit; you may use, modify
+   and distribute them under any terms you like. The AGPL covers shotwright
+   itself, not your scaffold.
 
 The source for this package is at
-<https://github.com/hestonhamilton/shotwright>; every version from 0.1.0 onward is built
-from a tagged commit there, with npm provenance.
+<https://github.com/hestonhamilton/shotwright>. Releases are published from CI
+with npm provenance attestations, from a tagged commit; check the package's npm
+page for the attestation on the version you install.
 
 If those terms do not work for your project, that is a real answer — open an issue
 rather than working around the license. The reasoning is recorded in

@@ -224,6 +224,9 @@ export function parsePolicy(text, today = new Date().toISOString().slice(0, 10))
   return exceptions
 }
 
+// The peer dependencies shotwright is allowed to declare (ADR 0002).
+const ALLOWED_PEER_DEPENDENCIES = new Set(['@playwright/test'])
+
 export function validateRuntimePackage(text) {
   let packageJson
   try {
@@ -234,15 +237,41 @@ export function validateRuntimePackage(text) {
   if (!isPlainObject(packageJson)) {
     throw new GateError('indeterminate', 'package.json must contain an object')
   }
-  const dependencies = packageJson.dependencies
-  if (dependencies !== undefined && !isPlainObject(dependencies)) {
-    throw new GateError('indeterminate', 'package.json dependencies must be an object')
+  // Every key that makes a package install something alongside shotwright, not
+  // only `dependencies`: an optional or bundled dependency reaches the consumer
+  // just the same, and until 2026-10-07 the invariant quietly checked one key
+  // of the four (audit C-04). bundledDependencies is the documented spelling;
+  // bundleDependencies is the alias npm also honours. Peer dependencies are
+  // the consumer's own install, and ADR 0002 names the one shotwright may
+  // declare; any other peer is a policy failure like a runtime dependency.
+  const runtimeKeys = [
+    'dependencies',
+    'optionalDependencies',
+    'peerDependencies',
+    'bundledDependencies',
+    'bundleDependencies',
+  ]
+  const found = []
+  for (const key of runtimeKeys) {
+    const value = packageJson[key]
+    if (value === undefined) continue
+    if (Array.isArray(value) && key.startsWith('bundle')) {
+      for (const name of value) found.push(`${name} (${key})`)
+      continue
+    }
+    if (!isPlainObject(value)) {
+      throw new GateError('indeterminate', `package.json ${key} must be an object`)
+    }
+    for (const name of Object.keys(value)) {
+      if (key === 'peerDependencies' && ALLOWED_PEER_DEPENDENCIES.has(name)) continue
+      found.push(`${name} (${key})`)
+    }
   }
-  const names = Object.keys(dependencies ?? {}).sort()
-  if (names.length > 0) {
+  found.sort()
+  if (found.length > 0) {
     throw new GateError(
       'policy',
-      `shotwright has runtime dependencies: ${names.join(', ')}`,
+      `shotwright has runtime dependencies: ${found.join(', ')}`,
     )
   }
 }

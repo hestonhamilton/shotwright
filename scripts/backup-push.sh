@@ -67,7 +67,7 @@
 # dropped mid-push leaves the destination pointing at its previous complete
 # state rather than at chunks that never arrived.
 #
-# NO HOST NAMES OR PATHS IN THIS FILE (headed public). The destination comes
+# NO HOST NAMES OR PATHS IN THIS FILE (public-facing). The destination comes
 # from the environment; the systemd unit carrying it is generated at install
 # time and lives outside the repository.
 set -euo pipefail

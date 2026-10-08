@@ -1,6 +1,7 @@
 # Layers B and C of the tarball leak gate.
 #
-# Layer C is gitleaks' default credential ruleset, pulled in by [extend] below.
+# Layer C is gitleaks' default credential ruleset, run as a SEPARATE pass by
+# leak-gate.sh (never merged in via [extend] — see the measurement below).
 # Layer B is the four shotwright-specific rules that follow — those are the
 # load-bearing part. No secret scanner looks for host paths; that is not what
 # they are for.
