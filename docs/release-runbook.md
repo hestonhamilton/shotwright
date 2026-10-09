@@ -285,17 +285,42 @@ gh api -X PUT repos/hestonhamilton/shotwright/actions/permissions/workflow \
 Keep `default_workflow_permissions` at `read` in that call; the endpoint sets
 both fields.
 
-**The Version PR does not get a `verify` run by itself, and cannot merge
-without one.** GitHub does not start `pull_request` workflows for events caused
-by `GITHUB_TOKEN`, so a PR opened by `changesets/action` arrives with only the
-CodeQL default-setup checks. The required `verify` check never reports and the
-`main` ruleset blocks the merge (`mergeStateStatus: BLOCKED`). Measured on the
-first Version PR, #9. To get the check, the **owner closes the PR and reopens
-it**: the reopen is an owner-caused event, `verify` runs on it, and the PR
-becomes mergeable when it passes. The same rule means a later update of the
-Version PR by the bot (another changeset merging to `main`) is also unverified
-— that case has not been exercised here yet — so close and reopen again after
-the last update, and merge only on a `verify` run for the PR's current head.
+**The Version PR's `verify` run is created but parked, and the PR cannot merge
+until someone approves it.** When a workflow opens or updates a pull request
+with `GITHUB_TOKEN`, GitHub creates the `pull_request` runs in an
+approval-required state and waits for a user with write access. The PR shows
+only the CodeQL default-setup checks, the required `verify` check has not
+reported, and the `main` ruleset blocks the merge (`mergeStateStatus: BLOCKED`).
+Approve the run in either of two ways:
+
+- On the PR page, select **Approve workflows to run**.
+- From a terminal:
+
+  ```
+  sha="$(gh pr view <pr> --json headRefOid --jq .headRefOid)"
+  gh api "repos/hestonhamilton/shotwright/actions/runs?head_sha=$sha" \
+    --jq '.workflow_runs[] | select(.conclusion=="action_required") | [.id, .name] | @tsv'
+  gh api -X POST repos/hestonhamilton/shotwright/actions/runs/<run-id>/approve
+  ```
+
+Measured on Version PR #12 (2026-10-09): the parked `Verify` run restarted as
+attempt 2, passed, and the PR went from `BLOCKED` to `CLEAN`. Every update of the
+Version PR by the bot (another push to `main`) produces a new head with a new
+parked run, so approve again after the last update and merge only on a `verify`
+run for the PR's current head.
+
+Closing and reopening the PR as the owner also works, because the reopen is an
+owner-caused event that starts a fresh run. That is what the first release did
+on PR #9, before the parked run was noticed. Treat it as a fallback.
+
+Two alternatives were considered and are not used. A `workflow_dispatch`
+trigger on `verify.yml` does not help: a dispatched run is not attached to the
+pull request and does not satisfy a ruleset's required check (GitHub,
+"Troubleshooting required status checks"). Opening the Version PR with a GitHub
+App token removes the approval step entirely, and is what GitHub recommends for
+that, but it adds an app and a stored private key to a repository that
+otherwise holds no long-lived write credential. One approval per release is the
+cheaper trade for a single-owner repository.
 
 **The forge lane is absent for a Version PR by construction.** The bot's branch
 is pushed by Actions to GitHub only, never through the two-URL `origin` that
