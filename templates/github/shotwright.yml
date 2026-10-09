@@ -19,7 +19,7 @@ jobs:
     # reusable workflow fixes only the workflow file, not the actions it calls
     # internally. Those are SHA-pinned inside shotwright itself, which is what
     # makes pinning this reference meaningful.
-    uses: hestonhamilton/shotwright/.github/workflows/shotwright.yml@v0.1.0
+    uses: hestonhamilton/shotwright/.github/workflows/shotwright.yml@v0.1.1
     with:
       mode: consumer
       config-path: shots.config.ts
