@@ -300,7 +300,11 @@ export const GALLERY_SCRIPT = `
   });
   dialog.addEventListener('close', () => {
     inspectionSurface.replaceChildren();
-    returnFocus?.focus();
+    // The close event is queued, so input handled before it may already have
+    // moved focus somewhere deliberate. Restore only when focus is still
+    // nowhere useful: on the body, or stranded inside the closed dialog.
+    const active = document.activeElement;
+    if (!active || active === document.body || dialog.contains(active)) returnFocus?.focus();
     returnFocus = null;
   });
 
