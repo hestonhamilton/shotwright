@@ -128,10 +128,15 @@ async function expectFocus(page: Page, locator: Locator): Promise<void> {
       const describe = (node: typeof active) =>
         node === null
           ? 'null'
-          : `<${node.tagName.toLowerCase()}${node.id ? '#' + node.id : ''}${node.className ? '.' + String(node.className).trim().replace(/\s+/g, '.') : ''}>`
+          : `<${node.tagName.toLowerCase()}${node.id ? '#' + node.id : ''}${node.className ? '.' + String(node.className).trim().replace(/\s+/g, '.') : ''}${node
+              .getAttributeNames()
+              .filter((name: string) => name.startsWith('data-'))
+              .map((name: string) => `[${name}="${node.getAttribute(name)}"]`)
+              .join('')}>`
       const dialog = ownerDocument.querySelector('#inspection-dialog') as { open?: boolean } | null
       return {
         activeElement: describe(active),
+        target: describe(target),
         targetConnected: target.isConnected,
         targetVisible: target.getClientRects().length > 0,
         dialogOpen: dialog?.open ?? null,
@@ -265,6 +270,37 @@ describe('gallery browser behavior', () => {
     // actually asserts are the per-shot 2s waitFor and `live <= 3`, both of which
     // still fail fast if the eviction behaviour regresses.
   }, 120_000)
+
+  it('does not pull focus back to the inspect trigger once focus has moved on', async () => {
+    // shotwright-746.17. A dialog's close event is queued, not synchronous, and
+    // input can be handled before it. The 60-shot test above pressed Escape and
+    // then '/', and about one loaded run in ten the queued close handler ran
+    // AFTER '/' had focused the search box and moved focus back to the trigger.
+    // Closing and refocusing in one task reproduces that ordering every time.
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    await page.goto(galleryUrl)
+    const inspect = page.locator('.card').first().locator('[data-inspect]')
+    await inspect.click()
+    expect(await page.locator('#inspection-dialog[open]').count()).toBe(1)
+    const afterClose = await page.evaluate<string>(`(async () => {
+      const closed = new Promise((resolve) => {
+        document.querySelector('#inspection-dialog').addEventListener('close', resolve, { once: true })
+      })
+      document.querySelector('#inspection-dialog').close()
+      document.querySelector('#search').focus()
+      await closed
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      return document.activeElement.id
+    })()`)
+    expect(afterClose).toBe('search')
+
+    // The restore itself still has to work when nothing else took focus.
+    await inspect.click()
+    await page.keyboard.press('Escape')
+    await expectFocus(page, inspect)
+    await context.close()
+  })
 
   it('hides a tall image placeholder while loaded and restores it after bounded eviction', async () => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
