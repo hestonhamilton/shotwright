@@ -427,8 +427,14 @@ git push origin v0.1.0
       update and deletion (Settings → Rules → Rulesets, available once the
       repository is public). Create it with the first release and never
       remove it; a moved tag would silently change every consumer's CI.
-- [ ] When the version bumps, the template's `uses:` line bumps with it in the
-      same Version PR, so `shotwright init` always writes the current tag.
+- [ ] The Version PR's diff includes `templates/github/shotwright.yml`, with
+      the `uses:` line moved to the new tag, so `shotwright init` always writes
+      the current one. `version.yml` runs `pnpm run changeset:version`, which
+      calls `scripts/sync-template-pin.mjs` after `changeset version`, and the
+      unit suite fails if the pin and `package.json` disagree
+      (`shotwright-746.18.39`). The first Version PR after 0.1.0 was opened
+      before that existed and left the pin at `v0.1.0`. To fix a pin by hand,
+      run `node scripts/sync-template-pin.mjs`.
 
 ### 2.5 Verify from outside
 
