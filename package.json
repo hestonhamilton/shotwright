@@ -43,6 +43,7 @@
     "typecheck": "pnpm run build && tsc --noEmit",
     "lint": "eslint . && pnpm run build && publint && attw --pack . --profile esm-only",
     "test": "vitest run test/unit",
+    "changeset:version": "changeset version && node scripts/sync-template-pin.mjs",
     "leak-gate": "scripts/ci/leak-gate.sh",
     "audit-gate": "scripts/ci/audit-gate.sh",
     "smoke": "pnpm run build && vitest run test/smoke",
