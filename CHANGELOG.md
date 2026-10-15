@@ -1,5 +1,11 @@
 # shotwright
 
+## 0.2.0
+
+### Minor Changes
+
+- 474e5c8: Add `shotwright --version` (and `-v`), which prints the installed package version. It helps with bug reports and with checking which version pnpm actually resolved.
+
 ## 0.1.1
 
 ### Patch Changes
