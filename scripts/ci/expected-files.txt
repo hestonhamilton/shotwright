@@ -76,6 +76,8 @@ dist/runs.d.ts
 dist/runs.js
 dist/templates.d.ts
 dist/templates.js
+dist/version.d.ts
+dist/version.js
 package.json
 templates/github/shotwright.yml
 templates/init/gitignore.snippet

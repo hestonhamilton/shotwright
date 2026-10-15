@@ -10,6 +10,7 @@ import {
   formatGallerySelection,
   helpFor,
   isLanExposure,
+  isVersionRequest,
   misplacedSeparatorWarnings,
   parseCompareArgs,
   parseGalleryArgs,
@@ -376,6 +377,7 @@ describe('helpFor', () => {
     expect(text).toContain('Usage: shotwright gallery')
     expect(text).toContain('Usage: shotwright compare')
     expect(text).toContain('Usage: shotwright init')
+    expect(text).toContain('Usage: shotwright --help | --version')
   })
 
   it.each([
@@ -404,4 +406,18 @@ describe('helpFor', () => {
   it('falls back to the full usage for help on an unknown command', () => {
     expect(helpFor(['help', 'nope'])).toContain('Usage: shotwright gallery')
   })
+})
+
+describe('isVersionRequest', () => {
+  // shotwright-746.18.19: a public CLI needs to say which version pnpm resolved.
+  it.each([[['--version']], [['-v']]])('%j is a version request', (argv) => {
+    expect(isVersionRequest(argv)).toBe(true)
+  })
+
+  it.each([[[]], [['run', '--version']], [['run', '--', '--version']], [['-V']], [['version']]])(
+    '%j is not a version request',
+    (argv) => {
+      expect(isVersionRequest(argv)).toBe(false)
+    },
+  )
 })

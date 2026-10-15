@@ -36,6 +36,7 @@ import {
   planInit,
 } from './init.js'
 import { readTemplate } from './templates.js'
+import { shotwrightVersion } from './version.js'
 
 export interface RunArgs {
   only: string | null
@@ -64,7 +65,8 @@ const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--con
 const GALLERY_USAGE = `Usage: shotwright gallery [run-id] [--config <path>] [--host <host>] [--port <port>] [--lan]`
 const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest> <run-b|latest> [--config <path>]`
 const INIT_USAGE = `Usage: shotwright init [--dry-run]`
-const USAGE = `${RUN_USAGE}\n${GALLERY_USAGE}\n${COMPARE_USAGE}\n${INIT_USAGE}`
+const GLOBAL_USAGE = `Usage: shotwright --help | --version`
+const USAGE = `${RUN_USAGE}\n${GALLERY_USAGE}\n${COMPARE_USAGE}\n${INIT_USAGE}\n${GLOBAL_USAGE}`
 
 const COMMAND_USAGE: Readonly<Record<string, string>> = {
   run: RUN_USAGE,
@@ -73,6 +75,17 @@ const COMMAND_USAGE: Readonly<Record<string, string>> = {
   init: INIT_USAGE,
 }
 const HELP_FLAGS = new Set(['--help', '-h'])
+const VERSION_FLAGS = new Set(['--version', '-v'])
+
+/**
+ * Whether argv asks for the version: `--version` or `-v` as the FIRST argument
+ * only, so `run -- --version` still reaches Playwright untouched (ADR 0006).
+ * For bug reports and for checking which version pnpm actually resolved, which
+ * pnpm 11's minimumReleaseAge can make differ from the newest (shotwright-746.18.19).
+ */
+export function isVersionRequest(argv: readonly string[]): boolean {
+  return argv[0] !== undefined && VERSION_FLAGS.has(argv[0])
+}
 
 /**
  * The usage text a help request asks for, or null when argv is not one.
@@ -487,6 +500,11 @@ async function init(argv: string[]): Promise<number> {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2)
+  if (isVersionRequest(argv)) {
+    console.log(shotwrightVersion())
+    process.exitCode = 0
+    return
+  }
   const help = helpFor(argv)
   if (help !== null) {
     console.log(help)

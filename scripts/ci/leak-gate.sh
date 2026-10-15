@@ -40,9 +40,10 @@ source "$root/scripts/ci/gitleaks-pin.sh"
 # away within two releases. Layer A is the check; this is situational awareness.
 # NOTICE became the 45th file on 2026-10-07 when the copyright notice moved out
 # of LICENSE (shotwright-746.18.36); npm does not ship it unconditionally, so it
-# is in package.json `files` and in the allowlist.
-BASELINE_FILES=45
-BASELINE_PACKED="59.8 kB"
+# is in package.json `files` and in the allowlist. dist/version.js and its .d.ts
+# made 47 on 2026-10-14 (shotwright-746.18.19, the --version flag).
+BASELINE_FILES=47
+BASELINE_PACKED="60.5 kB"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

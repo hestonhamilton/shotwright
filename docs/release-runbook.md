@@ -400,8 +400,8 @@ irreversible one. Check before you click:
       for **this run** is green and the packed file set in its log matches the
       check below. Approval is the last point at which nothing has happened.
 - [ ] The packed file set in the run log is what you expect — baseline is
-      **45 files, 59.8 kB packed** (since `NOTICE` shipped,
-      `shotwright-746.18.36`), and `scripts/ci/expected-files.txt` lists every
+      **47 files, 60.5 kB packed** (since `dist/version.js` shipped,
+      `shotwright-746.18.19`), and `scripts/ci/expected-files.txt` lists every
       one of them. The authoritative figures are `BASELINE_FILES` and
       `BASELINE_PACKED` in `scripts/ci/leak-gate.sh`, which the gate prints; if
       this line disagrees with them, this line is stale. A jump to 200 files is
@@ -450,6 +450,7 @@ printf 'minimum-release-age=0\n' > .npmrc        # this directory only
 pnpm add -D shotwright@0.1.0-rc.1                # or shotwright@0.1.0 for the stable
 pnpm list shotwright                             # the version you just published, not an older one
 pnpm exec shotwright --help                      # exit 0, usage on stdout
+pnpm exec shotwright --version                   # prints that same version (0.2.0 and later)
 ```
 
 No credentials configured — that is the point of the check.
