@@ -20,13 +20,7 @@ import { formatGalleryDiagnostics, generateGallery } from './gallery/generate.js
 import { assembleManifest, type TestArtifacts } from './manifest.js'
 import { publishManifest, updateLatestSymlink, SIDECAR_DIR } from './runs.js'
 import { readSidecars } from './manifest.js'
-
-function shotwrightVersion(): string {
-  const pkg = JSON.parse(
-    fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-  ) as { version: string }
-  return pkg.version
-}
+import { shotwrightVersion } from './version.js'
 
 export default class ShotwrightReporter implements Reporter {
   private startedAt = ''

@@ -1232,6 +1232,22 @@ describe('shotwright help', () => {
     expect(result.stderr).toBe('')
   })
 
+  // shotwright-746.18.19: the built CLI reads the version from the package's own
+  // package.json, so it must match exactly what the Version PR wrote there.
+  it.each([['--version'], ['-v']])('%s exits 0 and prints only the package version', (flag) => {
+    const { version } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as {
+      version: string
+    }
+    const result = spawnSync(process.execPath, ['dist/cli.js', flag], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe(`${version}\n`)
+    expect(result.stderr).toBe('')
+  })
+
   it('an unknown command still exits 1 with usage on stderr', () => {
     const result = spawnSync(process.execPath, ['dist/cli.js', 'nope'], {
       cwd: root,
