@@ -26,6 +26,16 @@ repo_root() {
   # The job registry is keyed by cwd and the sandbox's writable root is
   # inherited from it, so every companion call runs from the primary repo root
   # — this makes wait/status/result work from any worktree.
+  #
+  # CODEX_JOB_ROOT overrides that: set it to a bead worktree to run a SEPARATE
+  # broker (and so a separate account, via CODEX_HOME) whose writable root is
+  # just that worktree. The registry is then per worktree, so wait/status/result
+  # for that job need the same CODEX_JOB_ROOT.
+  if [ -n "${CODEX_JOB_ROOT:-}" ]; then
+    [ -d "$CODEX_JOB_ROOT" ] || { echo "codex-job.sh: CODEX_JOB_ROOT is not a directory: $CODEX_JOB_ROOT" >&2; exit 5; }
+    printf '%s\n' "$CODEX_JOB_ROOT"
+    return
+  fi
   dirname "$(git rev-parse --path-format=absolute --git-common-dir)"
 }
 

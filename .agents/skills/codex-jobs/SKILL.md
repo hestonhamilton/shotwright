@@ -22,6 +22,12 @@ id=$(.agents/skills/codex-jobs/scripts/codex-job.sh dispatch --write "<prompt>")
   hide jobs), so it is safe to invoke from any worktree. Bead worktrees live
   *inside* the primary checkout (`<repo>/<bead-id>/`), so a `--write` task can
   edit them; `.git` stays read-only and the orchestrator commits.
+- **Two accounts at once:** a broker is per cwd and pins one account, so to
+  drain both accounts in parallel give the second lane its own cwd. Run the
+  wrapper with `CODEX_JOB_ROOT=<bead worktree> CODEX_HOME=~/.codex-accounts/tab`
+  on dispatch; that lane's writable root is just that worktree (its `.git` is
+  a pointer file, reads fine), and its `wait`/`status`/`result` calls need the
+  same `CODEX_JOB_ROOT`. The brief then names paths relative to the worktree.
 - Model and effort come from the config default (gpt-6-sol); pass `--model` /
   `--effort` only when `/codex-dispatch` says the task calls for it.
 - Always `--write` for implementation, repair, and anything that must run

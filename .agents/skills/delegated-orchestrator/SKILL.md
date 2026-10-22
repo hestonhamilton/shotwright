@@ -57,7 +57,8 @@ codex-acct pick                 # the account the tier waterfall would choose no
   spawn. Confirm no job is running on this cwd (`codex-job.sh status --all`),
   then `codex-acct restart`, then dispatch with `CODEX_HOME=<home>` set on the
   `codex-job.sh dispatch` call; the respawned broker inherits it. One cwd
-  carries one account at a time, so the two accounts drain in sequence.
+  carries one account at a time. To drain both at once, give the second
+  account its own cwd with `CODEX_JOB_ROOT=<bead worktree>` (`/codex-jobs`).
 - `usage` reads each account's own token, so it can report an expired token
   for an account that is healthy. Treat that as "unknown", switch once, retry.
 - Both homes carry a hand-mirrored `[sandbox_workspace_write]` table. The
