@@ -1,0 +1,34 @@
+# Branch-only proof: exclude this file and proof/** from the merge tree.
+name: consumer CI proof
+
+on:
+  push:
+    branches: [feat/shotwright-746.28.6-e10-consumer-ci]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nested-npm-pass:
+    uses: ./.github/workflows/shotwright.yml
+    with:
+      mode: consumer
+      working-directory: proof/npm-app
+      package-manager: npm
+      playwright-args: '["--grep", "passing nested npm capture"]'
+  nested-npm-fail-upload:
+    uses: ./.github/workflows/shotwright.yml
+    with:
+      mode: consumer
+      working-directory: proof/npm-app
+      package-manager: npm
+      playwright-args: '["--grep", "intentional failure after capture"]'
+  missing-directory:
+    uses: ./.github/workflows/shotwright.yml
+    with:
+      working-directory: proof/does-not-exist
+  missing-package-manager:
+    uses: ./.github/workflows/shotwright.yml
+    with:
+      working-directory: proof/no-package-manager
