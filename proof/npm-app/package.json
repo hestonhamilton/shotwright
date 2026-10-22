@@ -4,7 +4,10 @@
   "type": "module",
   "packageManager": "npm@11.6.2",
   "devDependencies": {
-    "@playwright/test": "~1.63.0",
-    "shotwright": "file:./shotwright-0.1.1.tgz"
+    "@playwright/test": "~1.62.0",
+    "shotwright": "file:../.."
+  },
+  "scripts": {
+    "preinstall": "npm install --prefix ../.. --package-lock=false --ignore-scripts && npm run build --prefix ../.."
   }
 }
