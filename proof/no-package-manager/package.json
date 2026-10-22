@@ -1,9 +1,0 @@
-{
-  "name": "no-package-manager-proof",
-  "private": true,
-  "type": "module",
-  "devDependencies": {
-    "@playwright/test": "~1.62.0",
-    "shotwright": "0.1.1"
-  }
-}

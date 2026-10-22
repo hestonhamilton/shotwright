@@ -1,3 +1,0 @@
-# Throwaway proof fixture for shotwright-746.8.1. Its own workspace root, as in
-# a monorepo consumer whose app lives in a subdirectory.
-minimumReleaseAge: 0
