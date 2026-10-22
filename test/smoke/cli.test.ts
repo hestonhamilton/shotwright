@@ -1315,9 +1315,18 @@ describe('shotwright run against the demo app', () => {
       for (const [name, contents] of otherContents) {
         expect(fs.readFileSync(path.join(compareDir, name))).toEqual(contents)
       }
-      expect(fs.readdirSync(compareDir).sort()).toEqual(before)
+      // The generator owns the stem's HTML, its compare.json sidecar and its diff PNGs; nothing else.
+      const stem = path.basename(defaultFile, '.html')
+      const after = fs.readdirSync(compareDir).sort()
+      const stemOwned = after.filter((name) => name.startsWith(`${stem}.`))
+      expect(stemOwned).toContain(`${stem}.compare.json`)
+      expect(after.filter((name) => !name.startsWith(`${stem}.`))).toEqual(
+        before.filter((name) => name !== path.basename(defaultFile)),
+      )
     } finally {
-      fs.rmSync(defaultFile, { force: true })
+      for (const name of fs.readdirSync(compareDir))
+        if (name.startsWith(`${path.basename(defaultFile, '.html')}.`))
+          fs.rmSync(path.join(compareDir, name), { force: true })
       fs.rmSync(otherFile, { force: true })
     }
   }, 120_000)
