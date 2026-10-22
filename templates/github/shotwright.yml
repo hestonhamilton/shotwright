@@ -9,17 +9,22 @@ permissions:
 
 jobs:
   shotwright:
-    # Pinned to the release tag that matches the shotwright npm version you
-    # installed. A branch ref such as `@main` would mean every push to
-    # shotwright's main immediately changes what your CI runs; a tag only moves
-    # if the upstream tag is moved, and shotwright protects its release tags.
-    # Bump this line when you upgrade the package.
-    #
-    # Pinning this line alone would not be enough on its own — pinning a
-    # reusable workflow fixes only the workflow file, not the actions it calls
-    # internally. Those are SHA-pinned inside shotwright itself, which is what
-    # makes pinning this reference meaningful.
+    # Pin to the release tag matching the installed shotwright npm version.
+    # A branch such as @main could change your CI on every upstream push.
+    # A workflow ref pins only that file; actions it calls could still move.
+    # Shotwright SHA-pins those actions, making this release pin meaningful.
+    # Update the tag when you upgrade the package.
     uses: hestonhamilton/shotwright/.github/workflows/shotwright.yml@v0.1.1
     with:
       mode: consumer
       config-path: shots.config.ts
+      working-directory: .
+      package-manager: pnpm
+      # Traces can include credentials; recording is off by default.
+      traces: false
+    # Caller env does not cross a reusable-workflow boundary. Map the named
+    # SHOTWRIGHT_BASE_URL / USERNAME / PASSWORD secrets explicitly, or use
+    # secrets: inherit when the repository trust boundary permits it.
+    # Uploaded runs include screenshots, videos, failure context, data artifacts, and optional traces;
+    # they can expose anything authenticated flows displayed or fetched. Set retention-days accordingly.
+    # secrets: inherit

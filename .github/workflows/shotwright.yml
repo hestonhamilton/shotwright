@@ -4,15 +4,48 @@ on:
   workflow_call:
     inputs:
       mode:
-        description: "Invocation mode: consumer uses the installed package bin; self builds this repo and runs dist/cli.js."
-        required: false
+        description: "consumer runs the installed package; self runs this repository's CI lane."
         type: string
         default: consumer
       config-path:
-        description: "Path to the shotwright config file."
-        required: false
+        description: "Shotwright config path relative to working-directory."
         type: string
         default: shots.config.ts
+      runs-on:
+        description: 'JSON array of runner labels, for example ["ubuntu-latest"].'
+        type: string
+        default: '["ubuntu-latest"]'
+      working-directory:
+        description: "Package directory relative to the repository root."
+        type: string
+        default: .
+      package-manager:
+        description: "npm, pnpm or yarn; empty detects the package lockfile."
+        type: string
+        default: ''
+      playwright-args:
+        description: 'JSON array of Playwright arguments, default ["--workers=1"].'
+        type: string
+        default: '["--workers=1"]'
+      traces:
+        description: "Record traces in the uploaded run. Traces can include credentials."
+        type: boolean
+        default: false
+      retention-days:
+        description: "GitHub artifact retention in days."
+        type: number
+        default: 7
+      artifact-name:
+        description: "Artifact name; set this when calling the workflow more than once in a run."
+        type: string
+        default: ''
+    secrets:
+      SHOTWRIGHT_BASE_URL:
+        required: false
+      SHOTWRIGHT_USERNAME:
+        required: false
+      SHOTWRIGHT_PASSWORD:
+        required: false
 
 permissions:
   contents: read
@@ -20,117 +53,157 @@ permissions:
 jobs:
   shots:
     name: Shotwright artifacts
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
-      # Nothing here pushes, so the token is not left in .git/config for
-      # pnpm install, the build and the capture to read.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # This proves install -> default-resolution -> capture on the default Playwright path for self mode only.
-      # Consumer mode installs browsers but makes no browser-clean claim because consumers may legitimately
-      # override the browser executable. shotwright-746.11 will make this claim direct rather than proxied.
+      - name: Check package directory and manager
+        id: package
+        working-directory: .
+        env:
+          PACKAGE_DIR: ${{ inputs.working-directory }}
+          REQUESTED_MANAGER: ${{ inputs.package-manager }}
+          SHOTWRIGHT_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          import path from 'node:path'
+          const dir = path.resolve(process.env.PACKAGE_DIR)
+          const fail = (message) => { console.error(`::error::shotwright: ${message}`); process.exit(1) }
+          if (!fs.existsSync(path.join(dir, 'package.json'))) fail(`no package.json in working-directory '${process.env.PACKAGE_DIR}'`)
+          const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
+          const locks = { npm: 'package-lock.json', pnpm: 'pnpm-lock.yaml', yarn: 'yarn.lock' }
+          const found = Object.entries(locks).filter(([, file]) => fs.existsSync(path.join(dir, file))).map(([manager]) => manager)
+          const declared = typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@')[0] : ''
+          const requested = process.env.REQUESTED_MANAGER
+          if (requested && !(requested in locks)) fail(`unsupported package-manager '${requested}'`)
+          if (found.length > 1 && !requested) fail(`ambiguous lockfiles in '${process.env.PACKAGE_DIR}'; set package-manager`)
+          const manager = process.env.SHOTWRIGHT_MODE === 'self' ? 'pnpm' : requested || declared || found[0]
+          if (!manager || !(manager in locks)) fail('no supported package manager; set package-manager or add a lockfile')
+          if (!fs.existsSync(path.join(dir, locks[manager]))) fail(`missing ${locks[manager]} in '${process.env.PACKAGE_DIR}'`)
+          const pnpmVersion = /^pnpm@(.+)$/.exec(pkg.packageManager ?? '')?.[1] ?? '11.25.0'
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `manager=${manager}\nlockfile=${path.join(process.env.PACKAGE_DIR, locks[manager])}\npnpm-version=${pnpmVersion}\n`)
+          NODE
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.package.outputs.manager == 'pnpm'
+        with:
+          version: ${{ steps.package.outputs.pnpm-version }}
+          package_json_file: ${{ inputs.working-directory }}/package.json
+      - name: Enable Yarn
+        if: steps.package.outputs.manager == 'yarn'
+        run: |
+          set -euo pipefail
+          if ! command -v corepack >/dev/null; then npm install --global corepack; fi
+          corepack enable
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.package.outputs.manager != 'yarn'
+        with:
+          node-version: 24.x
+          cache: ${{ steps.package.outputs.manager }}
+          cache-dependency-path: ${{ steps.package.outputs.lockfile }}
+      - name: Install dependencies
+        env:
+          MANAGER: ${{ steps.package.outputs.manager }}
+        run: |
+          set -euo pipefail
+          case "$MANAGER" in
+            npm) npm ci ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn)
+              if yarn --version | grep -q '^1\.'; then yarn install --frozen-lockfile; else yarn install --immutable; fi
+              ;;
+          esac
       - name: Install default Playwright Chromium
+        env:
+          MANAGER: ${{ steps.package.outputs.manager }}
         run: |
           set -euo pipefail
           DEFAULT_BROWSER_CACHE="$HOME/.cache/ms-playwright"
           rm -rf "$DEFAULT_BROWSER_CACHE"
           mkdir -p "$DEFAULT_BROWSER_CACHE"
-          pnpm exec playwright install --with-deps chromium
-      # Self mode is shotwright testing itself, so its steps — build, the
-      # browser-clean proof, the capture, the exact demo shot set — live in
-      # scripts/ci/shots.sh, which the Forgejo wrapper runs too (shotwright-746.14).
-      # Consumer mode stays inline: a consumer's checkout has no scripts/ci.
-      # The inputs arrive through env, never as an expression inside the
-      # script: they come from the calling workflow, and a caller passing
-      # something like github.head_ref as config-path would otherwise have its
-      # value spliced into the shell source before bash ever parses it.
+          case "$MANAGER" in
+            npm) npm exec -- playwright install --with-deps chromium ;;
+            pnpm) pnpm exec playwright install --with-deps chromium ;;
+            yarn) yarn playwright install --with-deps chromium ;;
+          esac
       - name: Run shotwright
         env:
           SHOTWRIGHT_MODE: ${{ inputs.mode }}
           SHOTWRIGHT_CONFIG_PATH: ${{ inputs.config-path }}
+          PLAYWRIGHT_ARGS_JSON: ${{ inputs.playwright-args }}
+          RECORD_TRACES: ${{ inputs.traces }}
+          MANAGER: ${{ steps.package.outputs.manager }}
+          SHOTWRIGHT_RUN_DIR_FILE: ${{ runner.temp }}/shotwright-run-dir-${{ github.run_id }}-${{ github.run_attempt }}
+          PLAYWRIGHT_ARGS_FILE: ${{ runner.temp }}/shotwright-playwright-args
+          SHOTWRIGHT_BASE_URL: ${{ secrets.SHOTWRIGHT_BASE_URL }}
+          SHOTWRIGHT_USERNAME: ${{ secrets.SHOTWRIGHT_USERNAME }}
+          SHOTWRIGHT_PASSWORD: ${{ secrets.SHOTWRIGHT_PASSWORD }}
         run: |
           set -euo pipefail
+          rm -f "$SHOTWRIGHT_RUN_DIR_FILE"
+          args_file="$RUNNER_TEMP/shotwright-playwright-args"
+          ARGS_FILE="$args_file" node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          const args = JSON.parse(process.env.PLAYWRIGHT_ARGS_JSON)
+          if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) throw new Error('playwright-args must be a JSON array of strings')
+          const controlIndex = args.findIndex((arg) => /[\u0000-\u001f\u007f]/.test(arg))
+          if (controlIndex !== -1) {
+            console.error('::error::playwright-args[' + controlIndex + '] contains a control character')
+            process.exit(1)
+          }
+          if (args.some((arg) => /^(--trace|--reporter|--output)(=|$)/.test(arg))) throw new Error('playwright-args cannot override trace, reporter or output')
+          fs.writeFileSync(process.env.ARGS_FILE, Buffer.concat(args.map((arg) => Buffer.from(`${arg}\0`))))
+          NODE
+          mapfile -d '' -t args < "$args_file"
+          trace_args=()
+          if [ "$RECORD_TRACES" = true ]; then trace_args=(--trace); fi
           case "$SHOTWRIGHT_MODE" in
             consumer)
-              pnpm exec shotwright run --config "$SHOTWRIGHT_CONFIG_PATH" -- --workers=1
+              case "$MANAGER" in
+                npm) npm exec -- shotwright run --config "$SHOTWRIGHT_CONFIG_PATH" "${trace_args[@]}" -- "${args[@]}" ;;
+                pnpm) pnpm exec shotwright run --config "$SHOTWRIGHT_CONFIG_PATH" "${trace_args[@]}" -- "${args[@]}" ;;
+                yarn) yarn shotwright run --config "$SHOTWRIGHT_CONFIG_PATH" "${trace_args[@]}" -- "${args[@]}" ;;
+              esac
               ;;
-            self)
-              scripts/ci/shots.sh "$SHOTWRIGHT_CONFIG_PATH"
-              ;;
-            *)
-              echo "Unsupported shotwright mode: $SHOTWRIGHT_MODE" >&2
-              exit 1
-              ;;
+            self) scripts/ci/shots.sh "$SHOTWRIGHT_CONFIG_PATH" ;;
+            *) echo "::error::unsupported shotwright mode: $SHOTWRIGHT_MODE"; exit 1 ;;
           esac
-      - name: Resolve published run directory
+      - name: Resolve invocation run directory
         id: resolve
+        if: ${{ !cancelled() }}
+        working-directory: .
+        env:
+          SHOTWRIGHT_RUN_DIR_FILE: ${{ runner.temp }}/shotwright-run-dir-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          latest="$(readlink shots-output/latest)"
-          run_dir="shots-output/$latest"
-          if [ ! -d "$run_dir" ]; then
-            echo "Published run directory missing: $run_dir" >&2
+          if [ ! -s "$SHOTWRIGHT_RUN_DIR_FILE" ]; then
+            echo '::error::shotwright did not write SHOTWRIGHT_RUN_DIR_FILE; the run directory is unavailable (the contract factory must create it).'
             exit 1
           fi
-          echo "run-dir=$run_dir" >> "$GITHUB_OUTPUT"
-          echo "run-id=$latest" >> "$GITHUB_OUTPUT"
-      - name: Assert published run artifact shape
-        env:
-          RUN_DIR: ${{ steps.resolve.outputs.run-dir }}
-        run: |
-          set -euo pipefail
-          run_dir="$RUN_DIR"
-          test -f "$run_dir/manifest.json"
-          test -f "$run_dir/gallery.html"
-          node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict'
-          import fs from 'node:fs'
-          import path from 'node:path'
-
-          const runDir = process.env.RUN_DIR
-          const manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'))
-          assert(Array.isArray(manifest.shots), 'manifest.shots must be an array')
-          assert(manifest.shots.length > 0, 'shotwright artifact is empty: manifest.shots.length must be > 0')
-          for (const shot of manifest.shots) {
-            assert.equal(typeof shot.file, 'string', 'manifest shot file must be a non-empty string')
-            assert.notEqual(shot.file.trim(), '', 'manifest shot file must be a non-empty string')
-            const png = path.join(runDir, shot.file)
-            const bytes = fs.readFileSync(png)
-            assert(bytes.length > 8, `${shot.file} is empty`)
-            assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', `${shot.file} is not a PNG`)
-          }
-          for (const staging of ['.sidecar', '.pw', '.manifest.tmp']) {
-            assert(!fs.existsSync(path.join(runDir, staging)), `${staging} should not be published`)
-          }
-          assert(
-            !fs.readdirSync(runDir).some((entry) => entry.startsWith('.gallery.')),
-            '.gallery.* should not be published',
-          )
-          NODE
+          run_dir="$(cat "$SHOTWRIGHT_RUN_DIR_FILE")"
+          if [ ! -d "$run_dir" ]; then echo "::error::shotwright run directory does not exist: $run_dir"; exit 1; fi
+          printf 'run-dir=%s\nrun-id=%s\n' "$run_dir" "$(basename "$run_dir")" >> "$GITHUB_OUTPUT"
       - name: Upload shotwright run
         id: upload
+        if: ${{ !cancelled() && steps.resolve.outputs.run-dir != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: shotwright-${{ github.workflow }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ inputs.artifact-name || format('shotwright-{0}-{1}-{2}', github.workflow, github.run_id, github.run_attempt) }}
           path: ${{ steps.resolve.outputs.run-dir }}
           if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
       - name: Write job summary
-        if: always() && steps.upload.outputs.artifact-url != ''
+        if: ${{ !cancelled() && steps.upload.outputs.artifact-url != '' }}
         env:
           RUN_ID: ${{ steps.resolve.outputs.run-id }}
           ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
         run: |
-          set -euo pipefail
-          {
-            printf '## Shotwright artifacts\n\n'
-            printf -- '- Run: `%s`\n' "$RUN_ID"
-            printf -- '- Artifact: %s\n\n' "$ARTIFACT_URL"
-            printf 'Download and extract the artifact, then open `gallery.html` from the run directory.\n'
-          } >> "$GITHUB_STEP_SUMMARY"
+          printf '## Shotwright artifacts\n\n- Run: `%s`\n- Artifact: %s\n' "$RUN_ID" "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"

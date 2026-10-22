@@ -76,7 +76,7 @@ const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--run
 const GALLERY_USAGE = `Usage: shotwright gallery [run-id|--last] [--config <path>] [--host <host>] [--port <port>] [--lan] [--include-traces]. Traces are withheld on a non-loopback bind unless --include-traces is given.`
 const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file.html>] [--fail-on-change]. Exits 0 after writing the page unless --fail-on-change is given and a pair is not identical or similar.`
 const RUNS_USAGE = `Usage: shotwright runs [--config <path>] [--json]`
-const INIT_USAGE = `Usage: shotwright init [--dry-run]`
+const INIT_USAGE = `Usage: shotwright init [--dry-run] [--package-manager npm|pnpm|yarn]`
 const GLOBAL_USAGE = `Usage: shotwright --help | --version`
 const USAGE = `${RUN_USAGE}\n${RUNS_USAGE}\n${GALLERY_USAGE}\n${COMPARE_USAGE}\n${INIT_USAGE}\n${GLOBAL_USAGE}`
 
@@ -852,7 +852,7 @@ export async function compare(
 
 async function init(argv: string[]): Promise<number> {
   const args = parseInitArgs(argv)
-  const plan = planInit(process.cwd(), readTemplate)
+  const plan = planInit(process.cwd(), readTemplate, args.packageManager)
   if (!args.dryRun && plan.notices.length > 0) {
     console.log(plan.notices.join('\n'))
   }

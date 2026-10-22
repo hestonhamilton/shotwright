@@ -43,7 +43,19 @@ if (/(^|[,{]\s*)channel\s*:/.test(config)) {
 NODE
 
 echo "==> shots: run ($config_path)"
-PATH="$root/node_modules/.bin:$PATH" node dist/cli.js run --config "$config_path" -- --workers=1
+if [ -z "${SHOTWRIGHT_RUN_DIR_FILE:-}" ]; then
+  SHOTWRIGHT_RUN_DIR_FILE="$(mktemp)"
+  rm -f "$SHOTWRIGHT_RUN_DIR_FILE"
+  export SHOTWRIGHT_RUN_DIR_FILE
+  trap 'rm -f "$SHOTWRIGHT_RUN_DIR_FILE"' EXIT
+fi
+trace_args=()
+if [ "${RECORD_TRACES:-false}" = true ]; then trace_args=(--trace); fi
+playwright_args=(--workers=1)
+if [ -n "${PLAYWRIGHT_ARGS_FILE:-}" ]; then
+  mapfile -d '' -t playwright_args < "$PLAYWRIGHT_ARGS_FILE"
+fi
+PATH="$root/node_modules/.bin:$PATH" node dist/cli.js run --config "$config_path" "${trace_args[@]}" -- "${playwright_args[@]}"
 
 echo "==> shots: assert demo shot set"
 node --input-type=module <<'NODE'
@@ -67,8 +79,12 @@ assert.deepEqual(
 )
 NODE
 
-run_id="$(readlink shots-output/latest)"
-run_dir="shots-output/$run_id"
+if [ ! -s "$SHOTWRIGHT_RUN_DIR_FILE" ]; then
+  echo "shotwright did not write SHOTWRIGHT_RUN_DIR_FILE" >&2
+  exit 1
+fi
+run_dir="$(cat "$SHOTWRIGHT_RUN_DIR_FILE")"
+run_id="$(basename "$run_dir")"
 if [ ! -d "$run_dir" ]; then
   echo "Published run directory missing: $run_dir" >&2
   exit 1
