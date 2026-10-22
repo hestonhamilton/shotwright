@@ -43,7 +43,9 @@ companion() {
   local p
   p=$(companion_path)
   [ -n "$p" ] || { echo "codex-job.sh: codex-companion.mjs not found" >&2; exit 3; }
-  (cd "$(repo_root)" && node "$p" "$@")
+  local root
+  root=$(repo_root) || exit $?
+  (cd "$root" && node "$p" "$@")
 }
 
 parse_status() {
