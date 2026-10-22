@@ -4,7 +4,8 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { MANIFEST_VERSION, type Manifest } from '../../src/manifest.js'
+import type { Manifest } from '../../src/manifest.js'
+import { makeManifest } from '../fixtures/manifest.js'
 import {
   createRunDir,
   generateRunId,
@@ -25,8 +26,7 @@ afterEach(() => {
 })
 
 function fakeManifest(runId: string): Manifest {
-  return {
-    manifestVersion: MANIFEST_VERSION,
+  return makeManifest({
     runId,
     startedAt: '2026-07-29T00:00:00.000Z',
     finishedAt: '2026-07-29T00:00:01.000Z',
@@ -34,7 +34,7 @@ function fakeManifest(runId: string): Manifest {
     playwrightVersion: '1.62.0',
     flags: { only: [], video: false, trace: false },
     shots: [],
-  }
+  })
 }
 
 describe('generateRunId', () => {
@@ -68,7 +68,7 @@ describe('publishManifest', () => {
     const { runDir, runId } = createRunDir(out)
     publishManifest(runDir, fakeManifest(runId))
     const parsed = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'))
-    expect(parsed.manifestVersion).toBe(1)
+    expect(parsed.manifestVersion).toBe(2)
     expect(fs.existsSync(path.join(runDir, '.manifest.tmp'))).toBe(false)
     expect(isCompleteRun(runDir)).toBe(true)
   })

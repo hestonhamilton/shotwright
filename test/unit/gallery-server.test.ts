@@ -21,7 +21,8 @@ import {
   type GalleryServer,
   type SignalSource,
 } from '../../src/gallery/server.js'
-import { MANIFEST_VERSION, type Manifest, type ShotEntry } from '../../src/manifest.js'
+import type { Manifest, ShotEntry } from '../../src/manifest.js'
+import { makeManifest, makeShot } from '../fixtures/manifest.js'
 import { makePng } from '../fixtures/png.js'
 
 const tmpDirs: string[] = []
@@ -40,7 +41,7 @@ function tmpDir(): string {
 }
 
 function shot(overrides: Partial<ShotEntry> = {}): ShotEntry {
-  return {
+  return makeShot({
     name: 'home',
     spec: 'home.shots.ts',
     file: 'shots/home.png',
@@ -52,12 +53,11 @@ function shot(overrides: Partial<ShotEntry> = {}): ShotEntry {
     video: 'video/shared.webm',
     trace: 'trace/shared.zip',
     ...overrides,
-  }
+  })
 }
 
 function manifest(runId: string, shots: ShotEntry[] = [shot()]): Manifest {
-  return {
-    manifestVersion: MANIFEST_VERSION,
+  return makeManifest({
     runId,
     startedAt: '2026-07-29T00:00:00.000Z',
     finishedAt: '2026-07-29T00:00:01.000Z',
@@ -65,7 +65,7 @@ function manifest(runId: string, shots: ShotEntry[] = [shot()]): Manifest {
     playwrightVersion: '1.62.0',
     flags: { only: [], video: true, trace: true },
     shots,
-  }
+  })
 }
 
 function writeRun(shots: ShotEntry[] = [shot()]): { runDir: string; image: Buffer } {

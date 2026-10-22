@@ -7,13 +7,14 @@
 // `playwright test` runs are unsupported in v1.
 
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import path from 'node:path'
 
 import { test } from '@playwright/test'
 import type { Locator, Page } from '@playwright/test'
 
 import { parseOnly, shouldCapture } from './filter.js'
-import { writeSidecar } from './manifest.js'
+import { readSidecars, writeSidecar } from './manifest.js'
 
 export { parseOnly, shouldCapture }
 
@@ -26,6 +27,7 @@ export interface ShotOptions {
   clip?: { x: number; y: number; width: number; height: number }
   /** Capture this element instead of the page. */
   locator?: Locator
+  check?: () => void | Promise<void>
 }
 
 function unsafePathReason(value: string): string | null {
@@ -74,10 +76,11 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
   const info = test.info()
   const spec = path.relative(info.project.testDir, info.file).split(path.sep).join('/')
   validateSpecPath(spec)
-  const file = `shots/${spec}/${name}.png`
+  const file = `shots/${storageSpec(spec)}/${name}.png`
   const abs = path.join(runDir, file)
   fs.mkdirSync(path.dirname(abs), { recursive: true })
 
+  if (opts.check) await opts.check()
   const fullPage = opts.fullPage ?? (opts.clip === undefined && opts.locator === undefined)
   const started = Date.now()
   if (opts.locator) {
@@ -87,6 +90,7 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
   }
 
   writeSidecar(runDir, {
+    kind: 'shot',
     name,
     spec,
     file,
@@ -96,6 +100,66 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
     capturedAt: new Date(started).toISOString(),
     durationMs: Date.now() - started,
     testId: info.testId,
+    checked: opts.check !== undefined,
+    retry: info.retry,
   })
   console.log(`shot ${name}`)
+}
+
+/** Strip only the final matched suffix; the manifest retains the canonical spec. */
+export function storageSpec(spec: string): string {
+  validateSpecPath(spec)
+  if (!spec.endsWith('.shots.ts')) throw new Error(`shotwright: unsupported spec match ${spec}`)
+  return spec.slice(0, -'.shots.ts'.length)
+}
+export type ArtifactOptions =
+  | { body: string | Buffer; path?: never; contentType: string }
+  | { path: string; body?: never; contentType: string }
+export async function artifact(name: string, opts: ArtifactOptions): Promise<void> {
+  const runDir = process.env.SHOTWRIGHT_RUN_DIR
+  if (!runDir) throw new Error('shotwright: SHOTWRIGHT_RUN_DIR is not set — use `shotwright run`')
+  validateShotName(name)
+  if (!opts || !opts.contentType || !/^[^\s/]+\/[^\s/]+$/.test(opts.contentType))
+    throw new Error('shotwright: artifact contentType must be a MIME type')
+  if ('body' in opts === 'path' in opts)
+    throw new Error('shotwright: artifact needs exactly one body or path')
+  const info = test.info()
+  const spec = path.relative(info.project.testDir, info.file).split(path.sep).join('/')
+  const file = `data/${storageSpec(spec)}/${name}`
+  const dest = path.join(runDir, file)
+  const bytes =
+    'body' in opts
+      ? typeof opts.body === 'string'
+        ? Buffer.from(opts.body)
+        : opts.body
+      : fs.readFileSync(opts.path!)
+  if (!bytes) throw new Error('shotwright: artifact body is missing')
+  fs.mkdirSync(path.dirname(dest), { recursive: true })
+  const tmp = `${dest}.${crypto.randomBytes(8).toString('hex')}.tmp`
+  try {
+    fs.writeFileSync(tmp, bytes)
+    if (fs.existsSync(dest)) {
+      const previous = readSidecars(runDir).filter(
+        (s) => s.kind === 'artifact' && s.spec === spec && s.name === name,
+      )
+      if (
+        !previous.length ||
+        previous.some((s) => s.testId !== info.testId || s.retry >= info.retry)
+      )
+        throw new Error(`shotwright: duplicate artifact name "${name}" in ${spec}`)
+      fs.renameSync(tmp, dest)
+    } else fs.linkSync(tmp, dest)
+    writeSidecar(runDir, {
+      kind: 'artifact',
+      name,
+      spec,
+      file,
+      contentType: opts.contentType,
+      bytes: bytes.length,
+      testId: info.testId,
+      retry: info.retry,
+    })
+  } finally {
+    fs.rmSync(tmp, { force: true })
+  }
 }

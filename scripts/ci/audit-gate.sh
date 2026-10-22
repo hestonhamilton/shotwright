@@ -3,6 +3,11 @@
 #
 # The structured classifier lives in osv-gate.mjs. This stable shell entry point
 # selects the reviewed platform hash and supplies no CI-configurable bypasses.
+#
+# Before any scan, osv-gate.mjs checks a network-free package invariant: the
+# runtime dependencies resolved in pnpm-lock.yaml equal, name and exact version,
+# the reviewed list in scripts/ci/runtime-dependency-allowlist.txt (ADR 0019,
+# amendment 2026-10-22). An empty list means zero runtime dependencies.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import type { Manifest } from '../../src/manifest.js'
+import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const outputDir = path.join(root, 'shots-output')
@@ -24,10 +25,10 @@ const failureMarker = 'induced smoke failure marker'
 const stdoutMarker = 'induced smoke stdout marker'
 const stderrMarker = 'induced smoke stderr marker'
 const galleryFailureMarker = 'shotwright gallery: injected generator failure'
-const intrinsicBadge = 'Published manifest · pass/fail status is not embedded'
+const intrinsicBadge = 'Run status:'
 const syntheticRunId = 'synthetic-gallery-60'
 const corpusGenerator = path.join(root, 'test/fixtures/generate-gallery-corpus.mjs')
-const consumerPnpmStore = path.join(os.tmpdir(), 'shotwright-consumer-pnpm-store')
+const consumerPnpmStore = path.join(root, 'local/consumer-pnpm-store')
 const playwrightBrowsersPath = path.join(os.homedir(), '.cache', 'ms-playwright')
 
 interface CliRun {
@@ -309,7 +310,7 @@ function runCli(cliSpecificArgs: string[], expectedFlags: Flags): CliRun {
     fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'),
   ) as Manifest
 
-  expect(manifest.manifestVersion).toBe(1)
+  expect(manifest.manifestVersion).toBe(2)
   expect(manifest.runId).toBe(runId)
   expect(manifest.playwrightVersion).toMatch(/^\d+\.\d+/)
   expect(manifest.flags).toEqual(expectedFlags)
@@ -491,11 +492,14 @@ function expectInjectedGalleryFailurePreservesRunContract(): void {
       fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'),
     ) as Manifest
 
-    // RT-4: manifest remains published, passed status advances latest, the child
-    // exits nonzero with diagnostics, and both reporter staging areas are cleaned.
+    // A failed gallery is recorded, does not advance latest, and leaves no staging.
     expect(published.runId).toBe(runId)
     expect(published.shots.map((shot) => shot.name)).toEqual(['theme-dark'])
-    expect(fs.readlinkSync(path.join(outputDir, 'latest'))).toBe(runId)
+    expect(published.publication.gallery).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(galleryFailureMarker),
+    })
+    expect(fs.readlinkSync(path.join(outputDir, 'latest'))).toBe(previousLatest)
     expect(fs.existsSync(path.join(runDir, '.sidecar'))).toBe(false)
     expect(fs.existsSync(path.join(runDir, '.pw'))).toBe(false)
     expect(fs.existsSync(path.join(runDir, 'gallery.html'))).toBe(false)
@@ -676,18 +680,37 @@ async function expectVideoRange(): Promise<void> {
 
 async function expectSyntheticGallery(): Promise<void> {
   const syntheticDir = path.join(outputDir, syntheticRunId)
+  const sourceDir = fs.mkdtempSync(path.join(root, 'local/e10-corpus-source-'))
   let running: RunningGallery | null = null
   try {
-    execFileSync(process.execPath, [corpusGenerator, unfilteredRun.runDir, syntheticDir], {
+    fs.writeFileSync(
+      path.join(sourceDir, 'manifest.json'),
+      JSON.stringify({ ...unfilteredRun.manifest, manifestVersion: 1 }),
+    )
+    for (const entry of unfilteredRun.manifest.shots) {
+      const target = path.join(sourceDir, entry.file)
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.copyFileSync(path.join(unfilteredRun.runDir, entry.file), target)
+    }
+    execFileSync(process.execPath, [corpusGenerator, sourceDir, syntheticDir], {
       cwd: root,
       encoding: 'utf8',
       stdio: 'pipe',
       timeout: 30_000,
     })
-    const manifest = JSON.parse(
+    const legacy = JSON.parse(
       fs.readFileSync(path.join(syntheticDir, 'manifest.json'), 'utf8'),
     ) as Manifest
-    expect(manifest.manifestVersion).toBe(1)
+    const manifest = makeManifest({
+      ...legacy,
+      manifestVersion: 2,
+      shots: legacy.shots.map((shot) => makeShot(shot)),
+    })
+    fs.writeFileSync(
+      path.join(syntheticDir, 'manifest.json'),
+      JSON.stringify(manifest, null, 2) + '\n',
+    )
+    expect(manifest.manifestVersion).toBe(2)
     expect(manifest.runId).toBe(syntheticRunId)
     expect(manifest.startedAt).toBe('2020-01-02T03:04:05.000Z')
     expect(manifest.finishedAt).toBe('2020-01-02T03:05:05.000Z')
@@ -738,6 +761,7 @@ async function expectSyntheticGallery(): Promise<void> {
   } finally {
     if (running !== null && running.child.exitCode === null) await stopGallery(running)
     fs.rmSync(syntheticDir, { recursive: true, force: true })
+    fs.rmSync(sourceDir, { recursive: true, force: true })
   }
 }
 
@@ -819,13 +843,17 @@ function createConsumerApp(prefix: string, packageJson: Record<string, unknown>)
 function runPnpm(cwd: string, args: string[], timeout = 180_000): string {
   fs.mkdirSync(consumerPnpmStore, { recursive: true })
   try {
-    return execFileSync('pnpm', args, {
-      cwd,
-      encoding: 'utf8',
-      env: consumerEnv(),
-      stdio: 'pipe',
-      timeout,
-    })
+    return execFileSync(
+      'pnpm',
+      args[0] === 'add' ? [...args, '--store-dir', consumerPnpmStore] : args,
+      {
+        cwd,
+        encoding: 'utf8',
+        env: consumerEnv(),
+        stdio: 'pipe',
+        timeout,
+      },
+    )
   } catch (error) {
     if (!(error instanceof Error)) throw error
     const childError = error as Error & { stdout?: string | Buffer; stderr?: string | Buffer }
@@ -1102,7 +1130,7 @@ describe('shotwright run against the demo app', () => {
     })
     let running: RunningGallery | null = null
     try {
-      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.62.0', 'vite@~8.1.5'])
+      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.63.0', 'vite@~8.1.5'])
       const initOutput = runPnpm(cwd, ['exec', 'shotwright', 'init'])
       expect(initOutput).toContain('shotwright init: detected vite')
       expect(initOutput).toContain('shots.config.ts')
@@ -1150,7 +1178,7 @@ describe('shotwright run against the demo app', () => {
     const packed = packShotwrightPackage('shotwright-collision-pack-')
     const cwd = createConsumerApp('shotwright-consumer-collision-', {})
     try {
-      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.62.0'])
+      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.63.0'])
       const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')) as Record<
         string,
         unknown
@@ -1174,7 +1202,7 @@ describe('shotwright run against the demo app', () => {
     const packed = packShotwrightPackage('shotwright-non-vite-pack-')
     const cwd = createConsumerApp('shotwright-consumer-non-vite-', {})
     try {
-      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.62.0'])
+      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.63.0'])
       const output = runPnpm(cwd, ['exec', 'shotwright', 'init'])
       expect(output).toContain(
         'shotwright init: wrote scaffold with a commented webServer placeholder',
@@ -1194,7 +1222,7 @@ describe('shotwright run against the demo app', () => {
     const packed = packShotwrightPackage('shotwright-symlink-pack-')
     const cwd = createConsumerApp('shotwright-consumer-symlink-', {})
     try {
-      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.62.0'])
+      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.63.0'])
       fs.mkdirSync(path.join(cwd, '.agents', 'skills'), { recursive: true })
       fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true })
       fs.symlinkSync('../.agents/skills', path.join(cwd, '.claude', 'skills'))

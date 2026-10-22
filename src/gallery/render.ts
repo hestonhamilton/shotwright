@@ -277,6 +277,17 @@ export function renderGallery(model: GalleryModel): string {
         </section>`
       : specs
   const only = manifest.flags.only.length === 0 ? 'None' : manifest.flags.only.join(', ')
+  const publication =
+    [
+      !manifest.publication.gallery.ok ? 'gallery failed' : null,
+      !manifest.publication.evidence.ok ? 'evidence failed' : null,
+    ]
+      .filter(Boolean)
+      .join(', ') || 'ok'
+  const statusLine =
+    model.sourceManifestVersion === 1
+      ? 'Run status: unrecorded (manifest v1)'
+      : `Run status: ${manifest.status} · tests: ${manifest.tests.filter((test) => test.status === 'passed').length}/${manifest.tests.length} · publication: ${publication}`
 
   return `<!doctype html>
 <html lang="en">
@@ -294,7 +305,7 @@ export function renderGallery(model: GalleryModel): string {
       <p class="eyebrow">Gallery · spec workbench</p>
       <h1>${escapeHtml(manifest.runId)}</h1>
       <div class="status">
-        <span class="badge durable">Published manifest · pass/fail status is not embedded</span>
+        <span class="badge durable">${escapeHtml(statusLine)}</span>
         <span class="badge">${count(shotCount, 'shot')}</span>
         <span class="badge">${count(model.specs.length, 'spec')}</span>
         <span class="badge">${hasArtifacts ? 'Sibling artifacts grouped by identical manifest path' : 'Video and trace absent in this run'}</span>

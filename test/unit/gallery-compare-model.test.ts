@@ -7,7 +7,8 @@ import type {
   GalleryShot,
   PngModel,
 } from '../../src/gallery/model.js'
-import { MANIFEST_VERSION, type Manifest, type ShotEntry } from '../../src/manifest.js'
+import type { Manifest, ShotEntry } from '../../src/manifest.js'
+import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
 const readableImage: PngModel = {
   width: 100,
@@ -17,7 +18,7 @@ const readableImage: PngModel = {
 }
 
 function entry(name: string, spec: string): ShotEntry {
-  return {
+  return makeShot({
     name,
     spec,
     file: `shots/${name}.png`,
@@ -28,7 +29,7 @@ function entry(name: string, spec: string): ShotEntry {
     durationMs: 42,
     video: null,
     trace: null,
-  }
+  })
 }
 
 function galleryShot(
@@ -51,8 +52,7 @@ function gallery(
   galleryShots: GalleryShot[],
   diagnostics: GalleryDiagnostic[] = [],
 ): GalleryModel {
-  const manifest: Manifest = {
-    manifestVersion: MANIFEST_VERSION,
+  const manifest: Manifest = makeManifest({
     runId,
     startedAt: '2026-07-31T00:00:00.000Z',
     finishedAt: '2026-07-31T00:00:01.000Z',
@@ -60,12 +60,12 @@ function gallery(
     playwrightVersion: '1.62.0',
     flags: { only: [], video: false, trace: false },
     shots: galleryShots.map((shot) => shot.entry),
-  }
+  })
   const specs = [...new Set(galleryShots.map((shot) => shot.entry.spec))].map((spec) => ({
     name: spec,
     shots: galleryShots.filter((shot) => shot.entry.spec === spec),
   }))
-  return { manifest, manifestByteLength: 100, specs, diagnostics }
+  return { manifest, manifestByteLength: 100, specs, diagnostics, sourceManifestVersion: 2 }
 }
 
 function expectCountInvariants(model: CompareModel): void {

@@ -10,6 +10,7 @@ import {
   classifyCanary,
   classifyCurrent,
   parsePolicy,
+  parseRuntimeAllowlist,
   readPnpmLockPackageCount,
   runGate,
   runProcess,
@@ -29,7 +30,33 @@ async function check(name, test) {
   }
 }
 
-function lockfile(packageKey = 'safe-package@1.0.0') {
+function quoteKey(name) {
+  return name.startsWith('@') ? `'${name}'` : name
+}
+
+// `dependencies` maps a root-importer dependency to its resolved version;
+// `snapshots` maps an extra `name@version` snapshot to its dependency edges.
+function lockfile(packageKey = 'safe-package@1.0.0', { dependencies = {}, snapshots = {} } = {}) {
+  const direct = Object.entries(dependencies)
+  const importer =
+    direct.length === 0
+      ? '  .: {}\n'
+      : `  .:\n    dependencies:\n${direct
+          .map(
+            ([name, version]) =>
+              `      ${quoteKey(name)}:\n        specifier: ^${version}\n        version: ${version}\n`,
+          )
+          .join('')}`
+  const extra = Object.entries(snapshots)
+    .map(([key, edges]) => {
+      const list = Object.entries(edges)
+      return list.length === 0
+        ? `  ${quoteKey(key)}: {}\n`
+        : `  ${quoteKey(key)}:\n    dependencies:\n${list
+            .map(([name, version]) => `      ${quoteKey(name)}: ${version}\n`)
+            .join('')}`
+    })
+    .join('\n')
   return `lockfileVersion: '9.0'
 
 settings:
@@ -38,8 +65,7 @@ settings:
 
 importers:
 
-  .: {}
-
+${importer}
 packages:
 
   ${packageKey}: {}
@@ -47,7 +73,32 @@ packages:
 snapshots:
 
   ${packageKey}: {}
-`
+${extra === '' ? '' : `\n${extra}`}`
+}
+
+// The shape of the reviewed production graph: pixelmatch depends on pngjs.
+const reviewedPackage = JSON.stringify({
+  name: 'fixture',
+  dependencies: { pixelmatch: '^8.0.0', pngjs: '^7.0.0' },
+})
+const reviewedAllowlist = '# reviewed\npixelmatch@8.0.0\npngjs@7.0.0\n'
+function reviewedLock({ pngjs = '7.0.0', extraDirect = {}, extraSnapshots = {} } = {}) {
+  return lockfile('safe-package@1.0.0', {
+    dependencies: { pixelmatch: '8.0.0', pngjs, ...extraDirect },
+    snapshots: {
+      'pixelmatch@8.0.0': { pngjs },
+      [`pngjs@${pngjs}`]: {},
+      ...extraSnapshots,
+    },
+  })
+}
+
+function expectPolicy(action, fragment) {
+  assert.throws(
+    action,
+    (error) =>
+      error instanceof GateError && error.kind === 'policy' && error.message.includes(fragment),
+  )
 }
 
 function processResult({ code = 0, stdout = '', stderr = '', ...rest } = {}) {
@@ -104,12 +155,16 @@ async function expectGateError(action, kind) {
 async function createProject({
   packageJson = { name: 'fixture' },
   policy = '# no exceptions\n',
+  allowlist = '# no runtime dependencies\n',
+  currentLock = lockfile(),
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'shotwright-osv-selftest-'))
   await mkdir(join(root, 'test/fixtures/audit-gate/vulnerable'), { recursive: true })
+  await mkdir(join(root, 'scripts/ci'), { recursive: true })
   await writeFile(join(root, 'package.json'), `${JSON.stringify(packageJson)}\n`)
   await writeFile(join(root, 'osv-scanner.toml'), policy)
-  await writeFile(join(root, 'pnpm-lock.yaml'), lockfile())
+  await writeFile(join(root, 'scripts/ci/runtime-dependency-allowlist.txt'), allowlist)
+  await writeFile(join(root, 'pnpm-lock.yaml'), currentLock)
   await writeFile(
     join(root, 'test/fixtures/audit-gate/vulnerable/pnpm-lock.yaml'),
     lockfile('lodash@4.17.20'),
@@ -229,6 +284,117 @@ await check('the ADR 0002 peer dependency is the only peer the gate accepts', ()
       error instanceof GateError &&
       error.kind === 'policy' &&
       error.message === 'shotwright has runtime dependencies: left-pad (peerDependencies)',
+  )
+})
+
+await check('allowlisted runtime dependencies at the locked versions pass', () => {
+  assert.deepEqual(
+    validateRuntimePackage(reviewedPackage, {
+      allowlist: reviewedAllowlist,
+      lockfile: reviewedLock(),
+    }),
+    ['pixelmatch 8.0.0', 'pngjs 7.0.0'],
+  )
+})
+
+await check('a runtime dependency missing from the allowlist is a policy failure', () => {
+  expectPolicy(
+    () =>
+      validateRuntimePackage(
+        JSON.stringify({
+          dependencies: { pixelmatch: '^8.0.0', pngjs: '^7.0.0', 'left-pad': '^1.0.0' },
+        }),
+        {
+          allowlist: reviewedAllowlist,
+          lockfile: reviewedLock({
+            extraDirect: { 'left-pad': '1.0.0' },
+            extraSnapshots: { 'left-pad@1.0.0': {} },
+          }),
+        },
+      ),
+    'shotwright has runtime dependencies: left-pad (dependencies)',
+  )
+})
+
+await check('a locked version that differs from the allowlist is a policy failure', () => {
+  assert.throws(
+    () =>
+      validateRuntimePackage(reviewedPackage, {
+        allowlist: reviewedAllowlist,
+        lockfile: reviewedLock({ pngjs: '7.0.1' }),
+      }),
+    (error) =>
+      error instanceof GateError &&
+      error.kind === 'policy' &&
+      error.message.includes('pngjs (dependencies)') &&
+      error.details.includes('pngjs: pnpm-lock.yaml resolves 7.0.1; the allowlist reviewed 7.0.0'),
+  )
+})
+
+await check('an allowlist entry that is not a runtime dependency is a stale policy failure', () => {
+  expectPolicy(
+    () =>
+      validateRuntimePackage(reviewedPackage, {
+        allowlist: `${reviewedAllowlist}left-pad@1.0.0\n`,
+        lockfile: reviewedLock(),
+      }),
+    'names packages that are not runtime dependencies: left-pad@1.0.0',
+  )
+  expectPolicy(
+    () => validateRuntimePackage('{"name":"fixture"}', { allowlist: 'pngjs@7.0.0\n' }),
+    'names packages that are not runtime dependencies: pngjs@7.0.0',
+  )
+})
+
+await check('an unreviewed package resolved through a reviewed one is a policy failure', () => {
+  expectPolicy(
+    () =>
+      validateRuntimePackage(JSON.stringify({ dependencies: { pixelmatch: '^8.0.0' } }), {
+        allowlist: 'pixelmatch@8.0.0\n',
+        lockfile: lockfile('safe-package@1.0.0', {
+          dependencies: { pixelmatch: '8.0.0' },
+          snapshots: { 'pixelmatch@8.0.0': { pngjs: '7.0.0' }, 'pngjs@7.0.0': {} },
+        }),
+      }),
+    'pngjs (via pixelmatch@8.0.0)',
+  )
+})
+
+await check('a declared dependency the lockfile does not resolve is a policy failure', () => {
+  expectPolicy(
+    () =>
+      validateRuntimePackage(reviewedPackage, {
+        allowlist: reviewedAllowlist,
+        lockfile: lockfile('safe-package@1.0.0', {
+          dependencies: { pixelmatch: '8.0.0' },
+          snapshots: { 'pixelmatch@8.0.0': { pngjs: '7.0.0' }, 'pngjs@7.0.0': {} },
+        }),
+      }),
+    'pngjs (dependencies)',
+  )
+})
+
+for (const [name, allowlist] of [
+  ['a version range', 'pngjs@^7.0.0\n'],
+  ['a missing version', 'pngjs\n'],
+  ['an inline comment', 'pngjs@7.0.0 # reviewed\n'],
+  ['a duplicate name', 'pngjs@7.0.0\npngjs@7.0.1\n'],
+]) {
+  await check(`allowlist rejects ${name}`, () => {
+    assert.throws(
+      () => parseRuntimeAllowlist(allowlist),
+      (error) => error instanceof GateError && error.kind === 'indeterminate',
+    )
+  })
+}
+
+await check('allowlist accepts comments, blank lines and scoped names', () => {
+  assert.deepEqual(
+    [...parseRuntimeAllowlist('# c\n\n@scope/name@1.2.3\npngjs@7.0.0\n')],
+    [
+      ['@scope/name', '1.2.3'],
+      ['pngjs', '7.0.0'],
+    ],
   )
 })
 
@@ -366,6 +532,25 @@ await check('portable process deadline terminates a hung child', async () => {
 })
 
 console.log('==> audit-gate-selftest: orchestration checks')
+
+await check('allowlisted runtime dependencies pass the local invariants and report the list', () =>
+  withProject(
+    {
+      packageJson: { name: 'fixture', dependencies: { 'safe-package': '^1.0.0' } },
+      allowlist: 'safe-package@1.0.0\n',
+      currentLock: lockfile('safe-package@1.0.0', { dependencies: { 'safe-package': '1.0.0' } }),
+    },
+    async (project) => {
+      const logs = []
+      await runFixtureGate(project, fakeExecutor([]), logs)
+      assert.ok(
+        logs.includes(
+          '    ok: runtime dependencies match the reviewed allowlist (safe-package 1.0.0)',
+        ),
+      )
+    },
+  ),
+)
 
 await check('online clean current plus detected canary passes without fallback', () =>
   withProject({}, async (project) => {
@@ -555,6 +740,14 @@ await check('runtime dependency fails before scanner identity or network', () =>
       assert.equal(calls.length, 0)
     },
   ),
+)
+
+await check('stale allowlist entry fails before scanner identity or network', () =>
+  withProject({ allowlist: 'left-pad@1.0.0\n' }, async (project) => {
+    const calls = []
+    await expectGateError(() => runFixtureGate(project, fakeExecutor(calls)), 'policy')
+    assert.equal(calls.length, 0)
+  }),
 )
 
 console.log('')

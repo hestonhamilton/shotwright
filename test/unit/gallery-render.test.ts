@@ -8,7 +8,8 @@ import { GALLERY_SCRIPT } from '../../src/gallery/assets.js'
 import { generateGallery } from '../../src/gallery/generate.js'
 import { loadGalleryModel } from '../../src/gallery/model.js'
 import { renderGallery } from '../../src/gallery/render.js'
-import { MANIFEST_VERSION, type Manifest, type ShotEntry } from '../../src/manifest.js'
+import type { Manifest, ShotEntry } from '../../src/manifest.js'
+import { makeManifest, makeShot } from '../fixtures/manifest.js'
 import { makePng } from '../fixtures/png.js'
 
 const tmpDirs: string[] = []
@@ -32,7 +33,7 @@ function shot(
   index: number,
   overrides: Partial<ShotEntry> = {},
 ): ShotEntry {
-  return {
+  return makeShot({
     name,
     spec,
     file: `shots/${spec}/${name}.png`,
@@ -44,12 +45,11 @@ function shot(
     video: null,
     trace: null,
     ...overrides,
-  }
+  })
 }
 
 function manifest(runId: string, shots: ShotEntry[]): Manifest {
-  return {
-    manifestVersion: MANIFEST_VERSION,
+  return makeManifest({
     runId,
     startedAt: '2026-07-29T00:00:00.000Z',
     finishedAt: '2026-07-29T00:00:10.000Z',
@@ -57,7 +57,7 @@ function manifest(runId: string, shots: ShotEntry[]): Manifest {
     playwrightVersion: '1.62.0',
     flags: { only: ['theme'], video: false, trace: false },
     shots,
-  }
+  })
 }
 
 function writeRun(
@@ -129,7 +129,7 @@ describe('deterministic gallery publication', () => {
     for (const [name, contents] of [
       ['missing', null],
       ['json', '{nope'],
-      ['version', JSON.stringify({ ...manifest('version', []), manifestVersion: 2 })],
+      ['version', JSON.stringify({ ...manifest('version', []), manifestVersion: 3 })],
     ] as const) {
       const runDir = path.join(tmpDir(), name)
       fs.mkdirSync(runDir)
@@ -156,10 +156,67 @@ describe('gallery rendering', () => {
       expect(html).toContain(`${entry.durationMs} ms`)
     }
     expect(html).toContain('104×84 derived')
-    expect(html).toContain('Published manifest · pass/fail status is not embedded')
+    expect(html).toContain(
+      '<span class="badge durable">Run status: passed · tests: 0/0 · publication: ok</span>',
+    )
     expect(html).toContain('<noscript>')
     expect(html).toContain(
       `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">`,
+    )
+  })
+
+  it('states failed v2 status, test count and evidence publication accurately', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    writeRun(
+      runDir,
+      makeManifest({
+        runId: 'run',
+        status: 'failed',
+        publication: { gallery: { ok: true }, evidence: { ok: false, error: 'copy failed' } },
+        tests: [
+          {
+            id: 'passed',
+            title: 'passed',
+            spec: 'a.shots.ts',
+            project: 'shots',
+            status: 'passed',
+            retry: 0,
+            durationMs: 1,
+          },
+          {
+            id: 'failed',
+            title: 'failed',
+            spec: 'a.shots.ts',
+            project: 'shots',
+            status: 'failed',
+            retry: 0,
+            durationMs: 1,
+          },
+        ],
+      }),
+    )
+    expect(renderGallery(loadGalleryModel(runDir))).toContain(
+      '<span class="badge durable">Run status: failed · tests: 1/2 · publication: evidence failed</span>',
+    )
+  })
+
+  it('labels a v1 run status as unrecorded', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    const value = manifest('run', [])
+    const legacy = {
+      manifestVersion: 1,
+      runId: value.runId,
+      startedAt: value.startedAt,
+      finishedAt: value.finishedAt,
+      shotwrightVersion: value.shotwrightVersion,
+      playwrightVersion: value.playwrightVersion,
+      flags: value.flags,
+      shots: [],
+    }
+    fs.mkdirSync(runDir, { recursive: true })
+    fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(legacy))
+    expect(renderGallery(loadGalleryModel(runDir))).toContain(
+      '<span class="badge durable">Run status: unrecorded (manifest v1)</span>',
     )
   })
 

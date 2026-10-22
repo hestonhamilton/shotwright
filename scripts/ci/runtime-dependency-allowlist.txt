@@ -1,0 +1,13 @@
+# Reviewed runtime dependencies of the shotwright package (ADR 0019, amendment
+# 2026-10-22). scripts/ci/osv-gate.mjs checks package.json `dependencies`, and
+# everything they resolve to in pnpm-lock.yaml, against this list:
+#
+#   - a runtime dependency missing here is a POLICY FAILURE;
+#   - a version that differs from the pnpm-lock.yaml resolution is a POLICY FAILURE;
+#   - an entry here that is not a runtime dependency is a POLICY FAILURE (stale).
+#
+# One `name@exact-version` per line; `#` starts a comment line. Bumping a version
+# here is the reviewed diff: revisit ADR 0019's threat model when adding a name.
+# Removing every entry returns the gate to zero runtime dependencies.
+pixelmatch@8.0.0
+pngjs@7.0.0
