@@ -16,6 +16,7 @@ jobs:
       mode: consumer
       working-directory: proof/npm-app
       package-manager: npm
+      artifact-name: proof-npm-pass-${{ github.run_id }}-${{ github.run_attempt }}
       playwright-args: '["--grep", "passing nested npm capture"]'
   nested-npm-fail-upload:
     uses: ./.github/workflows/shotwright.yml
@@ -23,6 +24,7 @@ jobs:
       mode: consumer
       working-directory: proof/npm-app
       package-manager: npm
+      artifact-name: proof-npm-fail-${{ github.run_id }}-${{ github.run_attempt }}
       playwright-args: '["--grep", "intentional failure after capture"]'
   missing-directory:
     uses: ./.github/workflows/shotwright.yml
@@ -32,3 +34,54 @@ jobs:
     uses: ./.github/workflows/shotwright.yml
     with:
       working-directory: proof/no-package-manager
+  proof-result:
+    name: Assert expected outcomes and uploads
+    if: always()
+    needs: [nested-npm-pass, nested-npm-fail-upload, missing-directory, missing-package-manager]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      PASS_RESULT: ${{ needs.nested-npm-pass.result }}
+      FAIL_RESULT: ${{ needs.nested-npm-fail-upload.result }}
+      MISSING_DIRECTORY_RESULT: ${{ needs.missing-directory.result }}
+      MISSING_MANAGER_RESULT: ${{ needs.missing-package-manager.result }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      GH_RUN_ID: ${{ github.run_id }}
+      GH_RUN_ATTEMPT: ${{ github.run_attempt }}
+    steps:
+      - name: Assert job results and uploaded runs
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+
+          const expected = {
+            PASS_RESULT: 'success',
+            FAIL_RESULT: 'failure',
+            MISSING_DIRECTORY_RESULT: 'failure',
+            MISSING_MANAGER_RESULT: 'failure',
+          }
+          for (const [key, result] of Object.entries(expected)) {
+            assert.equal(process.env[key], result, `${key} must be ${result}`)
+          }
+
+          const url = `https://api.github.com/repos/${process.env.GH_REPO}/actions/runs/${process.env.GH_RUN_ID}/artifacts?per_page=100`
+          const response = await fetch(url, {
+            headers: {
+              Accept: 'application/vnd.github+json',
+              Authorization: `Bearer ${process.env.GH_TOKEN}`,
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+          })
+          if (!response.ok) throw new Error(`artifacts API returned ${response.status}: ${await response.text()}`)
+          const { artifacts } = await response.json()
+          for (const kind of ['pass', 'fail']) {
+            const name = `proof-npm-${kind}-${process.env.GH_RUN_ID}-${process.env.GH_RUN_ATTEMPT}`
+            const matches = artifacts.filter((artifact) => artifact.name === name && !artifact.expired && artifact.size_in_bytes > 0)
+            assert.equal(matches.length, 1, `expected one nonempty uploaded artifact named ${name}`)
+            console.log(`${kind}: ${matches[0].name} (${matches[0].size_in_bytes} bytes)`)
+          }
+          NODE
