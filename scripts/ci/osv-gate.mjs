@@ -206,7 +206,107 @@ export function parsePolicy(text, today = new Date().toISOString().slice(0, 10))
 // The peer dependencies shotwright is allowed to declare (ADR 0002).
 const ALLOWED_PEER_DEPENDENCIES = new Set(['@playwright/test'])
 
-export function validateRuntimePackage(text) {
+// The reviewed runtime dependencies (ADR 0019, amendment 2026-10-22). Until
+// then the invariant was zero runtime dependencies; an empty allowlist restores
+// exactly that.
+export const RUNTIME_ALLOWLIST_PATH = 'scripts/ci/runtime-dependency-allowlist.txt'
+
+export function parseRuntimeAllowlist(text) {
+  const reviewed = new Map()
+  const lines = text.replaceAll('\r\n', '\n').split('\n')
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim()
+    if (line === '' || line.startsWith('#')) continue
+    const entry = line.match(
+      /^((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?)$/,
+    )
+    if (!entry) {
+      throw new GateError(
+        'indeterminate',
+        `runtime-dependency allowlist line ${index + 1}: expected name@exact-version`,
+      )
+    }
+    if (reviewed.has(entry[1])) {
+      throw new GateError(
+        'indeterminate',
+        `runtime-dependency allowlist line ${index + 1}: duplicate entry for ${entry[1]}`,
+      )
+    }
+    reviewed.set(entry[1], entry[2])
+  }
+  return reviewed
+}
+
+function unquoteLockKey(raw) {
+  return /^'.*'$/.test(raw) ? raw.slice(1, -1).replaceAll("''", "'") : raw
+}
+
+// Reads what the root importer's `dependencies` resolve to and the dependency
+// edges of every snapshot, from a pnpm 9.0-schema lockfile. Only the shapes pnpm
+// writes are accepted; anything else leaves an entry unresolved, and an
+// unresolved entry fails the gate rather than passing it.
+export function readPnpmRuntimeGraph(text) {
+  const lines = text.replaceAll('\r\n', '\n').split('\n')
+  const importersAt = lines.indexOf('importers:')
+  const snapshotsAt = lines.indexOf('snapshots:')
+  if (importersAt < 0 || snapshotsAt < 0) {
+    throw new GateError('indeterminate', 'pnpm lockfile must contain importers and snapshots maps')
+  }
+
+  const direct = new Map()
+  let inRoot = false
+  let inDependencies = false
+  let name = null
+  for (let index = importersAt + 1; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (line.trim() === '') continue
+    if (!line.startsWith(' ')) break
+    if (/^ {2}\S/.test(line)) {
+      inRoot = line === '  .:'
+      inDependencies = false
+      name = null
+    } else if (inRoot && /^ {4}\S/.test(line)) {
+      inDependencies = line === '    dependencies:'
+      name = null
+    } else if (inRoot && inDependencies) {
+      const key = line.match(/^ {6}(\S.*):$/)
+      const version = line.match(/^ {8}version: (\S+)$/)
+      if (key) {
+        name = unquoteLockKey(key[1])
+        if (direct.has(name)) {
+          throw new GateError('indeterminate', `pnpm lockfile repeats importer dependency ${name}`)
+        }
+        direct.set(name, undefined)
+      } else if (version && name !== null) {
+        direct.set(name, version[1])
+      }
+    }
+  }
+
+  const snapshots = new Map()
+  let snapshot = null
+  let collecting = false
+  for (let index = snapshotsAt + 1; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (line.trim() === '') continue
+    if (!line.startsWith(' ')) break
+    const key = line.match(/^ {2}(\S.*?):(?: \{\})?$/)
+    if (key) {
+      snapshot = unquoteLockKey(key[1])
+      snapshots.set(snapshot, [])
+      collecting = false
+    } else if (/^ {4}\S/.test(line)) {
+      collecting = snapshot !== null && /^ {4}(?:dependencies|optionalDependencies):$/.test(line)
+    } else if (collecting) {
+      const edge = line.match(/^ {6}(\S.*?): (\S+)$/)
+      if (edge) snapshots.get(snapshot).push([unquoteLockKey(edge[1]), edge[2]])
+    }
+  }
+  return { direct, snapshots }
+}
+
+// Returns the verified runtime closure as sorted `name version` strings.
+export function validateRuntimePackage(text, { allowlist = '', lockfile = null } = {}) {
   let packageJson
   try {
     packageJson = JSON.parse(text)
@@ -216,6 +316,7 @@ export function validateRuntimePackage(text) {
   if (!isPlainObject(packageJson)) {
     throw new GateError('indeterminate', 'package.json must contain an object')
   }
+  const reviewed = parseRuntimeAllowlist(allowlist)
   // Every key that makes a package install something alongside shotwright, not
   // only `dependencies`: an optional or bundled dependency reaches the consumer
   // just the same, and until 2026-10-07 the invariant quietly checked one key
@@ -223,6 +324,8 @@ export function validateRuntimePackage(text) {
   // bundleDependencies is the alias npm also honours. Peer dependencies are
   // the consumer's own install, and ADR 0002 names the one shotwright may
   // declare; any other peer is a policy failure like a runtime dependency.
+  // Only `dependencies` may use the reviewed allowlist; the other keys stay at
+  // zero.
   const runtimeKeys = [
     'dependencies',
     'optionalDependencies',
@@ -230,12 +333,14 @@ export function validateRuntimePackage(text) {
     'bundledDependencies',
     'bundleDependencies',
   ]
-  const found = []
+  const found = new Set()
+  const details = []
+  const declared = []
   for (const key of runtimeKeys) {
     const value = packageJson[key]
     if (value === undefined) continue
     if (Array.isArray(value) && key.startsWith('bundle')) {
-      for (const name of value) found.push(`${name} (${key})`)
+      for (const name of value) found.add(`${name} (${key})`)
       continue
     }
     if (!isPlainObject(value)) {
@@ -243,13 +348,88 @@ export function validateRuntimePackage(text) {
     }
     for (const name of Object.keys(value)) {
       if (key === 'peerDependencies' && ALLOWED_PEER_DEPENDENCIES.has(name)) continue
-      found.push(`${name} (${key})`)
+      if (key === 'dependencies') declared.push(name)
+      else found.add(`${name} (${key})`)
     }
   }
-  found.sort()
-  if (found.length > 0) {
-    throw new GateError('policy', `shotwright has runtime dependencies: ${found.join(', ')}`)
+
+  const queue = []
+  for (const name of declared) {
+    if (reviewed.has(name)) {
+      queue.push({ name, parent: null })
+    } else {
+      found.add(`${name} (dependencies)`)
+      details.push(`${name}: not in the reviewed allowlist ${RUNTIME_ALLOWLIST_PATH}`)
+    }
   }
+
+  // Walk the resolved closure, so a reviewed package cannot bring in an
+  // unreviewed one: every package it resolves to must be allowlisted too.
+  const verified = []
+  const closureNames = new Set()
+  if (queue.length > 0) {
+    if (lockfile === null) {
+      throw new GateError(
+        'indeterminate',
+        'pnpm lockfile is required to check runtime dependencies',
+      )
+    }
+    const graph = readPnpmRuntimeGraph(lockfile)
+    for (const item of queue) item.version = graph.direct.get(item.name)
+    const seen = new Set()
+    while (queue.length > 0) {
+      const { name, version, parent } = queue.shift()
+      const where = parent === null ? 'dependencies' : `via ${parent}`
+      closureNames.add(name)
+      if (version === undefined) {
+        found.add(`${name} (${where})`)
+        details.push(`${name}: package.json declares it but pnpm-lock.yaml does not resolve it`)
+        continue
+      }
+      const identity = `${name}@${version}`
+      if (seen.has(identity)) continue
+      seen.add(identity)
+      const resolved = version.replace(/\(.*$/, '')
+      const expected = reviewed.get(name)
+      if (expected === undefined) {
+        found.add(`${name} (${where})`)
+        details.push(`${name}@${resolved}: not in the reviewed allowlist ${RUNTIME_ALLOWLIST_PATH}`)
+      } else if (expected !== resolved) {
+        found.add(`${name} (${where})`)
+        details.push(
+          `${name}: pnpm-lock.yaml resolves ${resolved}; the allowlist reviewed ${expected}`,
+        )
+      } else {
+        verified.push(`${name} ${resolved}`)
+      }
+      const edges = graph.snapshots.get(identity)
+      if (edges === undefined) {
+        throw new GateError('indeterminate', `pnpm lockfile has no snapshot for ${identity}`)
+      }
+      for (const [child, childVersion] of edges) {
+        queue.push({ name: child, version: childVersion, parent: `${name}@${resolved}` })
+      }
+    }
+  }
+
+  if (found.size > 0) {
+    throw new GateError(
+      'policy',
+      `shotwright has runtime dependencies: ${[...found].sort().join(', ')}`,
+      details,
+    )
+  }
+  const stale = [...reviewed]
+    .filter(([name]) => !closureNames.has(name))
+    .map(([name, version]) => `${name}@${version}`)
+  if (stale.length > 0) {
+    throw new GateError(
+      'policy',
+      `${RUNTIME_ALLOWLIST_PATH} names packages that are not runtime dependencies: ${stale.join(', ')}`,
+      ['remove stale entries so the reviewed allowlist stays exact'],
+    )
+  }
+  return [...new Set(verified)].sort()
 }
 
 export function readPnpmLockPackageCount(text) {
@@ -613,6 +793,7 @@ export async function runGate({
   )
   const packagePath = join(canonicalRoot, 'package.json')
   const policyPath = join(canonicalRoot, 'osv-scanner.toml')
+  const allowlistPath = join(canonicalRoot, RUNTIME_ALLOWLIST_PATH)
   const command =
     execute ??
     ((options) =>
@@ -623,9 +804,22 @@ export async function runGate({
       }))
 
   log('==> audit gate: local package invariants')
-  validateRuntimePackage(await readFile(packagePath, 'utf8'))
+  let allowlist
+  try {
+    allowlist = await readFile(allowlistPath, 'utf8')
+  } catch (error) {
+    throw new GateError(
+      'indeterminate',
+      `could not read ${RUNTIME_ALLOWLIST_PATH} (${error.code ?? error.name})`,
+    )
+  }
+  const currentLockText = await readFile(currentLock, 'utf8')
+  const runtime = validateRuntimePackage(await readFile(packagePath, 'utf8'), {
+    allowlist,
+    lockfile: currentLockText,
+  })
   const exceptions = parsePolicy(await readFile(policyPath, 'utf8'))
-  const currentPackages = readPnpmLockPackageCount(await readFile(currentLock, 'utf8'))
+  const currentPackages = readPnpmLockPackageCount(currentLockText)
   const canaryPackages = readPnpmLockPackageCount(await readFile(canaryLock, 'utf8'))
   if (canaryPackages !== 1) {
     throw new GateError(
@@ -633,7 +827,12 @@ export async function runGate({
       `canary lockfile contains ${canaryPackages} packages; expected 1`,
     )
   }
-  log(`    ok: zero runtime dependencies; ${exceptions.length} active exceptions`)
+  log(
+    runtime.length === 0
+      ? '    ok: zero runtime dependencies; the reviewed allowlist is empty'
+      : `    ok: runtime dependencies match the reviewed allowlist (${runtime.join(', ')})`,
+  )
+  log(`    ok: ${exceptions.length} active exceptions`)
   log(`    ok: pnpm lockfile schema 9.0 with ${currentPackages} packages`)
 
   log('==> audit gate: scanner identity')
