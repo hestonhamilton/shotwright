@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  assembleManifest,
-  type AssembleInput,
-  type ShotSidecar,
-} from '../../src/manifest.js'
+import { assembleManifest, type AssembleInput, type ShotSidecar } from '../../src/manifest.js'
 
 function sidecar(overrides: Partial<ShotSidecar>): ShotSidecar {
   return {
@@ -21,7 +17,10 @@ function sidecar(overrides: Partial<ShotSidecar>): ShotSidecar {
   }
 }
 
-function input(sidecars: ShotSidecar[], artifacts: AssembleInput['artifacts'] = new Map()): AssembleInput {
+function input(
+  sidecars: ShotSidecar[],
+  artifacts: AssembleInput['artifacts'] = new Map(),
+): AssembleInput {
   return {
     runId: 'run',
     startedAt: '2026-07-29T00:00:00.000Z',
@@ -53,7 +52,10 @@ describe('assembleManifest', () => {
   it('duplicate shot names are a run-level error', () => {
     expect(() =>
       assembleManifest(
-        input([sidecar({ name: 'dup', spec: 'a.shots.ts' }), sidecar({ name: 'dup', spec: 'b.shots.ts' })]),
+        input([
+          sidecar({ name: 'dup', spec: 'a.shots.ts' }),
+          sidecar({ name: 'dup', spec: 'b.shots.ts' }),
+        ]),
       ),
     ).toThrow(/duplicate shot name "dup"/)
   })

@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import fs from 'node:fs'
-import http, {
-  type IncomingMessage,
-  type Server,
-  type ServerResponse,
-} from 'node:http'
+import http, { type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { isIP, type AddressInfo } from 'node:net'
 import os, { type NetworkInterfaceInfo } from 'node:os'
 import path from 'node:path'
@@ -70,10 +66,7 @@ function isContained(parent: string, child: string): boolean {
   return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
 }
 
-function canonicalReferencedFile(
-  canonicalRun: string,
-  relativePath: string,
-): string | null {
+function canonicalReferencedFile(canonicalRun: string, relativePath: string): string | null {
   const segments = validateRelativePath(relativePath)
   let canonical: string
   try {
@@ -126,9 +119,7 @@ export function buildGalleryAllowlist(
 
   const manifest = readManifest(canonicalRun)
   for (const shot of manifest.shots) {
-    const references: Array<[string, string, string]> = [
-      [shot.file, 'screenshot', 'image/png'],
-    ]
+    const references: Array<[string, string, string]> = [[shot.file, 'screenshot', 'image/png']]
     if (shot.video !== null) references.push([shot.video, 'video', 'video/webm'])
     if (shot.trace !== null) references.push([shot.trace, 'trace', 'application/zip'])
 
@@ -345,7 +336,11 @@ function isPrivateIpv4(address: string): boolean {
   if (value === null) return false
   const first = value >>> 24
   const second = (value >>> 16) & 0xff
-  return first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168)
+  return (
+    first === 10 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  )
 }
 
 function isSuppressedAddress(address: string): boolean {
@@ -353,19 +348,14 @@ function isSuppressedAddress(address: string): boolean {
   if (value === null) return true
   const first = value >>> 24
   const second = (value >>> 16) & 0xff
-  return (
-    (first === 169 && second === 254) ||
-    (first === 100 && second >= 64 && second <= 127)
-  )
+  return (first === 169 && second === 254) || (first === 100 && second >= 64 && second <= 127)
 }
 
 function physicalLooking(name: string): boolean {
   return /^(?:en|eth|wlan|wl|eno|ens|enp)/i.test(name)
 }
 
-export function filterLanAddresses(
-  interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>,
-): LanAddress[] {
+export function filterLanAddresses(interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>): LanAddress[] {
   const addresses: LanAddress[] = []
   const seen = new Set<string>()
   for (const [interfaceName, entries] of Object.entries(interfaces)) {

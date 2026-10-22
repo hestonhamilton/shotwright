@@ -1,0 +1,15 @@
+dist
+node_modules
+pnpm-lock.yaml
+shots-output
+local
+proof
+*.md
+*.yml
+*.yaml
+*.json
+!.prettierrc.json
+test/fixtures
+demo/dist
+*.html
+docs

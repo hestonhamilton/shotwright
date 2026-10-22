@@ -193,22 +193,19 @@ describe('gallery allowlist and protocol', () => {
     ['partial', 'bytes=3-8', 206, 3, 8],
     ['suffix', 'bytes=-5', 206, pngByteLength - 5, pngByteLength - 1],
     ['open-ended', `bytes=${pngByteLength - 5}-`, 206, pngByteLength - 5, pngByteLength - 1],
-  ])(
-    'serves byte-exact %s ranges',
-    async (_label, range, status, startByte, endByte) => {
-      const { runDir, image } = writeRun()
-      const server = await start(runDir)
-      const response = await request(server, '/shots/home.png', {
-        headers: { Range: range },
-      })
-      expect(response.status).toBe(status)
-      expect(response.body).toEqual(image.subarray(startByte, endByte + 1))
-      expect(response.headers['content-range']).toBe(
-        `bytes ${startByte}-${endByte}/${image.byteLength}`,
-      )
-      expect(response.headers['content-length']).toBe(String(endByte - startByte + 1))
-    },
-  )
+  ])('serves byte-exact %s ranges', async (_label, range, status, startByte, endByte) => {
+    const { runDir, image } = writeRun()
+    const server = await start(runDir)
+    const response = await request(server, '/shots/home.png', {
+      headers: { Range: range },
+    })
+    expect(response.status).toBe(status)
+    expect(response.body).toEqual(image.subarray(startByte, endByte + 1))
+    expect(response.headers['content-range']).toBe(
+      `bytes ${startByte}-${endByte}/${image.byteLength}`,
+    )
+    expect(response.headers['content-length']).toBe(String(endByte - startByte + 1))
+  })
 
   it.each([`bytes=${pngByteLength}-`, 'bytes=8-3', 'bytes=-0', 'items=0-1', 'bytes=0-1,3-4'])(
     'returns 416 for invalid or multiple range %s',
@@ -251,13 +248,18 @@ function rawRequest(server: GalleryServer, head: string): Promise<string> {
 }
 
 describe('Host header (DNS rebinding guard)', () => {
-  it.each(['localhost', 'localhost:4173', 'LOCALHOST:4173', '127.0.0.1', '127.0.0.1:9', '[::1]', '[::1]:4173'])(
-    'accepts loopback form %s on a loopback bind',
-    (host) => {
-      expect(isAllowedHostHeader(host, '127.0.0.1')).toBe(true)
-      expect(isAllowedHostHeader(host, '::1')).toBe(true)
-    },
-  )
+  it.each([
+    'localhost',
+    'localhost:4173',
+    'LOCALHOST:4173',
+    '127.0.0.1',
+    '127.0.0.1:9',
+    '[::1]',
+    '[::1]:4173',
+  ])('accepts loopback form %s on a loopback bind', (host) => {
+    expect(isAllowedHostHeader(host, '127.0.0.1')).toBe(true)
+    expect(isAllowedHostHeader(host, '::1')).toBe(true)
+  })
 
   it.each([
     undefined,
@@ -293,12 +295,15 @@ describe('Host header (DNS rebinding guard)', () => {
     }
   })
 
-  it.each(['localhost', `127.0.0.1`, '[::1]'])('serves a request whose Host is %s', async (host) => {
-    const { runDir } = writeRun()
-    const server = await start(runDir)
-    const response = await request(server, '/', { headers: { Host: `${host}:${server.port}` } })
-    expect(response.status).toBe(200)
-  })
+  it.each(['localhost', `127.0.0.1`, '[::1]'])(
+    'serves a request whose Host is %s',
+    async (host) => {
+      const { runDir } = writeRun()
+      const server = await start(runDir)
+      const response = await request(server, '/', { headers: { Host: `${host}:${server.port}` } })
+      expect(response.status).toBe(200)
+    },
+  )
 
   it('rejects a foreign hostname with an opaque 400', async () => {
     const { runDir } = writeRun()

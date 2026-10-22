@@ -103,7 +103,8 @@ async function mediaTextState(media: Locator): Promise<{
       if (intersectsImage) visibleTextIntersectingImage++
     }
     return {
-      placeholderVisibility: ownerWindow.getComputedStyle(element.querySelector('.placeholder')!).visibility,
+      placeholderVisibility: ownerWindow.getComputedStyle(element.querySelector('.placeholder')!)
+        .visibility,
       visibleText,
       visibleTextIntersectingImage,
     }
@@ -115,7 +116,10 @@ async function expectFocus(page: Page, locator: Locator): Promise<void> {
   if (element === null) throw new Error('focus target was not found')
   let focused
   try {
-    focused = await page.waitForFunction((target) => target.ownerDocument.activeElement === target, element)
+    focused = await page.waitForFunction(
+      (target) => target.ownerDocument.activeElement === target,
+      element,
+    )
   } catch (error) {
     // shotwright-746.17: this wait has timed out on CI roughly one run in ten
     // with nothing in the failure saying WHERE focus went. Report it, so the
@@ -155,9 +159,13 @@ beforeAll(async () => {
   fs.mkdirSync(path.join(runDir, 'shots/browser.shots.ts'), { recursive: true })
   const shots: ShotEntry[] = []
   for (let index = 0; index < 60; index++) {
-    const name = index === 0 ? '<script>inert</script>' : index === 2 ? 'tall-aspect' : `shot-${index + 1}`
+    const name =
+      index === 0 ? '<script>inert</script>' : index === 2 ? 'tall-aspect' : `shot-${index + 1}`
     const file = `shots/browser.shots.ts/shot-${index + 1}.png`
-    fs.writeFileSync(path.join(runDir, file), uniquePng(index, index === 2 ? 24 : 32, index === 2 ? 96 : 24))
+    fs.writeFileSync(
+      path.join(runDir, file),
+      uniquePng(index, index === 2 ? 24 : 32, index === 2 ? 96 : 24),
+    )
     shots.push({
       name,
       spec: 'browser.shots.ts',
@@ -219,7 +227,9 @@ describe('gallery browser behavior', () => {
     expect(await page.evaluate<string>('getComputedStyle(document.body).backgroundColor')).toBe(
       'rgb(17, 21, 27)',
     )
-    expect(await page.evaluate<boolean>('document.documentElement.scrollWidth <= window.innerWidth')).toBe(true)
+    expect(
+      await page.evaluate<boolean>('document.documentElement.scrollWidth <= window.innerWidth'),
+    ).toBe(true)
     expect(
       await page.evaluate<number>(`Array.from(document.querySelectorAll('button,input,a,summary'))
         .filter((element) => element.getClientRects().length > 0 && element.getBoundingClientRect().height < 44)
@@ -244,7 +254,9 @@ describe('gallery browser behavior', () => {
       expect(live).toBeLessThanOrEqual(3)
     }
     expect(maximumLive).toBe(3)
-    expect(await page.locator('#debug-overlay').textContent()).toMatch(/Live overview images: [0-3] \/ 3/)
+    expect(await page.locator('#debug-overlay').textContent()).toMatch(
+      /Live overview images: [0-3] \/ 3/,
+    )
 
     const inspect = page.locator('.card').nth(59).locator('[data-inspect]')
     await inspect.click()
@@ -306,7 +318,9 @@ describe('gallery browser behavior', () => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
     const page = await context.newPage()
     await page.goto(galleryUrl)
-    const tallCard = page.locator('.card').filter({ has: page.locator('h3', { hasText: 'tall-aspect' }) })
+    const tallCard = page
+      .locator('.card')
+      .filter({ has: page.locator('h3', { hasText: 'tall-aspect' }) })
     await tallCard.evaluate((element) => element.scrollIntoView({ block: 'center' }))
     await tallCard.locator('.overview-image').waitFor()
 
@@ -344,7 +358,9 @@ describe('gallery browser behavior', () => {
       visibleText: ['Original queued · 24×96 intrinsic pixels'],
       visibleTextIntersectingImage: 0,
     })
-    expect(await noScriptTallCard.locator('a[data-original]').getAttribute('download')).toBe('shot-3.png')
+    expect(await noScriptTallCard.locator('a[data-original]').getAttribute('download')).toBe(
+      'shot-3.png',
+    )
     await noScript.close()
 
     const fallback = await browser.newContext()

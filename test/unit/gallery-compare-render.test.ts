@@ -122,8 +122,8 @@ describe('compare rendering', () => {
 
   it('embeds one PNG URI per readable side and renders unavailable placeholders', () => {
     const html = renderCompare(mixedModel())
-    expect((html.match(/data:image\/png;base64,/g) ?? [])).toHaveLength(5)
-    expect((html.match(/data-asset-id=/g) ?? [])).toHaveLength(10)
+    expect(html.match(/data:image\/png;base64,/g) ?? []).toHaveLength(5)
+    expect(html.match(/data-asset-id=/g) ?? []).toHaveLength(10)
     expect(html).toContain('A image unavailable')
     expect(html).toContain('PNG unreadable is unreadable')
     expect(html).toContain('Intrinsic unavailable')
@@ -140,8 +140,8 @@ describe('compare rendering', () => {
       buildCompareModel(gallery(`a-${hostile}`, [aShot]), gallery(`b-${hostile}`, [bShot])),
     )
 
-    expect((html.match(/<script>/g) ?? [])).toHaveLength(1)
-    expect((html.match(/<\/style>/g) ?? [])).toHaveLength(1)
+    expect(html.match(/<script>/g) ?? []).toHaveLength(1)
+    expect(html.match(/<\/style>/g) ?? []).toHaveLength(1)
     expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&#39;&lt;/style&gt;')
     expect(html).not.toContain('href="shots/<script>')
     expect(html).not.toContain('innerHTML')

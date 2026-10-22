@@ -43,7 +43,7 @@ the other by hand.**
 | Branch prefix | `feat/` — branches are `feat/<bead-id>-<kebab-slug>` |
 | bd umbrella | `shotwright` |
 | Base branch | `main` |
-| Lint (on edit) | `eslint --fix` (extensions: `ts tsx js mjs cjs`) |
+| Lint (on edit) | `eslint --fix` (extensions: `ts tsx js mjs cjs`); formatter is Prettier (`pnpm run format`, checked by `pnpm run lint`) |
 | Verification | `pnpm run typecheck && pnpm run lint && pnpm run test` (as tooling lands; see design doc) |
 | Enforcement | `strict` (off-convention branches and AI-attributed commits are blocked) |
 | Beads | `on` — shared Dolt sql-server, prefix `shotwright` |

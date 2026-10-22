@@ -41,13 +41,15 @@ body {
   min-height: 100vh;
   margin: 0;
   color: var(--text);
-  background:
-    radial-gradient(circle at 8% 8%, var(--accent-soft) 0, transparent 28rem),
-    var(--bg);
+  background: radial-gradient(circle at 8% 8%, var(--accent-soft) 0, transparent 28rem), var(--bg);
   /* System fonts only: an unbundled webfont would render captures differently on
      hosts that happen to have it installed. */
   font-family:
-    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
     sans-serif;
   font-size: 16px;
   line-height: 1.6;

@@ -2,12 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import {
-  MANIFEST_VERSION,
-  type Manifest,
-  type ShotEntry,
-  type Viewport,
-} from '../manifest.js'
+import { MANIFEST_VERSION, type Manifest, type ShotEntry, type Viewport } from '../manifest.js'
 
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const crc32Table = new Uint32Array(256)

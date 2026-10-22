@@ -41,8 +41,12 @@ describe('parseInitArgs', () => {
 
 describe('templates', () => {
   it('resolves init templates adjacent to dist from the module URL', () => {
-    expect(templateUrl('init/shots.config.ts').href).toMatch(/\/templates\/init\/shots\.config\.ts$/)
-    expect(templateUrl('github/shotwright.yml').href).toMatch(/\/templates\/github\/shotwright\.yml$/)
+    expect(templateUrl('init/shots.config.ts').href).toMatch(
+      /\/templates\/init\/shots\.config\.ts$/,
+    )
+    expect(templateUrl('github/shotwright.yml').href).toMatch(
+      /\/templates\/github\/shotwright\.yml$/,
+    )
     expect(templateUrl('init/shots.config.ts').href).not.toContain('/dist/templates/')
   })
 
@@ -70,7 +74,6 @@ describe('templates', () => {
       if (command.startsWith('pnpm shots ')) parseShotwrightCommand(command)
       if (command.startsWith('pnpm shots:gallery')) parseGalleryCommand(command)
     }
-
   })
 })
 
@@ -88,7 +91,10 @@ describe('InitOutcome output coherence', () => {
   }[] = [
     {
       name: 'fresh vite scaffold',
-      result: () => applyInitPlan(planInit(fixture({ packageJson: { devDependencies: { vite: '~8.1.5' } } }), readTemplate)),
+      result: () =>
+        applyInitPlan(
+          planInit(fixture({ packageJson: { devDependencies: { vite: '~8.1.5' } } }), readTemplate),
+        ),
       outcome: 'fresh-vite-scaffold',
       headline:
         'shotwright init: detected vite — wrote an executable webServer default for http://127.0.0.1:5173',
@@ -153,7 +159,12 @@ describe('InitOutcome output coherence', () => {
     {
       name: 'script conflict',
       result: () =>
-        applyInitPlan(planInit(fixture({ packageJson: { scripts: { shots: 'playwright test' } } }), readTemplate)),
+        applyInitPlan(
+          planInit(
+            fixture({ packageJson: { scripts: { shots: 'playwright test' } } }),
+            readTemplate,
+          ),
+        ),
       outcome: 'script-conflict',
       headline: 'shotwright init: cannot claim the `shots` script',
       exitCode: 1,
@@ -195,7 +206,16 @@ describe('InitOutcome output coherence', () => {
 
   it.each(cases)(
     '$name',
-    ({ result: makeResult, outcome, headline, exitCode, sections, absent, includes = [], commands }) => {
+    ({
+      result: makeResult,
+      outcome,
+      headline,
+      exitCode,
+      sections,
+      absent,
+      includes = [],
+      commands,
+    }) => {
       const result = makeResult()
       const output = formatInitResult(result)
       expect(classifyInitOutcome(result).kind).toBe(outcome)
@@ -231,7 +251,7 @@ describe('planInit', () => {
 
     const config = fs.readFileSync(path.join(cwd, 'shots.config.ts'), 'utf8')
     expect(config).toContain('// Point these at the command and URL')
-    expect(config).toContain("// webServer: {")
+    expect(config).toContain('// webServer: {')
     expect(config).not.toContain('\n  webServer: {\n')
   })
 
@@ -254,7 +274,9 @@ describe('planInit', () => {
     const result = applyInitPlan(planInit(cwd, readTemplate))
     const workflow = path.join(cwd, '.github', 'workflows', 'shotwright.yml')
 
-    expect(result.written.map((action) => action.path)).toContain('.github/workflows/shotwright.yml')
+    expect(result.written.map((action) => action.path)).toContain(
+      '.github/workflows/shotwright.yml',
+    )
     expect(fs.readFileSync(workflow, 'utf8')).toBe(readTemplate('github/shotwright.yml'))
   })
 
@@ -264,7 +286,9 @@ describe('planInit', () => {
 
     const result = applyInitPlan(planInit(cwd, readTemplate))
 
-    expect(result.written.map((action) => action.path)).not.toContain('.github/workflows/shotwright.yml')
+    expect(result.written.map((action) => action.path)).not.toContain(
+      '.github/workflows/shotwright.yml',
+    )
     expect(result.plan.upToDate).toContain('.github/workflows/shotwright.yml')
   })
 
@@ -308,7 +332,10 @@ describe('planInit', () => {
 
   it('does not report minified package indentation when scripts are conflicted', () => {
     const cwd = tempDir()
-    fs.writeFileSync(path.join(cwd, 'package.json'), '{"name":"m","scripts":{"shots":"playwright test"}}')
+    fs.writeFileSync(
+      path.join(cwd, 'package.json'),
+      '{"name":"m","scripts":{"shots":"playwright test"}}',
+    )
     const before = fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')
     const result = applyInitPlan(planInit(cwd, readTemplate))
     const output = formatInitResult(result)
@@ -366,7 +393,9 @@ describe('planInit', () => {
 
     const result = applyInitPlan(planInit(cwd, readTemplate))
     expect(fs.readFileSync(skill, 'utf8')).toBe('project skill')
-    expect(fs.readFileSync(skill + '.new', 'utf8')).toBe(readTemplate('skills/shots-harness/SKILL.md'))
+    expect(fs.readFileSync(skill + '.new', 'utf8')).toBe(
+      readTemplate('skills/shots-harness/SKILL.md'),
+    )
     expect(formatInitResult(result)).toContain('Needs your review')
 
     const rerun = applyInitPlan(planInit(cwd, readTemplate))
@@ -397,13 +426,16 @@ describe('planInit', () => {
     fs.symlinkSync('../.agents/skills', path.join(cwd, '.claude', 'skills'))
 
     const destination = resolveSkillDestination(cwd)
-    expect(destination.symlinkNotice).toContain('Note: .claude/skills is a symlink to .agents/skills')
+    expect(destination.symlinkNotice).toContain(
+      'Note: .claude/skills is a symlink to .agents/skills',
+    )
     const result = applyInitPlan(planInit(cwd, readTemplate))
     const output = formatInitResult(result)
     expect(output.indexOf('Note: .claude/skills')).toBeLessThan(output.indexOf('Created'))
-    expect(fs.existsSync(path.join(cwd, '.agents', 'skills', 'shots-harness', 'SKILL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(cwd, '.agents', 'skills', 'shots-harness', 'SKILL.md'))).toBe(
+      true,
+    )
   })
-
 })
 
 describe('mutatePackageJsonScripts', () => {
@@ -415,11 +447,19 @@ describe('mutatePackageJsonScripts', () => {
     const pkg = JSON.parse(mutatePackageJsonScripts('{\n  "name": "app"\n}\n').raw) as {
       scripts: Record<string, string>
     }
-    expect(Object.keys(pkg.scripts)).toEqual(['shots', 'shots:gallery', 'shots:compare', 'shots:install'])
+    expect(Object.keys(pkg.scripts)).toEqual([
+      'shots',
+      'shots:gallery',
+      'shots:compare',
+      'shots:install',
+    ])
     expect(pkg.scripts['shots']).toBe('shotwright run')
     expect(pkg.scripts['shots:gallery']).toBe('shotwright gallery')
     expect(pkg.scripts['shots:compare']).toBe('shotwright compare')
-    expect(parseCompareArgs(['latest', '20260101-000000'])).toMatchObject({ a: 'latest', b: '20260101-000000' })
+    expect(parseCompareArgs(['latest', '20260101-000000'])).toMatchObject({
+      a: 'latest',
+      b: '20260101-000000',
+    })
   })
 
   it('creates scripts as the last key when absent', () => {

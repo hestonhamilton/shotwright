@@ -41,14 +41,16 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "pnpm run build && tsc --noEmit",
-    "lint": "eslint . && pnpm run build && publint && attw --pack . --profile esm-only",
+    "lint": "eslint . && prettier --check . && pnpm run build && publint && attw --pack . --profile esm-only",
     "test": "vitest run test/unit",
     "changeset:version": "changeset version && node scripts/sync-template-pin.mjs",
     "leak-gate": "scripts/ci/leak-gate.sh",
     "audit-gate": "scripts/ci/audit-gate.sh",
     "smoke": "pnpm run build && vitest run test/smoke",
     "demo:build": "vite build --config demo/vite.config.ts",
-    "demo:shots": "pnpm run build && node dist/cli.js run --config demo/shots.config.ts"
+    "demo:shots": "pnpm run build && node dist/cli.js run --config demo/shots.config.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "peerDependencies": {
     "@playwright/test": ">=1.60 <2"
@@ -60,7 +62,9 @@
     "@playwright/test": "~1.63.0",
     "@types/node": "^26.6.3",
     "eslint": "^10.11.0",
+    "eslint-config-prettier": "^10.1.8",
     "globals": "^17.12.0",
+    "prettier": "^3.9.10",
     "publint": "^0.3.24",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.0",
