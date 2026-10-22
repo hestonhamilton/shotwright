@@ -109,7 +109,9 @@ auto-discovers the workspace from any worktree — run `bd <subcommand>` with no
 
 Workflow skills live in `.agents/skills/` (surfaced via the `.claude/skills`
 symlink), invoked as `/<name>`; their descriptions are listed automatically.
-`/flow` drives the whole bead loop. Hooks are wired in `.claude/settings.json`
+`/flow` drives the whole bead loop; `/delegated-orchestrator` is the session
+profile that runs it with Codex (then Claude subagents) doing every slice and
+Claude reviewing — start an autonomous session with it. Hooks are wired in `.claude/settings.json`
 under `ENFORCEMENT=strict`.
 
 
