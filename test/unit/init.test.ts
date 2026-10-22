@@ -866,7 +866,7 @@ function runWorkflowArgsEncoder(args: string[]): {
 }
 
 describe('consumer workflow contract', () => {
-  it('exposes exactly the six G10 inputs in addition to mode and config-path', () => {
+  it('exposes the consumer workflow inputs, including distinct artifact naming', () => {
     const block = workflow.split('    inputs:\n')[1]!.split('\n    secrets:')[0]!
     const names = [...block.matchAll(/^ {6}([\w-]+):$/gm)].map((match) => match[1])
     expect(names).toEqual([
@@ -878,6 +878,7 @@ describe('consumer workflow contract', () => {
       'playwright-args',
       'traces',
       'retention-days',
+      'artifact-name',
     ])
   })
   it('decodes runs-on labels and sets package working-directory', () => {
@@ -888,6 +889,9 @@ describe('consumer workflow contract', () => {
     expect(workflow).toContain("if: ${{ !cancelled() && steps.resolve.outputs.run-dir != '' }}")
     expect(workflow).toContain('if-no-files-found: error')
     expect(workflow).toContain('retention-days: ${{ inputs.retention-days }}')
+    expect(workflow).toContain(
+      "inputs.artifact-name || format('shotwright-{0}-{1}-{2}', github.workflow, github.run_id, github.run_attempt)",
+    )
     expect(workflow).toContain('SHOTWRIGHT_RUN_DIR_FILE: ${{ runner.temp }}')
     expect(workflow).toContain('run_dir="$(cat "$SHOTWRIGHT_RUN_DIR_FILE")"')
     expect(workflow).not.toContain('readlink shots-output/latest')
