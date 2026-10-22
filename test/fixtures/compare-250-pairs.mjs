@@ -61,7 +61,9 @@ json.runs.b.pathDigest = 'PATH'
 const htmlHash = sha256(html)
 const jsonHash = sha256(JSON.stringify(json, null, 2) + '\n')
 if (htmlHash !== '24dedcc69b7e252c01b829c51fd8b17a4f97916b5c951935cc37be08b1930f64' || jsonHash !== '2f6a28bdcb6c935d9df034f3c5d1052acb35638b46a72a2af4f8c3d4c85a68a1') throw new Error('compare output bytes changed from the original implementation')
-// 256,610,304 measured bytes × 1.5, rounded up to the next 50 MB.
+// Process-lifetime maxRSS includes fixture setup (~119 MB at compare start),
+// making this a conservative whole-process bound. 256,610,304 measured bytes
+// × 1.5, rounded up to the next 50 MB.
 const rssCeilingBytes = 400_000_000
 if (peakRss > rssCeilingBytes) throw new Error(`peak RSS ${peakRss} exceeds ${rssCeilingBytes}`)
 const measurement = { pairs: 250, dimensions, elapsedMs, startRssBytes: startMemory.rss, startHeapUsedBytes: startMemory.heapUsed, endHeapUsedBytes: endMemory.heapUsed, peakRssBytes: peakRss, rssCeilingBytes, htmlBytes: html.length, htmlHash, normalizedJsonHash: jsonHash, counts: result.counts }

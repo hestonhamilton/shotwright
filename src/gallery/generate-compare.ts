@@ -12,7 +12,7 @@ import {
   type GalleryDiagnostic,
   type GalleryShot,
 } from './model.js'
-import { renderCompareChunks } from './render-compare.js'
+import { renderCompareHeader, renderComparePairChunks } from './render-compare.js'
 
 export interface CompareGenerationOptions {
   outputFile?: string
@@ -23,6 +23,7 @@ export interface CompareGenerationOptions {
 export interface CompatibleCompareGenerationResult extends CompareGenerationResult {
   comparePath: string
   diagnostics: GalleryDiagnostic[]
+  /** Final verdicts and paths only: image.dataUri is empty and diffPng is null after generation. */
   model: GalleryCompareModel
 }
 function tempPath(file: string): string {
@@ -46,7 +47,7 @@ function pixelmatchVersion(): string {
 }
 
 /**
- * Stage every output to a temp path first, then rename the JSON and diff PNGs
+ * Stage every output to a temp path first, then rename the diff PNGs and JSON
  * into place and the HTML last. Nothing from a previous run is removed until
  * the new HTML is published, so a failed write or rename leaves the previous
  * complete page in place.
@@ -91,11 +92,20 @@ export function generateCompareGallery(
   const compareDir = path.dirname(outputFile)
   fs.mkdirSync(compareDir, { recursive: true })
   const staged: Staged[] = []
+  let bodyTemp: string | undefined
   const stage = (file: string, contents: string | Buffer): string => {
     const temp = tempPath(file)
     fs.writeFileSync(temp, contents, { flag: 'wx' })
     staged.push({ file, temp })
     return temp
+  }
+  const writeAll = (fd: number, chunk: string | Buffer): void => {
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+    for (let offset = 0; offset < bytes.length;) {
+      const written = fs.writeSync(fd, bytes, offset, bytes.length - offset)
+      if (written === 0) throw new Error('compare HTML write made no progress')
+      offset += written
+    }
   }
   try {
     const model = buildCompareModel(a, b, {
@@ -112,16 +122,10 @@ export function generateCompareGallery(
       failOnChange: options.failOnChange ?? false,
     }
     const jsonFile = path.join(compareDir, `${stem}.compare.json`)
-    const diffFiles = model.pairs.flatMap((pair, index) => {
-      if (!pair.diffTemp) return []
-      const file = path.join(compareDir, `${stem}.diff-${index}.png`)
-      staged.find((entry) => entry.temp === pair.diffTemp)!.file = file
-      return [{ file }]
-    })
     const packageInfo = JSON.parse(
       fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     ) as { version: string }
-    const json = {
+    const buildJson = () => ({
       tool: 'shotwright',
       version: packageInfo.version,
       comparator: { name: 'pixelmatch', version: pixelmatchVersion() },
@@ -148,14 +152,10 @@ export function generateCompareGallery(
         ratio: pair.verdict?.ratio ?? null,
         aSize: pair.verdict?.aSize ?? null,
         bSize: pair.verdict?.bSize ?? null,
-        diff: pair.diffTemp
-          ? path.basename(
-              diffFiles.find((entry) => entry.file.endsWith(`.diff-${index}.png`))!.file,
-            )
-          : null,
+        diff: pair.diffTemp ? `${stem}.diff-${index}.png` : null,
         error: pair.error === null ? null : { message: pair.error, detail: pair.errorDetail },
       })),
-    }
+    })
     const siblingBase = (runDir: string): string | undefined => {
       const relative = path.relative(path.dirname(outputFile), runDir)
       return path.isAbsolute(relative) ? undefined : relative.split(path.sep).join('/')
@@ -164,13 +164,12 @@ export function generateCompareGallery(
       aBase: siblingBase(aRun),
       bBase: siblingBase(bRun),
     }
-    stage(jsonFile, JSON.stringify(json, null, 2) + '\n')
-    const htmlTemp = tempPath(outputFile)
-    fs.writeFileSync(htmlTemp, '', { flag: 'wx' })
-    staged.push({ file: outputFile, temp: htmlTemp })
-    const fd = fs.openSync(htmlTemp, 'a')
+    const bodyPath = tempPath(outputFile)
+    fs.writeFileSync(bodyPath, '', { flag: 'wx' })
+    bodyTemp = bodyPath
+    const bodyFd = fs.openSync(bodyTemp, 'a')
     try {
-      for (const chunk of renderCompareChunks(model, gate.failOnChange, links, (pair) => {
+      for (const chunk of renderComparePairChunks(model, links, (pair) => {
         const hydrated: GalleryShot[] = []
         for (const [side, run] of [
           ['a', aRun],
@@ -179,8 +178,27 @@ export function generateCompareGallery(
           if (pair.kind !== 'shot') break
           const shot = pair[side] as GalleryShot | null
           if (shot?.image) {
-            shot.image.dataUri = readPngModel(run, shot.entry.file).dataUri
-            hydrated.push(shot)
+            try {
+              shot.image.dataUri = readPngModel(run, shot.entry.file).dataUri
+              hydrated.push(shot)
+            } catch (error) {
+              const reason = error instanceof Error ? error.message : String(error)
+              pair.error = `${side.toUpperCase()}: unreadable file (${shot.entry.file}): ${reason}`
+              pair.errorDetail = `${side.toUpperCase()}: ${reason}`
+              model.counts[pair.state]--
+              model.counts.unreadable++
+              pair.state = 'unreadable'
+              pair.verdict = null
+              shot.image = null
+              shot.imageError = reason
+              if (pair.diffTemp) {
+                const index = staged.findIndex((entry) => entry.temp === pair.diffTemp)
+                if (index !== -1) staged.splice(index, 1)
+                fs.rmSync(pair.diffTemp, { force: true })
+                pair.diffTemp = undefined
+              }
+              break
+            }
           }
         }
         if (pair.diffTemp && pair.verdict) pair.verdict.diffPng = fs.readFileSync(pair.diffTemp)
@@ -189,10 +207,41 @@ export function generateCompareGallery(
           if (pair.verdict) pair.verdict.diffPng = null
         }
       }))
-        fs.writeSync(fd, chunk)
+        writeAll(bodyFd, chunk)
+    } finally {
+      fs.closeSync(bodyFd)
+    }
+    gate.nonParity = model.pairs.filter(
+      (pair) => pair.state !== 'identical' && pair.state !== 'similar',
+    ).length
+    const diffFiles = model.pairs.flatMap((pair, index) => {
+      if (!pair.diffTemp) return []
+      const file = path.join(compareDir, `${stem}.diff-${index}.png`)
+      staged.find((entry) => entry.temp === pair.diffTemp)!.file = file
+      return [{ file }]
+    })
+    const htmlTemp = tempPath(outputFile)
+    fs.writeFileSync(htmlTemp, '', { flag: 'wx' })
+    staged.push({ file: outputFile, temp: htmlTemp })
+    const fd = fs.openSync(htmlTemp, 'a')
+    try {
+      writeAll(fd, renderCompareHeader(model, gate.failOnChange))
+      const input = fs.openSync(bodyTemp, 'r')
+      try {
+        const buffer = Buffer.alloc(64 * 1024)
+        for (let read; (read = fs.readSync(input, buffer, 0, buffer.length, null)) > 0;) {
+          writeAll(fd, buffer.subarray(0, read))
+        }
+      } finally {
+        fs.closeSync(input)
+      }
+      writeAll(fd, '</main></body></html>\n')
     } finally {
       fs.closeSync(fd)
     }
+    fs.rmSync(bodyTemp)
+    bodyTemp = undefined
+    stage(jsonFile, JSON.stringify(buildJson(), null, 2) + '\n')
     for (const { file, temp } of staged) fs.renameSync(temp, file)
     // Only after the new HTML is in place: prune diff PNGs and temps a previous run of this stem left.
     const keep = new Set(diffFiles.map((entry) => path.basename(entry.file)))
@@ -202,7 +251,10 @@ export function generateCompareGallery(
     for (const name of fs.readdirSync(compareDir)) {
       if (!stale.test(name) || keep.has(name)) continue
       const candidate = path.join(compareDir, name)
-      if (fs.lstatSync(candidate).isFile()) fs.unlinkSync(candidate)
+      const stat = fs.lstatSync(candidate)
+      if (!stat.isFile()) continue
+      if (name.startsWith('.compare.') && Date.now() - stat.mtimeMs <= 60 * 60 * 1000) continue
+      fs.unlinkSync(candidate)
     }
     return {
       outputFile: legacy ? requestedOutputFile : outputFile,
@@ -213,6 +265,7 @@ export function generateCompareGallery(
       model,
     }
   } catch (error) {
+    if (bodyTemp) fs.rmSync(bodyTemp, { force: true })
     for (const { temp } of staged) {
       try {
         fs.rmSync(temp, { force: true })
