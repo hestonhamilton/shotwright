@@ -98,12 +98,12 @@ updates:
       prefix-development: deps-dev
 
     # Grouped for the same reason as the actions above: reviewing a batch is a
-    # review, reviewing five separate PRs is a rubber stamp. Everything here is
-    # a devDependency today — shotwright ships zero runtime dependencies, and
-    # the local half of the vulnerability gate enforces that — so this group is
-    # in practice the whole tree. It is keyed on dependency-type rather than "*"
-    # so that if a runtime dependency ever IS added, its PR arrives on its own
-    # instead of buried in a batch.
+    # review, reviewing five separate PRs is a rubber stamp. It is keyed on
+    # dependency-type rather than "*" so that the reviewed runtime dependencies
+    # (pixelmatch and pngjs, ADR 0019 amendment 2026-10-22) arrive in PRs of
+    # their own instead of buried in a batch. Such a PR fails the local half of
+    # the vulnerability gate until scripts/ci/runtime-dependency-allowlist.txt
+    # is updated to the new exact version, which is the review step.
     groups:
       dev-dependencies:
         dependency-type: development
