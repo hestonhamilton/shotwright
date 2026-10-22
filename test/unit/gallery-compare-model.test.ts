@@ -210,3 +210,39 @@ describe('seven-state compare model', () => {
     })
   })
 })
+
+describe('unreadable-image reasons', () => {
+  // shotwright-746.28.5: the gallery placeholder (readPngModel) and the compare
+  // pair error (pngDecodeReason) used to describe one file two ways, e.g.
+  // "truncated before the complete IHDR chunk" beside "missing PNG signature".
+  const whole = png(0)
+  const crcBroken = Buffer.from(whole)
+  crcBroken[29] = crcBroken[29]! ^ 1
+  it.each([
+    ['short junk', Buffer.from('not png'), 'not a PNG file (missing PNG signature)'],
+    [
+      'signature only',
+      whole.subarray(0, 20),
+      'truncated PNG (ends before the complete IHDR chunk)',
+    ],
+    ['cut mid-chunk', whole.subarray(0, whole.length - 20), 'truncated PNG (data ends early)'],
+    ['bad CRC', crcBroken, 'corrupt PNG IHDR chunk (CRC mismatch)'],
+    [
+      'trailing data',
+      Buffer.concat([whole, Buffer.from('extra')]),
+      'corrupt or trailing data after the image',
+    ],
+  ])('a %s file shows one reason on the placeholder and the pair', (_label, bytes, reason) => {
+    const base = root(),
+      a = run(base, 'run-a', [{ spec: 'x', name: 'bad', png: bytes }]),
+      b = run(base, 'run-b', [{ spec: 'x', name: 'bad', png: whole }])
+    const gallery = loadGalleryModel(a)
+    const placeholder = gallery.specs[0]!.shots[0]!.imageError
+    const model = buildCompareModel(gallery, loadGalleryModel(b), { aRunDir: a, bRunDir: b })
+    expect(placeholder).toBe(reason)
+    expect(model.pairs[0]).toMatchObject({
+      state: 'unreadable',
+      error: `A: unreadable PNG (shots/x/bad.png): ${reason}`,
+    })
+  })
+})

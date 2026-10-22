@@ -8,6 +8,7 @@
 // config factory at eval time; the reporter prints the run summary.
 
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import net from 'node:net'
@@ -16,13 +17,20 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { formatGalleryDiagnostics, generateGallery } from './gallery/generate.js'
+import { compareStates } from './gallery/compare-model.js'
 import { generateCompareGallery } from './gallery/generate-compare.js'
+import type { CompareGenerationResult } from './gallery/model.js'
 import {
   resolveCompareRuns,
   resolveGalleryRun,
   type ResolvedGalleryRun,
 } from './gallery/resolve.js'
-import { galleryUrls, startGalleryServer, waitForGalleryShutdown } from './gallery/server.js'
+import {
+  galleryUrls,
+  isLoopbackBind,
+  startGalleryServer,
+  waitForGalleryShutdown,
+} from './gallery/server.js'
 import {
   applyInitPlan,
   dryRunInitPlan,
@@ -52,6 +60,7 @@ export interface GalleryArgs {
   port: number
   lan: boolean
   last: boolean
+  includeTraces: boolean
 }
 
 export interface CompareArgs {
@@ -59,11 +68,13 @@ export interface CompareArgs {
   b: string
   config: string
   last: boolean
+  failOnChange: boolean
+  output: string | null
 }
 
 const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--run-dir-file <path>] [--config <path>] [-- <playwright test args>]. The run-dir-file must be unique per invocation.`
-const GALLERY_USAGE = `Usage: shotwright gallery [run-id|--last] [--config <path>] [--host <host>] [--port <port>] [--lan]`
-const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>]`
+const GALLERY_USAGE = `Usage: shotwright gallery [run-id|--last] [--config <path>] [--host <host>] [--port <port>] [--lan] [--include-traces]. Traces are withheld on a non-loopback bind unless --include-traces is given.`
+const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file.html>] [--fail-on-change]. Exits 0 after writing the page unless --fail-on-change is given and a pair is not identical or similar.`
 const RUNS_USAGE = `Usage: shotwright runs [--config <path>] [--json]`
 const INIT_USAGE = `Usage: shotwright init [--dry-run] [--package-manager npm|pnpm|yarn]`
 const GLOBAL_USAGE = `Usage: shotwright --help | --version`
@@ -210,6 +221,7 @@ export function parseGalleryArgs(argv: string[]): GalleryArgs {
     port: 0,
     lan: false,
     last: false,
+    includeTraces: false,
   }
   const seen = new Set<string>()
   let explicitHost = false
@@ -237,6 +249,9 @@ export function parseGalleryArgs(argv: string[]): GalleryArgs {
       if (seen.has(argument)) throw new Error('duplicate argument: --lan')
       seen.add(argument)
       args.lan = true
+    } else if (argument === '--include-traces') {
+      if (args.includeTraces) throw new Error('duplicate argument: --include-traces')
+      args.includeTraces = true
     } else if (argument === '--last') {
       if (args.last) throw new Error('duplicate argument: --last')
       args.last = true
@@ -259,6 +274,8 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
   let config = 'shots.config.ts'
   let sawConfig = false
   let last = false
+  let failOnChange = false
+  let output: string | null = null
 
   for (let i = 0; i < argv.length; i++) {
     const argument = argv[i]!
@@ -266,6 +283,12 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
       if (sawConfig) throw new Error('duplicate argument: --config')
       sawConfig = true
       config = requireValue(argv, ++i, argument)
+    } else if (argument === '--output') {
+      if (output !== null) throw new Error('duplicate argument: --output')
+      output = requireValue(argv, ++i, argument)
+    } else if (argument === '--fail-on-change') {
+      if (failOnChange) throw new Error('duplicate argument: --fail-on-change')
+      failOnChange = true
     } else if (argument === '--last') {
       if (last) throw new Error('duplicate argument: --last')
       last = true
@@ -287,7 +310,113 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
     b: selectors[1]!,
     config,
     last,
+    failOnChange,
+    output,
   }
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0)!
+    if (code < 0x20 || code === 0x7f) return true
+  }
+  return false
+}
+
+function isInside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child)
+  return (
+    relative === '' ||
+    !(relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+  )
+}
+
+/**
+ * Validate an explicit `compare --output` page and return its absolute path,
+ * with its created parent canonicalized so a symlinked parent cannot
+ * smuggle the page into a run. The page must end in `.html`, contain no control
+ * characters, have an existing or creatable directory, not lie inside either
+ * compared run directory, and be a regular file (not a symlink) or absent. Its
+ * `<stem>.compare.json` and `<stem>.diff-<n>.png` sidecars are written beside it.
+ */
+export function resolveCompareOutput(file: string, runDirs: readonly string[]): string {
+  if (hasControlCharacter(file)) throw new Error('--output must not contain control characters')
+  if (
+    path.extname(file).toLowerCase() !== '.html' ||
+    path.basename(file, path.extname(file)) === ''
+  )
+    throw new Error(`--output must name an .html file: ${file}`)
+  const target = path.resolve(file)
+  const missing: string[] = []
+  let ancestor = path.dirname(target)
+  let stat: fs.Stats
+  for (;;) {
+    try {
+      stat = fs.statSync(ancestor)
+      break
+    } catch (error) {
+      const parent = path.dirname(ancestor)
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || parent === ancestor)
+        throw new Error(`--output directory cannot be created: ${path.dirname(target)}`, {
+          cause: error,
+        })
+      missing.unshift(path.basename(ancestor))
+      ancestor = parent
+    }
+  }
+  if (!stat.isDirectory())
+    throw new Error(`--output directory cannot be created: ${path.dirname(target)}`)
+  const parent = path.join(fs.realpathSync(ancestor), ...missing)
+  try {
+    fs.mkdirSync(parent, { recursive: true })
+  } catch (error) {
+    throw new Error(`--output directory cannot be created: ${path.dirname(target)}`, {
+      cause: error,
+    })
+  }
+  // A directory swapped after validation can still redirect a later write.
+  const canonical = path.join(fs.realpathSync(parent), path.basename(target))
+  for (const runDir of runDirs) {
+    if (isInside(runDir, canonical))
+      throw new Error(`--output must not be inside a compared run directory: ${runDir}`)
+  }
+  const existing = fs.lstatSync(canonical, { throwIfNoEntry: false })
+  if (existing && !existing.isFile())
+    throw new Error(`--output must be a regular file or absent: ${file}`)
+  return canonical
+}
+
+/**
+ * Short digests that tell two same-basename run paths apart in a default
+ * compare stem: the first ten hex characters of each absolute path's SHA-256,
+ * lengthened only in the unlikely case the two prefixes collide.
+ */
+export function runPathDigests(aRunDir: string, bRunDir: string): { a: string; b: string } {
+  const a = createHash('sha256').update(aRunDir).digest('hex')
+  const b = createHash('sha256').update(bRunDir).digest('hex')
+  let length = 10
+  while (length < a.length && a.slice(0, length) === b.slice(0, length)) length += 2
+  return { a: a.slice(0, length), b: b.slice(0, length) }
+}
+
+/** The terminal line stating the parity-gate verdict with every state's count. */
+export function formatCompareGate(
+  result: Pick<CompareGenerationResult, 'counts' | 'gate'>,
+): string {
+  const counts = compareStates.map((state) => `${state} ${result.counts[state]}`).join(', ')
+  const { nonParity, failOnChange } = result.gate
+  const verdict =
+    nonParity === 0
+      ? 'parity (every pair identical or similar)'
+      : `${nonParity} non-parity pair${nonParity === 1 ? '' : 's'}`
+  const gate = failOnChange
+    ? `--fail-on-change: ${nonParity === 0 ? 'pass' : 'fail (exit 1)'}`
+    : 'report only (exit 0)'
+  return `shotwright compare: ${verdict}; ${counts}; ${gate}`
+}
+
+export function formatIncludedTracesNotice(host: string): string {
+  return `shotwright gallery: --include-traces: serving Playwright traces (which can carry cookies and storage) on non-loopback bind ${host}`
 }
 
 export function misplacedSeparatorWarnings(passthrough: string[]): string[] {
@@ -561,7 +690,9 @@ async function gallery(argv: string[]): Promise<number> {
     console.error(formatGalleryDiagnostics(generated.diagnostics))
   }
 
-  const server = await startGalleryServer(selected.runDir, args.host, args.port)
+  const server = await startGalleryServer(selected.runDir, args.host, args.port, {
+    includeTraces: args.includeTraces,
+  })
   const shutdown = waitForGalleryShutdown(server)
   const lanExposure = isLanExposure(server.host)
   console.log(`shotwright gallery: serving ${selected.runId}`)
@@ -572,6 +703,9 @@ async function gallery(argv: string[]): Promise<number> {
     console.warn(formatGalleryExposureNotice(server.host))
   } else {
     console.log(formatGalleryExposureNotice(server.host))
+  }
+  if (args.includeTraces && !isLoopbackBind(server.host)) {
+    console.warn(formatIncludedTracesNotice(server.host))
   }
   await shutdown
   return generated.diagnostics.length > 0 ? 1 : 0
@@ -623,7 +757,10 @@ async function runs(argv: string[]): Promise<number> {
   return 0
 }
 
-async function compare(argv: string[]): Promise<number> {
+export async function compare(
+  argv: string[],
+  outputDirProbe: (config: string) => Promise<string> = probeOutputDir,
+): Promise<number> {
   const args = parseCompareArgs(argv)
   if (!fs.existsSync(args.config)) {
     console.error(
@@ -632,18 +769,70 @@ async function compare(argv: string[]): Promise<number> {
     return 1
   }
 
-  const outputDir = await probeOutputDir(args.config)
+  const outputDir = await outputDirProbe(args.config)
   const selected = resolveCompareRuns(outputDir, args.a, args.b)
-  if (selected.a.runId === selected.b.runId) {
-    console.error(
-      `shotwright compare: run paths ${selected.a.runDir} and ${selected.b.runDir} have the same basename; a distinct output path is not supported yet`,
+  const runDirs = [selected.a.runDir, selected.b.runDir]
+  // Same-basename runs (two downloaded copies, say) would share the default
+  // stem; a digest of each absolute run path keeps their outputs apart.
+  const digests =
+    args.output === null && selected.a.runId === selected.b.runId
+      ? runPathDigests(selected.a.runDir, selected.b.runDir)
+      : null
+  let outputFile: string
+  if (args.output === null) {
+    outputFile = path.join(
+      selected.outputDir,
+      'compare',
+      digests === null
+        ? `${selected.a.runId}.vs.${selected.b.runId}.html`
+        : `${selected.a.runId}-${digests.a}.vs.${selected.b.runId}-${digests.b}.html`,
     )
+  }
+  try {
+    outputFile = resolveCompareOutput(args.output ?? outputFile!, runDirs)
+    if (args.output === null && fs.existsSync(outputFile)) {
+      const sidecar = path.join(
+        path.dirname(outputFile),
+        `${path.basename(outputFile, path.extname(outputFile))}.compare.json`,
+      )
+      // ADR 0009: the default stem is generator-owned, so a page without a readable
+      // sidecar is ours to overwrite. Only a sidecar that records a different pair
+      // marks the page as another comparison's output.
+      let runs: unknown = null
+      try {
+        runs = (JSON.parse(fs.readFileSync(sidecar, 'utf8')) as { runs?: unknown }).runs ?? null
+      } catch {
+        runs = null
+      }
+      const expected = {
+        a: {
+          runId: selected.a.runId,
+          pathDigest: createHash('sha256').update(selected.a.runDir).digest('hex'),
+        },
+        b: {
+          runId: selected.b.runId,
+          pathDigest: createHash('sha256').update(selected.b.runDir).digest('hex'),
+        },
+      }
+      if (runs !== null && JSON.stringify(runs) !== JSON.stringify(expected)) {
+        throw new Error(
+          `default page ${outputFile} is not owned by runs ${selected.a.runDir} and ${selected.b.runDir}; sidecar ${sidecar} records a different pair`,
+        )
+      }
+    }
+  } catch (error) {
+    console.error(`shotwright compare: ${error instanceof Error ? error.message : String(error)}`)
     return 2
   }
-  const generated = generateCompareGallery(selected.outputDir, selected.a.runDir, selected.b.runDir)
+  const generated = generateCompareGallery(selected.a.runDir, selected.b.runDir, {
+    outputFile,
+    failOnChange: args.failOnChange,
+  })
 
-  console.log(formatCompareSelection('A', selected.a))
-  console.log(formatCompareSelection('B', selected.b))
+  const digestNote = (side: 'a' | 'b'): string =>
+    digests === null ? '' : ` (digest ${digests[side]} = ${selected[side].runDir})`
+  console.log(formatCompareSelection('A', selected.a) + digestNote('a'))
+  console.log(formatCompareSelection('B', selected.b) + digestNote('b'))
   console.log(`shotwright compare: wrote ${generated.comparePath}`)
   if (generated.diagnostics.length > 0) {
     console.error(
@@ -652,6 +841,12 @@ async function compare(argv: string[]): Promise<number> {
         .join('\n'),
     )
   }
+  const gate = formatCompareGate(generated)
+  if (args.failOnChange && generated.gate.nonParity > 0) {
+    console.error(gate)
+    return 1
+  }
+  console.log(gate)
   return 0
 }
 

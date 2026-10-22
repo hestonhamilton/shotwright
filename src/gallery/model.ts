@@ -324,6 +324,50 @@ function crc32(bytes: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0
 }
 
+/**
+ * The one reviewer-facing reason a PNG's bytes are unreadable, or null when the
+ * container is structurally sound (signature, IHDR, chunk lengths and CRCs,
+ * IDAT, terminal IEND). The gallery placeholder and the compare pair error both
+ * use it, so one file is described one way on both surfaces.
+ */
+export function pngStructureReason(contents: Buffer): string | null {
+  if (
+    contents.byteLength < pngSignature.byteLength ||
+    !contents.subarray(0, pngSignature.byteLength).equals(pngSignature)
+  ) {
+    return 'not a PNG file (missing PNG signature)'
+  }
+  if (contents.byteLength < 33) return 'truncated PNG (ends before the complete IHDR chunk)'
+  if (contents.readUInt32BE(8) !== 13 || contents.toString('ascii', 12, 16) !== 'IHDR') {
+    return 'corrupt PNG (first chunk is not a valid IHDR)'
+  }
+  if (contents.readUInt32BE(16) === 0 || contents.readUInt32BE(20) === 0) {
+    return 'corrupt PNG (IHDR dimensions must be nonzero)'
+  }
+
+  let offset = pngSignature.byteLength
+  let sawIdat = false
+  while (offset < contents.byteLength) {
+    if (contents.byteLength - offset < 12) return 'truncated PNG (data ends early)'
+    const dataLength = contents.readUInt32BE(offset)
+    if (dataLength > contents.byteLength - offset - 12) return 'truncated PNG (data ends early)'
+    const dataEnd = offset + 8 + dataLength
+    const chunkEnd = dataEnd + 4
+    const type = contents.toString('ascii', offset + 4, offset + 8)
+    if (crc32(contents.subarray(offset + 4, dataEnd)) !== contents.readUInt32BE(dataEnd)) {
+      return `corrupt PNG ${type} chunk (CRC mismatch)`
+    }
+    if (type === 'IDAT') sawIdat = true
+    if (type === 'IEND') {
+      if (dataLength !== 0) return 'corrupt PNG (IEND chunk must be empty)'
+      if (chunkEnd !== contents.byteLength) return 'corrupt or trailing data after the image'
+      return sawIdat ? null : 'corrupt PNG (missing an IDAT chunk)'
+    }
+    offset = chunkEnd
+  }
+  return 'truncated PNG (missing a terminal IEND chunk)'
+}
+
 export function readPngModel(runDir: string, relativePath: string): PngModel {
   validateRelativePath(relativePath, 'PNG path')
   const file = containedFile(runDir, relativePath)
@@ -333,50 +377,12 @@ export function readPngModel(runDir: string, relativePath: string): PngModel {
   } catch {
     throw new Error('referenced file is missing or unreadable')
   }
-  if (contents.byteLength < 33) throw new Error('PNG is truncated before the complete IHDR chunk')
-  if (!contents.subarray(0, pngSignature.byteLength).equals(pngSignature)) {
-    throw new Error('PNG signature is invalid')
-  }
-  if (contents.readUInt32BE(8) !== 13 || contents.toString('ascii', 12, 16) !== 'IHDR') {
-    throw new Error('PNG first chunk is not a valid IHDR')
-  }
-  const width = contents.readUInt32BE(16)
-  const height = contents.readUInt32BE(20)
-  if (width === 0 || height === 0) throw new Error('PNG IHDR dimensions must be nonzero')
-
-  let offset = pngSignature.byteLength
-  let sawIdat = false
-  let sawIend = false
-  while (offset < contents.byteLength) {
-    if (contents.byteLength - offset < 12) throw new Error('PNG contains a truncated chunk')
-    const dataLength = contents.readUInt32BE(offset)
-    if (dataLength > contents.byteLength - offset - 12) {
-      throw new Error('PNG contains a truncated chunk')
-    }
-    const dataEnd = offset + 8 + dataLength
-    const chunkEnd = dataEnd + 4
-    const type = contents.toString('ascii', offset + 4, offset + 8)
-    const expectedCrc = contents.readUInt32BE(dataEnd)
-    if (crc32(contents.subarray(offset + 4, dataEnd)) !== expectedCrc) {
-      throw new Error(`PNG ${type} chunk CRC is invalid`)
-    }
-    if (type === 'IDAT') sawIdat = true
-    if (type === 'IEND') {
-      if (dataLength !== 0) throw new Error('PNG IEND chunk must be empty')
-      if (chunkEnd !== contents.byteLength) {
-        throw new Error('PNG IEND chunk must end exactly at the end of the file')
-      }
-      sawIend = true
-      break
-    }
-    offset = chunkEnd
-  }
-  if (!sawIend) throw new Error('PNG is missing a terminal IEND chunk')
-  if (!sawIdat) throw new Error('PNG is missing an IDAT chunk')
+  const reason = pngStructureReason(contents)
+  if (reason !== null) throw new Error(reason)
 
   return {
-    width,
-    height,
+    width: contents.readUInt32BE(16),
+    height: contents.readUInt32BE(20),
     byteLength: contents.byteLength,
     dataUri: `data:image/png;base64,${contents.toString('base64')}`,
   }

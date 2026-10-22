@@ -3,11 +3,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
+  compare,
+  formatCompareGate,
   formatGalleryExposureNotice,
   formatGallerySelection,
+  formatIncludedTracesNotice,
   helpFor,
   isLanExposure,
   isVersionRequest,
@@ -16,8 +19,11 @@ import {
   parseGalleryArgs,
   parseRunArgs,
   probeOutputDir,
+  resolveCompareOutput,
   resolvePlaywrightCli,
+  runPathDigests,
 } from '../../src/cli.js'
+import { makeManifest } from '../fixtures/manifest.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -152,6 +158,7 @@ describe('parseGalleryArgs', () => {
       port: 0,
       lan: false,
       last: false,
+      includeTraces: false,
     })
   })
 
@@ -173,6 +180,7 @@ describe('parseGalleryArgs', () => {
       port: 4173,
       lan: false,
       last: false,
+      includeTraces: false,
     })
   })
 
@@ -190,6 +198,16 @@ describe('parseGalleryArgs', () => {
     ['--port', '1', '2'],
   ])('rejects duplicate %s', (flag, first, second) => {
     expect(() => parseGalleryArgs([flag, first, flag, second])).toThrow(/duplicate/)
+  })
+
+  it('accepts --include-traces with --lan, defaulting to withheld traces', () => {
+    expect(parseGalleryArgs(['--lan', '--include-traces'])).toMatchObject({
+      host: '0.0.0.0',
+      lan: true,
+      includeTraces: true,
+    })
+    expect(parseGalleryArgs(['--lan']).includeTraces).toBe(false)
+    expect(() => parseGalleryArgs(['--include-traces', '--include-traces'])).toThrow(/duplicate/)
   })
 
   it('rejects duplicate --lan and its conflict with --host', () => {
@@ -234,6 +252,8 @@ describe('parseCompareArgs', () => {
       b: 'run-b',
       config: 'shots.config.ts',
       last: false,
+      failOnChange: false,
+      output: null,
     })
     expect(parseCompareArgs(['latest', 'run-b'])).toMatchObject({ a: 'latest', b: 'run-b' })
   })
@@ -244,6 +264,21 @@ describe('parseCompareArgs', () => {
       b: 'run-b',
       config: 'custom.ts',
       last: false,
+      failOnChange: false,
+      output: null,
+    })
+  })
+
+  it('parses --fail-on-change and --output in any position', () => {
+    expect(
+      parseCompareArgs(['--fail-on-change', 'run-a', '--output', 'out/review.html', 'run-b']),
+    ).toEqual({
+      a: 'run-a',
+      b: 'run-b',
+      config: 'shots.config.ts',
+      last: false,
+      failOnChange: true,
+      output: 'out/review.html',
     })
   })
 
@@ -259,13 +294,22 @@ describe('parseCompareArgs', () => {
   })
 
   it.each([
+    ['duplicate --fail-on-change', ['a', 'b', '--fail-on-change', '--fail-on-change'], /duplicate/],
+    ['duplicate --output', ['a', 'b', '--output', 'x.html', '--output', 'y.html'], /duplicate/],
+    ['missing --output value', ['a', 'b', '--output'], /requires a value/],
+    ['flag as --output value', ['a', 'b', '--output', '--fail-on-change'], /requires a value/],
+  ])('rejects %s', (_label, argv, message) => {
+    expect(() => parseCompareArgs(argv)).toThrow(message)
+  })
+
+  it.each([
     ['--host', '127.0.0.1'],
     ['--port', '4173'],
     ['--lan'],
     ['--open'],
     ['--'],
-    ['--output', 'compare.html'],
-  ])('does not admit gallery, passthrough, or output flag %s', (...flag) => {
+    ['--include-traces'],
+  ])('does not admit gallery or passthrough flag %s', (...flag) => {
     expect(() => parseCompareArgs(['run-a', 'run-b', ...flag])).toThrow(/unknown argument/)
   })
 })
@@ -501,6 +545,15 @@ describe('helpFor', () => {
     expect(text!.split('\n')).toHaveLength(1)
   })
 
+  it('documents the compare gate, compare output, and gallery trace override flags', () => {
+    expect(helpFor(['help', 'compare'])).toContain('[--output <file.html>] [--fail-on-change]')
+    expect(helpFor(['help', 'compare'])).toContain(
+      'Exits 0 after writing the page unless --fail-on-change',
+    )
+    expect(helpFor(['gallery', '--help'])).toContain('[--lan] [--include-traces]')
+    expect(helpFor(['gallery', '--help'])).toContain('withheld on a non-loopback bind')
+  })
+
   it('does not treat a help flag after the Playwright separator as a help request', () => {
     expect(helpFor(['run', '--', '--help'])).toBeNull()
   })
@@ -532,4 +585,229 @@ describe('isVersionRequest', () => {
       expect(isVersionRequest(argv)).toBe(false)
     },
   )
+})
+
+describe('compare output validation', () => {
+  function scratch(): { root: string; runA: string; runB: string } {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-cli-output-')))
+    const runA = path.join(root, 'runs', 'run-a')
+    const runB = path.join(root, 'elsewhere', 'run-a')
+    fs.mkdirSync(runA, { recursive: true })
+    fs.mkdirSync(runB, { recursive: true })
+    return { root, runA, runB }
+  }
+
+  it('returns the absolute page path for an existing or creatable directory', () => {
+    const { root, runA, runB } = scratch()
+    try {
+      expect(resolveCompareOutput(path.join(root, 'review.html'), [runA, runB])).toBe(
+        path.join(root, 'review.html'),
+      )
+      expect(resolveCompareOutput(path.join(root, 'new/nested/Review.HTML'), [runA, runB])).toBe(
+        path.join(root, 'new/nested/Review.HTML'),
+      )
+      expect(fs.realpathSync(path.join(root, 'new/nested'))).toBe(path.join(root, 'new/nested'))
+      fs.writeFileSync(path.join(root, 'existing.html'), 'old page')
+      expect(resolveCompareOutput(path.join(root, 'existing.html'), [runA, runB])).toBe(
+        path.join(root, 'existing.html'),
+      )
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('returns a path through the real parent after creating missing directories', () => {
+    const { root, runA, runB } = scratch()
+    try {
+      const alias = path.join(root, 'alias')
+      const actual = path.join(root, 'actual')
+      fs.mkdirSync(actual)
+      fs.symlinkSync(actual, alias)
+      expect(resolveCompareOutput(path.join(alias, 'new', 'review.html'), [runA, runB])).toBe(
+        path.join(actual, 'new', 'review.html'),
+      )
+      expect(fs.realpathSync(path.join(actual, 'new'))).toBe(path.join(actual, 'new'))
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['a non-.html name', 'review.htm', /\.html file/],
+    ['a bare extension', '.html', /\.html file/],
+    ['a newline', 'rev\niew.html', /control characters/],
+    ['an escape character', 'rev\u001biew.html', /control characters/],
+    ['a DEL character', 'rev\u007fiew.html', /control characters/],
+  ])('rejects %s', (_label, name, message) => {
+    const { root, runA, runB } = scratch()
+    try {
+      expect(() => resolveCompareOutput(path.join(root, name), [runA, runB])).toThrow(message)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a page inside either compared run, including through a symlinked parent', () => {
+    const { root, runA, runB } = scratch()
+    try {
+      for (const target of [
+        path.join(runA, 'compare.html'),
+        path.join(runB, 'nested', 'compare.html'),
+      ])
+        expect(() => resolveCompareOutput(target, [runA, runB])).toThrow(
+          /inside a compared run directory/,
+        )
+      fs.symlinkSync(runB, path.join(root, 'alias'))
+      expect(() => resolveCompareOutput(path.join(root, 'alias/x.html'), [runA, runB])).toThrow(
+        /inside a compared run directory/,
+      )
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a directory that cannot be created and a target that is not a regular file', () => {
+    const { root, runA, runB } = scratch()
+    try {
+      fs.writeFileSync(path.join(root, 'file'), 'not a directory')
+      expect(() => resolveCompareOutput(path.join(root, 'file/x.html'), [runA, runB])).toThrow(
+        /cannot be created/,
+      )
+      expect(() =>
+        resolveCompareOutput(path.join(root, 'file/deeper/x.html'), [runA, runB]),
+      ).toThrow(/cannot be created/)
+      fs.mkdirSync(path.join(root, 'dir.html'))
+      expect(() => resolveCompareOutput(path.join(root, 'dir.html'), [runA, runB])).toThrow(
+        /regular file or absent/,
+      )
+      fs.writeFileSync(path.join(root, 'real.html'), 'page')
+      fs.symlinkSync(path.join(root, 'real.html'), path.join(root, 'link.html'))
+      expect(() => resolveCompareOutput(path.join(root, 'link.html'), [runA, runB])).toThrow(
+        /regular file or absent/,
+      )
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('same-basename compare stems', () => {
+  it('gives two same-basename run paths distinct ten-hex digests of their absolute paths', () => {
+    const digests = runPathDigests(
+      '/runs/one/2026-07-29T00-00-00_abcd',
+      '/runs/two/2026-07-29T00-00-00_abcd',
+    )
+    expect(digests.a).toMatch(/^[0-9a-f]{10}$/)
+    expect(digests.b).toMatch(/^[0-9a-f]{10}$/)
+    expect(digests.a).not.toBe(digests.b)
+    // Deterministic: the same path always yields the same digest.
+    expect(runPathDigests('/runs/one/2026-07-29T00-00-00_abcd', '/x').a).toBe(digests.a)
+  })
+})
+
+it('keeps README gallery and compare command lines aligned with CLI help', () => {
+  const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8')
+  const gallery = helpFor(['help', 'gallery'])!.match(
+    /^Usage: shotwright gallery (.+?)\. Traces/m,
+  )![1]
+  const compareUsage = helpFor(['help', 'compare'])!.match(
+    /^Usage: shotwright compare (.+?)\. Exits/m,
+  )![1]
+  expect(readme).toContain(`shotwright gallery  ${gallery}`)
+  expect(readme).toContain(`shotwright compare  ${compareUsage}`)
+})
+
+describe('default compare page ownership', () => {
+  function runs(): { root: string; a: string; b: string; config: string } {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-cli-compare-')))
+    const a = path.join(root, 'run-a')
+    const b = path.join(root, 'run-b')
+    for (const [dir, runId] of [
+      [a, 'run-a'],
+      [b, 'run-b'],
+    ] as const) {
+      fs.mkdirSync(dir)
+      fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(makeManifest({ runId })))
+    }
+    const config = path.join(root, 'shots.config.ts')
+    fs.writeFileSync(config, '')
+    return { root, a, b, config }
+  }
+
+  it('refuses a default compare directory symlinked into a run with exit 2', async () => {
+    const { root, a, b, config } = runs()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      fs.symlinkSync(a, path.join(root, 'compare'))
+      expect(await compare(['run-a', 'run-b', '--config', config], async () => root)).toBe(2)
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('--output must not be inside a compared run directory'),
+      )
+      expect(fs.existsSync(path.join(a, 'run-a.vs.run-b.html'))).toBe(false)
+      expect(b).toBe(path.join(root, 'run-b'))
+    } finally {
+      error.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a page whose sidecar records a different run pair with exit 2', async () => {
+    const { root, a, b, config } = runs()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const compareDir = path.join(root, 'compare')
+      fs.mkdirSync(compareDir)
+      const page = path.join(compareDir, 'run-a.vs.run-b.html')
+      fs.writeFileSync(page, 'existing page')
+      fs.writeFileSync(
+        path.join(compareDir, 'run-a.vs.run-b.compare.json'),
+        JSON.stringify({ runs: { a: { runId: 'other', pathDigest: '0'.repeat(64) } } }),
+      )
+      expect(await compare(['run-a', 'run-b', '--config', config], async () => root)).toBe(2)
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(a))
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(b))
+      expect(fs.readFileSync(page, 'utf8')).toBe('existing page')
+    } finally {
+      error.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('compare gate line', () => {
+  const counts = {
+    identical: 3,
+    similar: 1,
+    changed: 1,
+    'size-changed': 0,
+    added: 1,
+    removed: 0,
+    unreadable: 0,
+  }
+
+  it('states the verdict and every count, and that the default only reports', () => {
+    expect(formatCompareGate({ counts, gate: { nonParity: 2, failOnChange: false } })).toBe(
+      'shotwright compare: 2 non-parity pairs; identical 3, similar 1, changed 1, size-changed 0, added 1, removed 0, unreadable 0; report only (exit 0)',
+    )
+  })
+
+  it('states a failing and a passing opt-in gate', () => {
+    expect(formatCompareGate({ counts, gate: { nonParity: 1, failOnChange: true } })).toMatch(
+      /: 1 non-parity pair; .*; --fail-on-change: fail \(exit 1\)$/,
+    )
+    expect(
+      formatCompareGate({
+        counts: { ...counts, changed: 0, added: 0 },
+        gate: { nonParity: 0, failOnChange: true },
+      }),
+    ).toMatch(/: parity \(every pair identical or similar\); .*; --fail-on-change: pass$/)
+  })
+})
+
+describe('included traces notice', () => {
+  it('names the non-loopback bind traces are served on', () => {
+    expect(formatIncludedTracesNotice('0.0.0.0')).toBe(
+      'shotwright gallery: --include-traces: serving Playwright traces (which can carry cookies and storage) on non-loopback bind 0.0.0.0',
+    )
+  })
 })

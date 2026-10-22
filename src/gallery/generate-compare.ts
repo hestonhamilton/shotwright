@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import fs from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
@@ -19,7 +20,10 @@ export interface CompatibleCompareGenerationResult extends CompareGenerationResu
   model: GalleryCompareModel
 }
 function tempPath(file: string): string {
-  return path.join(path.dirname(file), `.compare.${path.basename(file)}.${process.pid}.tmp`)
+  return path.join(
+    path.dirname(file),
+    `.compare.${path.basename(file)}.${process.pid}.${randomBytes(16).toString('hex')}.tmp`,
+  )
 }
 
 function escapeRegExp(value: string): string {
@@ -54,8 +58,8 @@ function publish(outputs: Array<{ file: string; contents: string | Buffer }>): v
   try {
     for (const { file, contents } of outputs) {
       const temp = tempPath(file)
+      fs.writeFileSync(temp, contents, { flag: 'wx' })
       staged.push({ file, temp })
-      fs.writeFileSync(temp, contents)
     }
     for (const { file, temp } of staged) fs.renameSync(temp, file)
   } catch (error) {
@@ -91,10 +95,16 @@ export function generateCompareGallery(
   const a = loadGalleryModel(aRun),
     b = loadGalleryModel(bRun)
   const outputDir = legacy ? first : path.dirname(aRun)
-  const stem = `${a.manifest.runId}.vs.${b.manifest.runId}`
-  const compareDir = path.join(outputDir, 'compare')
+  // The page's own name is the stem: its compare.json sidecar and diff PNGs land
+  // beside it as `<stem>.compare.json` and `<stem>.diff-<n>.png`, wherever it is.
+  const requestedOutputFile =
+    options.outputFile ??
+    path.join(outputDir, 'compare', `${a.manifest.runId}.vs.${b.manifest.runId}.html`)
+  const outputFile = path.resolve(requestedOutputFile)
+  const htmlName = path.basename(outputFile)
+  const stem = path.basename(outputFile, path.extname(outputFile))
+  const compareDir = path.dirname(outputFile)
   fs.mkdirSync(compareDir, { recursive: true })
-  const outputFile = options.outputFile ?? path.join(compareDir, `${stem}.html`)
   const model = buildCompareModel(a, b, {
     aRunDir: aRun,
     bRunDir: bRun,
@@ -119,6 +129,10 @@ export function generateCompareGallery(
     tool: 'shotwright',
     version: packageInfo.version,
     comparator: { name: 'pixelmatch', version: pixelmatchVersion() },
+    runs: {
+      a: { runId: a.manifest.runId, pathDigest: createHash('sha256').update(aRun).digest('hex') },
+      b: { runId: b.manifest.runId, pathDigest: createHash('sha256').update(bRun).digest('hex') },
+    },
     settings: {
       threshold: model.options.threshold,
       includeAA: model.options.includeAA,
@@ -160,13 +174,15 @@ export function generateCompareGallery(
   // Only after the new HTML is in place: prune diff PNGs and temps a previous run of this stem left.
   const keep = new Set(diffFiles.map((entry) => path.basename(entry.file)))
   const stale = new RegExp(
-    `^(?:${escapeRegExp(stem)}\\.diff-\\d+\\.png|\\.compare\\.${escapeRegExp(stem)}\\.(?:html|compare\\.json|diff-\\d+\\.png)\\.\\d+\\.tmp)$`,
+    `^(?:${escapeRegExp(stem)}\\.diff-\\d+\\.png|\\.compare\\.(?:${escapeRegExp(htmlName)}|${escapeRegExp(stem)}\\.(?:compare\\.json|diff-\\d+\\.png))\\.\\d+(?:\\.[0-9a-f]{32})?\\.tmp)$`,
   )
-  for (const name of fs.readdirSync(compareDir))
-    if (stale.test(name) && !keep.has(name))
-      fs.rmSync(path.join(compareDir, name), { recursive: true, force: true })
+  for (const name of fs.readdirSync(compareDir)) {
+    if (!stale.test(name) || keep.has(name)) continue
+    const candidate = path.join(compareDir, name)
+    if (fs.lstatSync(candidate).isFile()) fs.unlinkSync(candidate)
+  }
   return {
-    outputFile,
+    outputFile: legacy ? requestedOutputFile : outputFile,
     comparePath: outputFile,
     counts: model.counts,
     gate,

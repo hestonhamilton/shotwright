@@ -2,13 +2,21 @@
 // trace as independent CLI contracts. Requires `pnpm run build` first (the
 // `smoke` script does) and an installed chromium.
 
-import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import {
+  execFileSync,
+  spawn,
+  spawnSync,
+  type ChildProcess,
+  type SpawnSyncReturns,
+} from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import net, { type AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { PNG } from 'pngjs'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import type { Manifest } from '../../src/manifest.js'
@@ -139,7 +147,10 @@ function pointLatestAt(runId: string): void {
   fs.symlinkSync(runId, latest)
 }
 
-async function startGallery(runId: string | null): Promise<RunningGallery> {
+async function startGallery(
+  runId: string | null,
+  extraArgs: readonly string[] = [],
+): Promise<RunningGallery> {
   const args = [
     'dist/cli.js',
     'gallery',
@@ -148,6 +159,7 @@ async function startGallery(runId: string | null): Promise<RunningGallery> {
     'demo/shots.config.ts',
     '--port',
     '0',
+    ...extraArgs,
   ]
   const child = spawn(process.execPath, args, {
     cwd: root,
@@ -1243,43 +1255,240 @@ describe('shotwright run against the demo app', () => {
     }
   })
 
-  it('rejects colliding external run ids without changing existing compare files', () => {
+  it('compares same-basename runs under per-path digest stems without touching the plain stem', () => {
+    const runId = unfilteredRun.manifest.runId
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-external-'))
-    const external = path.join(scratch, unfilteredRun.manifest.runId)
+    const external = path.join(scratch, runId)
     const compareDir = path.join(outputDir, 'compare')
-    const defaultFile = path.join(
-      compareDir,
-      `${unfilteredRun.manifest.runId}.vs.${unfilteredRun.manifest.runId}.html`,
-    )
+    const plainFile = path.join(compareDir, `${runId}.vs.${runId}.html`)
+    let digestStem: string | undefined
     try {
       fs.cpSync(unfilteredRun.runDir, external, { recursive: true })
       fs.mkdirSync(compareDir, { recursive: true })
-      fs.writeFileSync(defaultFile, 'existing comparison')
-      const before = fs.readdirSync(compareDir).sort()
-      const baseArgs = [
+      fs.writeFileSync(plainFile, 'existing comparison')
+      const digest = (runDir: string): string =>
+        createHash('sha256').update(fs.realpathSync(runDir)).digest('hex').slice(0, 10)
+      const [aDigest, bDigest] = [digest(unfilteredRun.runDir), digest(external)]
+      digestStem = `${runId}-${aDigest}.vs.${runId}-${bDigest}`
+      const result = spawnSync(
+        process.execPath,
+        ['dist/cli.js', 'compare', runId, external, '--config', 'demo/shots.config.ts'],
+        { cwd: root, encoding: 'utf8', timeout: 60_000 },
+      )
+      expect(result.status).toBe(0)
+      expect(result.stderr).toBe('')
+      expect(result.stdout).toContain(
+        `selected A ${runId} explicitly (digest ${aDigest} = ${fs.realpathSync(unfilteredRun.runDir)})`,
+      )
+      expect(result.stdout).toContain(
+        `selected B ${runId} explicitly (digest ${bDigest} = ${fs.realpathSync(external)})`,
+      )
+      expect(result.stdout).toContain(
+        `shotwright compare: wrote ${path.join(compareDir, `${digestStem}.html`)}`,
+      )
+      expect(result.stdout).toContain(
+        'shotwright compare: parity (every pair identical or similar)',
+      )
+      expect(fs.existsSync(path.join(compareDir, `${digestStem}.compare.json`))).toBe(true)
+      expect(fs.readFileSync(plainFile, 'utf8')).toBe('existing comparison')
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true })
+      fs.rmSync(plainFile, { force: true })
+      for (const name of fs.existsSync(compareDir) ? fs.readdirSync(compareDir) : [])
+        if (digestStem !== undefined && name.startsWith(`${digestStem}.`))
+          fs.rmSync(path.join(compareDir, name), { force: true })
+    }
+  }, 120_000)
+
+  it('exits 0 on a rendered shot change by default, 1 with --fail-on-change, and writes --output with its sidecars', () => {
+    const runId = unfilteredRun.manifest.runId
+    const scratch = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-gate-')),
+    )
+    const a = path.join(scratch, 'a', runId)
+    const b = path.join(scratch, 'b', runId)
+    const reviewDir = path.join(scratch, 'review', 'nested')
+    const compareDir = path.join(outputDir, 'compare')
+    const compareBefore = fs.existsSync(compareDir) ? fs.readdirSync(compareDir).sort() : null
+    try {
+      fs.cpSync(unfilteredRun.runDir, a, { recursive: true })
+      fs.cpSync(unfilteredRun.runDir, b, { recursive: true })
+      // Invert a block of pixels in one B screenshot: a real, rendered change.
+      const changed = path.join(b, unfilteredRun.manifest.shots[0]!.file)
+      const image = PNG.sync.read(fs.readFileSync(changed))
+      for (let i = 0; i < Math.min(image.data.length, 4 * 4096); i += 4)
+        for (let channel = 0; channel < 3; channel++)
+          image.data[i + channel] = 255 - image.data[i + channel]!
+      fs.writeFileSync(changed, PNG.sync.write(image))
+      const compare = (...extra: string[]): SpawnSyncReturns<string> =>
+        spawnSync(
+          process.execPath,
+          ['dist/cli.js', 'compare', a, b, '--config', 'demo/shots.config.ts', ...extra],
+          { cwd: root, encoding: 'utf8', timeout: 60_000 },
+        )
+
+      const page = path.join(reviewDir, 'parity.html')
+      const reported = compare('--output', page)
+      expect(reported.status).toBe(0)
+      expect(reported.stderr).toBe('')
+      expect(reported.stdout).toContain(`shotwright compare: wrote ${page}`)
+      expect(reported.stdout).toMatch(
+        /shotwright compare: 1 non-parity pair; identical 4, similar 0, changed 1, .*; report only \(exit 0\)/,
+      )
+      expect(fs.readdirSync(reviewDir).sort()).toEqual([
+        'parity.compare.json',
+        'parity.diff-0.png',
+        'parity.html',
+      ])
+      const summary = JSON.parse(
+        fs.readFileSync(path.join(reviewDir, 'parity.compare.json'), 'utf8'),
+      ) as { gate: { nonParity: number; failOnChange: boolean }; counts: { changed: number } }
+      expect(summary.gate).toEqual({ nonParity: 1, failOnChange: false })
+      expect(summary.counts.changed).toBe(1)
+
+      const gated = compare('--fail-on-change', '--output', page)
+      expect(gated.status).toBe(1)
+      expect(gated.stdout).toContain(`shotwright compare: wrote ${page}`)
+      expect(gated.stderr).toMatch(
+        /shotwright compare: 1 non-parity pair; .*; --fail-on-change: fail \(exit 1\)/,
+      )
+      expect(
+        (
+          JSON.parse(fs.readFileSync(path.join(reviewDir, 'parity.compare.json'), 'utf8')) as {
+            gate: unknown
+          }
+        ).gate,
+      ).toEqual({ nonParity: 1, failOnChange: true })
+
+      // Parity passes the opt-in gate.
+      const parity = spawnSync(
+        process.execPath,
+        [
+          'dist/cli.js',
+          'compare',
+          a,
+          unfilteredRun.runDir,
+          '--config',
+          'demo/shots.config.ts',
+          '--fail-on-change',
+          '--output',
+          path.join(scratch, 'same.html'),
+        ],
+        { cwd: root, encoding: 'utf8', timeout: 60_000 },
+      )
+      expect(parity.status).toBe(0)
+      expect(parity.stdout).toContain('--fail-on-change: pass')
+
+      // An --output inside a compared run is refused before anything is written.
+      const inside = compare('--output', path.join(b, 'compare.html'))
+      expect(inside.status).toBe(2)
+      expect(inside.stderr).toContain('--output must not be inside a compared run directory')
+      expect(fs.existsSync(path.join(b, 'compare.html'))).toBe(false)
+      expect(fs.existsSync(path.join(b, 'compare.compare.json'))).toBe(false)
+      // An explicit output leaves the configured compare directory alone.
+      expect(fs.existsSync(compareDir) ? fs.readdirSync(compareDir).sort() : null).toEqual(
+        compareBefore,
+      )
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('fails --fail-on-change on a non-parity artifact while every shot is identical', () => {
+    const runId = unfilteredRun.manifest.runId
+    const scratch = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-artifact-')),
+    )
+    const testId = unfilteredRun.manifest.tests[0]!.id
+    const withArtifact = (side: string, value: string): string => {
+      const dir = path.join(scratch, side, runId)
+      fs.cpSync(unfilteredRun.runDir, dir, { recursive: true })
+      fs.mkdirSync(path.join(dir, 'data'), { recursive: true })
+      fs.writeFileSync(path.join(dir, 'data', 'reading.json'), value)
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'),
+      ) as Manifest
+      manifest.artifacts = [
+        {
+          spec: 'home.shots.ts',
+          name: 'reading.json',
+          file: 'data/reading.json',
+          contentType: 'application/json',
+          bytes: Buffer.byteLength(value),
+          testId,
+        },
+      ]
+      fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest))
+      return dir
+    }
+    try {
+      const a = withArtifact('a', '{"reading":1}\n')
+      const b = withArtifact('b', '{"reading":2}\n')
+      const page = path.join(scratch, 'artifact.html')
+      const args = [
         'dist/cli.js',
         'compare',
-        unfilteredRun.manifest.runId,
-        external,
+        a,
+        b,
         '--config',
         'demo/shots.config.ts',
+        '--output',
+        page,
       ]
-      const collided = spawnSync(process.execPath, baseArgs, {
+      const reported = spawnSync(process.execPath, args, {
         cwd: root,
         encoding: 'utf8',
         timeout: 60_000,
       })
-      expect(collided.status).toBe(2)
-      expect(collided.stderr).toContain(unfilteredRun.runDir)
-      expect(collided.stderr).toContain(external)
-      expect(collided.stderr).toContain('a distinct output path is not supported yet')
-      expect(fs.readFileSync(defaultFile, 'utf8')).toBe('existing comparison')
-      expect(fs.readdirSync(compareDir).sort()).toEqual(before)
+      expect(reported.status).toBe(0)
+      expect(reported.stdout).toMatch(
+        /shotwright compare: 1 non-parity pair; identical 5, similar 0, changed 1, .*; report only \(exit 0\)/,
+      )
+      const summary = JSON.parse(
+        fs.readFileSync(path.join(scratch, 'artifact.compare.json'), 'utf8'),
+      ) as { pairs: Array<{ kind: string; state: string }> }
+      expect(summary.pairs.filter((pair) => pair.state !== 'identical')).toEqual([
+        expect.objectContaining({ kind: 'artifact', state: 'changed' }),
+      ])
+      const gated = spawnSync(process.execPath, [...args, '--fail-on-change'], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 60_000,
+      })
+      expect(gated.status).toBe(1)
+      expect(gated.stderr).toContain('--fail-on-change: fail (exit 1)')
     } finally {
       fs.rmSync(scratch, { recursive: true, force: true })
-      fs.rmSync(defaultFile, { force: true })
     }
   }, 120_000)
+
+  it('serves traces on a LAN bind only with --include-traces', async () => {
+    const shot = traceRun.manifest.shots.find((entry) => entry.trace !== null)!
+    const tracePath = encodedManifestPath(shot.trace!)
+    let running: RunningGallery | undefined
+    try {
+      running = await startGallery(traceRun.manifest.runId, ['--lan'])
+      expect((await fetch(`${running.url}${tracePath}`)).status).toBe(404)
+      const withheld = running
+      await expect.poll(() => withheld.stderr()).toContain('Anyone on this network')
+      expect(withheld.stderr()).not.toContain('--include-traces')
+      await stopGallery(running)
+      running = undefined
+
+      running = await startGallery(traceRun.manifest.runId, ['--lan', '--include-traces'])
+      const response = await fetch(`${running.url}${tracePath}`)
+      expect(response.status).toBe(200)
+      expect(Buffer.from(await response.arrayBuffer()).subarray(0, 4)).toEqual(zipSignature)
+      const served = running
+      await expect
+        .poll(() => served.stderr())
+        .toContain(
+          'shotwright gallery: --include-traces: serving Playwright traces (which can carry cookies and storage) on non-loopback bind 0.0.0.0',
+        )
+    } finally {
+      if (running) await stopGallery(running)
+    }
+  }, 60_000)
 
   it('overwrites only the generator-owned ADR 0009 compare stem', () => {
     const compareDir = path.join(outputDir, 'compare')
