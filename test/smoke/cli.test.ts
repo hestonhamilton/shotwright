@@ -1032,6 +1032,135 @@ beforeAll(() => {
 }, 240_000)
 
 describe('shotwright run against the demo app', () => {
+  it('reports the invocation run dir after child failure, then invalidates it before config failure', () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-run-file-'))
+    const destination = path.join(scratch, 'run-dir.txt')
+    try {
+      const first = spawnSync(
+        process.execPath,
+        [
+          'dist/cli.js',
+          'run',
+          '--run-dir-file',
+          destination,
+          '--config',
+          'demo/shots.config.ts',
+          '--',
+          '--grep',
+          'no matching test title',
+        ],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: { ...process.env, CI: '1' },
+          timeout: 60_000,
+        },
+      )
+      expect(first.status).not.toBe(0)
+      const created = fs.readFileSync(destination, 'utf8')
+      expect(created).toMatch(/shots-output[/\\][^/\\]+$/)
+      expect(created).not.toBe(unfilteredRun.runDir)
+      expect(fs.readlinkSync(path.join(outputDir, 'latest'))).toBe(traceRun.manifest.runId)
+      expect(first.stdout.trimEnd().split('\n').at(-1)).toBe(`run-dir: ${created}`)
+      const second = spawnSync(
+        process.execPath,
+        [
+          'dist/cli.js',
+          'run',
+          '--run-dir-file',
+          destination,
+          '--config',
+          'test/fixtures/cli-runs/throws.config.ts',
+        ],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: { ...process.env, CI: '1' },
+          timeout: 60_000,
+        },
+      )
+      expect(second.status).not.toBe(0)
+      expect(fs.existsSync(destination)).toBe(false)
+      expect(second.stdout).not.toContain('run-dir:')
+      fs.mkdirSync(destination)
+      const directory = spawnSync(
+        process.execPath,
+        ['dist/cli.js', 'run', '--run-dir-file', destination, '--config', 'demo/shots.config.ts'],
+        { cwd: root, encoding: 'utf8' },
+      )
+      expect(directory.status).toBe(2)
+      fs.rmSync(destination, { recursive: true })
+      fs.symlinkSync(created, destination)
+      const symlink = spawnSync(
+        process.execPath,
+        ['dist/cli.js', 'run', '--run-dir-file', destination, '--config', 'demo/shots.config.ts'],
+        { cwd: root, encoding: 'utf8' },
+      )
+      expect(symlink.status).toBe(2)
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('lists runs as JSON without probe listing noise', () => {
+    const result = spawnSync(
+      process.execPath,
+      ['dist/cli.js', 'runs', '--config', 'demo/shots.config.ts', '--json'],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 60_000,
+      },
+    )
+    expect(result.status).toBe(0)
+    expect(result.stdout).not.toContain('Listing tests:')
+    const rows = JSON.parse(result.stdout) as Array<{ runId: string }>
+    expect(rows.some((row) => row.runId === unfilteredRun.manifest.runId)).toBe(true)
+    const table = spawnSync(
+      process.execPath,
+      ['dist/cli.js', 'runs', '--config', 'demo/shots.config.ts'],
+      { cwd: root, encoding: 'utf8', timeout: 60_000 },
+    )
+    expect(table.status).toBe(0)
+    expect(table.stdout).toContain('id\tstarted\tstatus\tshots')
+    expect(table.stdout).toContain(unfilteredRun.manifest.runId)
+  })
+
+  it('compares an external path with a colliding run id and honors --output', () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-external-'))
+    const external = path.join(scratch, unfilteredRun.manifest.runId)
+    const override = path.join(scratch, 'chosen.html')
+    try {
+      fs.cpSync(unfilteredRun.runDir, external, { recursive: true })
+      const baseArgs = [
+        'dist/cli.js',
+        'compare',
+        unfilteredRun.manifest.runId,
+        external,
+        '--config',
+        'demo/shots.config.ts',
+      ]
+      const collided = spawnSync(process.execPath, baseArgs, {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 60_000,
+      })
+      expect(collided.status).toBe(0)
+      const written = collided.stdout.match(/shotwright compare: wrote (.+\.html)/)?.[1]
+      expect(written).toMatch(/-[0-9a-f]{10}\.vs\..+-[0-9a-f]{10}\.html$/)
+      expect(fs.existsSync(written!)).toBe(true)
+      const explicit = spawnSync(process.execPath, [...baseArgs, '--output', override], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 60_000,
+      })
+      expect(explicit.status).toBe(0)
+      expect(explicit.stdout).toContain(`shotwright compare: wrote ${override}`)
+      expect(fs.existsSync(override)).toBe(true)
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true })
+    }
+  }, 120_000)
   it('keeps the published run contract intact when automatic gallery generation fails', () => {
     expectInjectedGalleryFailurePreservesRunContract()
   })

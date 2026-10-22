@@ -22,6 +22,10 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 describe('parseRunArgs', () => {
+  it('accepts an invocation run-dir destination', () => {
+    expect(parseRunArgs(['--run-dir-file', 'run-dir.txt']).runDirFile).toBe('run-dir.txt')
+    expect(() => parseRunArgs(['--run-dir-file'])).toThrow(/requires a value/)
+  })
   it('defaults', () => {
     expect(parseRunArgs([])).toEqual({
       only: null,
@@ -30,6 +34,7 @@ describe('parseRunArgs', () => {
       config: 'shots.config.ts',
       passthrough: [],
       separatorWarnings: [],
+      runDirFile: null,
     })
   })
 
@@ -43,6 +48,7 @@ describe('parseRunArgs', () => {
       config: 'x.ts',
       passthrough: ['--workers=1'],
       separatorWarnings: [],
+      runDirFile: null,
     })
   })
 
@@ -134,6 +140,10 @@ describe('resolvePlaywrightCli', () => {
 })
 
 describe('parseGalleryArgs', () => {
+  it('accepts --last without a positional run id', () => {
+    expect(parseGalleryArgs(['--last']).last).toBe(true)
+    expect(() => parseGalleryArgs(['--last', 'run-a'])).toThrow(/mutually exclusive/)
+  })
   it('defaults to latest on loopback with an OS-assigned port', () => {
     expect(parseGalleryArgs([])).toEqual({
       runId: null,
@@ -141,6 +151,7 @@ describe('parseGalleryArgs', () => {
       host: '127.0.0.1',
       port: 0,
       lan: false,
+      last: false,
     })
   })
 
@@ -161,6 +172,7 @@ describe('parseGalleryArgs', () => {
       host: '::1',
       port: 4173,
       lan: false,
+      last: false,
     })
   })
 
@@ -205,11 +217,25 @@ describe('parseGalleryArgs', () => {
 })
 
 describe('parseCompareArgs', () => {
+  it('accepts --last and --output', () => {
+    expect(parseCompareArgs(['--last', 'run-b', '--output', 'compare.html'])).toMatchObject({
+      a: '--last',
+      b: 'run-b',
+      last: true,
+      output: 'compare.html',
+    })
+    expect(parseCompareArgs(['run-a', '--last'])).toMatchObject({
+      a: 'run-a',
+      b: '--last',
+    })
+  })
   it('requires two selectors and defaults config', () => {
     expect(parseCompareArgs(['run-a', 'run-b'])).toEqual({
       a: 'run-a',
       b: 'run-b',
       config: 'shots.config.ts',
+      last: false,
+      output: null,
     })
     expect(parseCompareArgs(['latest', 'run-b'])).toMatchObject({ a: 'latest', b: 'run-b' })
   })
@@ -219,6 +245,8 @@ describe('parseCompareArgs', () => {
       a: 'run-a',
       b: 'run-b',
       config: 'custom.ts',
+      last: false,
+      output: null,
     })
   })
 
@@ -233,19 +261,67 @@ describe('parseCompareArgs', () => {
     expect(() => parseCompareArgs(argv)).toThrow()
   })
 
-  it.each([
-    ['--host', '127.0.0.1'],
-    ['--port', '4173'],
-    ['--lan'],
-    ['--open'],
-    ['--'],
-    ['--output', 'compare.html'],
-  ])('does not admit gallery, passthrough, or output flag %s', (...flag) => {
-    expect(() => parseCompareArgs(['run-a', 'run-b', ...flag])).toThrow(/unknown argument/)
-  })
+  it.each([['--host', '127.0.0.1'], ['--port', '4173'], ['--lan'], ['--open'], ['--']])(
+    'does not admit gallery, passthrough, or output flag %s',
+    (...flag) => {
+      expect(() => parseCompareArgs(['run-a', 'run-b', ...flag])).toThrow(/unknown argument/)
+    },
+  )
 })
 
 describe('probeOutputDir', () => {
+  it('suppresses the E4 two-line probe listing on success and replays stdout and stderr on failure', async () => {
+    const noise = fs.readFileSync(
+      path.join(repoRoot, 'test/fixtures/cli-runs/probe-noise.txt'),
+      'utf8',
+    )
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-probe-noise-'))
+    const originalLog = console.error
+    const originalStdout = process.stdout.write
+    const originalStderr = process.stderr.write
+    const logged: string[] = []
+    let stdout = ''
+    let stderr = ''
+    console.error = (...args: unknown[]) => {
+      logged.push(args.join(' '))
+    }
+    process.stdout.write = ((chunk: string) => {
+      stdout += chunk
+      return true
+    }) as typeof process.stdout.write
+    process.stderr.write = ((chunk: string) => {
+      stderr += chunk
+      return true
+    }) as typeof process.stderr.write
+    try {
+      const invoke: NonNullable<Parameters<typeof probeOutputDir>[2]>['invoke'] = async (
+        _cli,
+        _args,
+        options,
+      ) => {
+        fs.writeFileSync(options.env.SHOTWRIGHT_CONFIG_PROBE_FILE!, path.join(tempRoot, 'output'))
+        return { code: 0, stdout: noise, stderr: '' }
+      }
+      await probeOutputDir('good.ts', tempRoot, { playwrightCli: 'fake', tempRoot, invoke })
+      expect(stdout).toBe('')
+      expect(stderr).toBe('')
+      await expect(
+        probeOutputDir('bad.ts', tempRoot, {
+          playwrightCli: 'fake',
+          tempRoot,
+          invoke: async () => ({ code: 1, stdout: noise, stderr: 'config broke\n' }),
+        }),
+      ).rejects.toThrow(/config probe failed/)
+      expect(stdout).toBe(noise)
+      expect(stderr).toBe('config broke\n')
+      expect(logged).toEqual(['shotwright: config probe output for bad.ts:'])
+    } finally {
+      console.error = originalLog
+      process.stdout.write = originalStdout
+      process.stderr.write = originalStderr
+      fs.rmSync(tempRoot, { recursive: true, force: true })
+    }
+  })
   it('returns a canonical value written by the config and removes its temp directory', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-probe-test-'))
     let probeDirectory = ''

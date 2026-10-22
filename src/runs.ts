@@ -7,8 +7,52 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import type { Manifest } from './manifest.js'
+import type { RunnerStatus } from './manifest.js'
+import { validateManifest } from './gallery/model.js'
 
 export const SIDECAR_DIR = '.sidecar'
+
+export interface RunListing {
+  runId: string
+  runDir: string
+  status: RunnerStatus | 'incomplete'
+  shotCount: number | null
+  startedAt: string | null
+}
+
+/** Discover directories, including runs interrupted before manifest publication. */
+export function listRuns(outputDir: string): RunListing[] {
+  if (!fs.existsSync(outputDir)) return []
+  const rows = fs.readdirSync(outputDir, { withFileTypes: true }).flatMap((entry) => {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'compare') return []
+    const runDir = path.join(outputDir, entry.name)
+    const modified = fs.statSync(runDir).mtimeMs
+    let row: RunListing = {
+      runId: entry.name,
+      runDir,
+      status: 'incomplete',
+      shotCount: null,
+      startedAt: null,
+    }
+    try {
+      if (fs.lstatSync(path.join(runDir, 'manifest.json')).isSymbolicLink())
+        return [{ row, modified }]
+      const raw = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8')) as unknown
+      const manifest = validateManifest(raw, entry.name)
+      row = {
+        ...row,
+        status: manifest.status,
+        shotCount: manifest.shots.length,
+        startedAt: manifest.startedAt,
+      }
+    } catch {
+      // A missing or malformed manifest has no trustworthy outcome or count.
+    }
+    return [{ row, modified }]
+  })
+  rows.sort((a, b) => b.modified - a.modified || b.row.runId.localeCompare(a.row.runId))
+  return rows.map(({ row }) => row)
+}
 
 /** `<UTC YYYY-MM-DDTHH-mm-ss>_<4 hex>`, e.g. `2026-07-29T14-02-11_a1b2`. */
 export function generateRunId(now = new Date()): string {

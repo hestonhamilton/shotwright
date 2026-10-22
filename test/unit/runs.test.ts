@@ -10,6 +10,7 @@ import {
   createRunDir,
   generateRunId,
   isCompleteRun,
+  listRuns,
   publishManifest,
   updateLatestSymlink,
   SIDECAR_DIR,
@@ -90,5 +91,49 @@ describe('updateLatestSymlink', () => {
     updateLatestSymlink(out, b.runId)
     expect(fs.readlinkSync(path.join(out, 'latest'))).toBe(b.runId)
     expect(fs.realpathSync(path.join(out, 'latest'))).toBe(fs.realpathSync(b.runDir))
+  })
+})
+
+describe('listRuns', () => {
+  it('lists manifestless and malformed directories as incomplete with unknown count and time', () => {
+    const output = tmpDir()
+    fs.mkdirSync(path.join(output, 'run-empty'))
+    fs.mkdirSync(path.join(output, 'run-malformed'))
+    fs.writeFileSync(path.join(output, 'run-malformed', 'manifest.json'), '{broken')
+    fs.mkdirSync(path.join(output, 'compare'))
+    fs.mkdirSync(path.join(output, '.hidden'))
+    fs.symlinkSync('run-empty', path.join(output, 'latest'))
+    const rows = listRuns(output)
+    expect(rows.map((row) => row.runId).sort()).toEqual(['run-empty', 'run-malformed'])
+    for (const row of rows) {
+      expect(row).toMatchObject({ status: 'incomplete', shotCount: null, startedAt: null })
+    }
+  })
+
+  it('reads v2 status/count, adapts v1 to unknown, and sorts newest first', () => {
+    const output = tmpDir()
+    const oldDir = path.join(output, 'old')
+    const newDir = path.join(output, 'new')
+    fs.mkdirSync(oldDir)
+    fs.mkdirSync(newDir)
+    const legacy = { ...fakeManifest('old'), manifestVersion: 1 }
+    delete (legacy as Partial<typeof legacy>).status
+    delete (legacy as Partial<typeof legacy>).publication
+    delete (legacy as Partial<typeof legacy>).tests
+    delete (legacy as Partial<typeof legacy>).artifacts
+    delete (legacy as Partial<typeof legacy>).failures
+    fs.writeFileSync(path.join(oldDir, 'manifest.json'), JSON.stringify(legacy))
+    fs.writeFileSync(
+      path.join(newDir, 'manifest.json'),
+      JSON.stringify({ ...fakeManifest('new'), status: 'failed' }),
+    )
+    fs.utimesSync(oldDir, new Date(1_000), new Date(1_000))
+    fs.utimesSync(newDir, new Date(2_000), new Date(2_000))
+    expect(
+      listRuns(output).map(({ runId, status, shotCount }) => ({ runId, status, shotCount })),
+    ).toEqual([
+      { runId: 'new', status: 'failed', shotCount: 0 },
+      { runId: 'old', status: 'unknown', shotCount: 0 },
+    ])
   })
 })

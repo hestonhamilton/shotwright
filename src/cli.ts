@@ -8,6 +8,7 @@
 // config factory at eval time; the reporter prints the run summary.
 
 import { spawn } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import net from 'node:net'
@@ -33,6 +34,7 @@ import {
 } from './init.js'
 import { readTemplate } from './templates.js'
 import { shotwrightVersion } from './version.js'
+import { listRuns } from './runs.js'
 
 export interface RunArgs {
   only: string | null
@@ -41,6 +43,7 @@ export interface RunArgs {
   config: string
   passthrough: string[]
   separatorWarnings: string[]
+  runDirFile: string | null
 }
 
 export interface GalleryArgs {
@@ -49,23 +52,28 @@ export interface GalleryArgs {
   host: string
   port: number
   lan: boolean
+  last: boolean
 }
 
 export interface CompareArgs {
   a: string
   b: string
   config: string
+  last: boolean
+  output: string | null
 }
 
-const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--config <path>] [-- <playwright test args>]`
-const GALLERY_USAGE = `Usage: shotwright gallery [run-id] [--config <path>] [--host <host>] [--port <port>] [--lan]`
-const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest> <run-b|latest> [--config <path>]`
+const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--run-dir-file <path>] [--config <path>] [-- <playwright test args>]`
+const GALLERY_USAGE = `Usage: shotwright gallery [run-id|--last] [--config <path>] [--host <host>] [--port <port>] [--lan]`
+const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file>]`
+const RUNS_USAGE = `Usage: shotwright runs [--config <path>] [--json]`
 const INIT_USAGE = `Usage: shotwright init [--dry-run]`
 const GLOBAL_USAGE = `Usage: shotwright --help | --version`
-const USAGE = `${RUN_USAGE}\n${GALLERY_USAGE}\n${COMPARE_USAGE}\n${INIT_USAGE}\n${GLOBAL_USAGE}`
+const USAGE = `${RUN_USAGE}\n${RUNS_USAGE}\n${GALLERY_USAGE}\n${COMPARE_USAGE}\n${INIT_USAGE}\n${GLOBAL_USAGE}`
 
 const COMMAND_USAGE: Readonly<Record<string, string>> = {
   run: RUN_USAGE,
+  runs: RUNS_USAGE,
   gallery: GALLERY_USAGE,
   compare: COMPARE_USAGE,
   init: INIT_USAGE,
@@ -110,6 +118,7 @@ export function parseRunArgs(argv: string[]): RunArgs {
     config: 'shots.config.ts',
     passthrough: [],
     separatorWarnings: [],
+    runDirFile: null,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!
@@ -128,6 +137,8 @@ export function parseRunArgs(argv: string[]): RunArgs {
       const v = argv[++i]
       if (!v) throw new Error('--config requires a path')
       args.config = v
+    } else if (a === '--run-dir-file') {
+      args.runDirFile = requireValue(argv, ++i, a)
     } else {
       throw new Error(`unknown argument: ${a}\n${RUN_USAGE}`)
     }
@@ -200,6 +211,7 @@ export function parseGalleryArgs(argv: string[]): GalleryArgs {
     host: '127.0.0.1',
     port: 0,
     lan: false,
+    last: false,
   }
   const seen = new Set<string>()
   let explicitHost = false
@@ -227,6 +239,9 @@ export function parseGalleryArgs(argv: string[]): GalleryArgs {
       if (seen.has(argument)) throw new Error('duplicate argument: --lan')
       seen.add(argument)
       args.lan = true
+    } else if (argument === '--last') {
+      if (args.last) throw new Error('duplicate argument: --last')
+      args.last = true
     } else if (argument.startsWith('-')) {
       throw new Error(`unknown argument: ${argument}\n${GALLERY_USAGE}`)
     } else if (args.runId !== null) {
@@ -237,6 +252,7 @@ export function parseGalleryArgs(argv: string[]): GalleryArgs {
   }
   if (args.lan && explicitHost) throw new Error('--lan and --host are mutually exclusive')
   if (args.lan) args.host = '0.0.0.0'
+  if (args.last && args.runId !== null) throw new Error('--last and run-id are mutually exclusive')
   return args
 }
 
@@ -244,6 +260,8 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
   const selectors: string[] = []
   let config = 'shots.config.ts'
   let sawConfig = false
+  let last = false
+  let output: string | null = null
 
   for (let i = 0; i < argv.length; i++) {
     const argument = argv[i]!
@@ -251,6 +269,13 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
       if (sawConfig) throw new Error('duplicate argument: --config')
       sawConfig = true
       config = requireValue(argv, ++i, argument)
+    } else if (argument === '--output') {
+      if (output !== null) throw new Error('duplicate argument: --output')
+      output = requireValue(argv, ++i, argument)
+    } else if (argument === '--last') {
+      if (last) throw new Error('duplicate argument: --last')
+      last = true
+      selectors.push('--last')
     } else if (argument.startsWith('-')) {
       throw new Error(`unknown argument: ${argument}\n${COMPARE_USAGE}`)
     } else if (selectors.length === 2) {
@@ -263,7 +288,13 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
   if (selectors.length !== 2) {
     throw new Error(`compare requires exactly two run selectors\n${COMPARE_USAGE}`)
   }
-  return { a: selectors[0]!, b: selectors[1]!, config }
+  return {
+    a: selectors[0]!,
+    b: selectors[1]!,
+    config,
+    last,
+    output,
+  }
 }
 
 export function misplacedSeparatorWarnings(passthrough: string[]): string[] {
@@ -306,7 +337,7 @@ export interface ConfigProbeDependencies {
     cli: string,
     args: string[],
     options: { cwd: string; env: NodeJS.ProcessEnv },
-  ) => Promise<number>
+  ) => Promise<number | { code: number; stdout: string; stderr: string }>
   tempRoot?: string
 }
 
@@ -314,15 +345,19 @@ function invokeProbe(
   cli: string,
   args: string[],
   options: { cwd: string; env: NodeJS.ProcessEnv },
-): Promise<number> {
+): Promise<{ code: number; stdout: string; stderr: string }> {
   const child = spawn(process.execPath, [cli, ...args], {
     cwd: options.cwd,
     env: options.env,
-    stdio: 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
   return new Promise((resolve, reject) => {
     child.once('error', reject)
-    child.once('close', (code) => resolve(code ?? 1))
+    child.once('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
   })
 }
 
@@ -343,12 +378,16 @@ export async function probeOutputDir(
       SHOTWRIGHT_CONFIG_PROBE_FILE: probeFile,
     }
     delete env.SHOTWRIGHT_RUN_DIR
-    const code = await (dependencies.invoke ?? invokeProbe)(
+    const result = await (dependencies.invoke ?? invokeProbe)(
       cli,
       ['test', '--list', '--pass-with-no-tests', '-c', config],
       { cwd, env },
     )
-    if (code !== 0) {
+    const probe = typeof result === 'number' ? { code: result, stdout: '', stderr: '' } : result
+    if (probe.code !== 0) {
+      console.error(`shotwright: config probe output for ${config}:`)
+      if (probe.stdout) process.stdout.write(probe.stdout)
+      if (probe.stderr) process.stderr.write(probe.stderr)
       throw new Error(
         `shotwright gallery: config probe failed for ${config} — fix the config and try again`,
       )
@@ -400,6 +439,19 @@ async function run(argv: string[]): Promise<number> {
   for (const warning of args.separatorWarnings) {
     console.warn(warning)
   }
+  const callerFile = args.runDirFile ?? process.env.SHOTWRIGHT_RUN_DIR_FILE
+  if (callerFile) {
+    try {
+      const stat = fs.lstatSync(callerFile)
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        console.error('shotwright: --run-dir-file destination must be a regular file or absent')
+        return 2
+      }
+      fs.unlinkSync(callerFile)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
   if (!fs.existsSync(args.config)) {
     console.error(
       `shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`,
@@ -407,18 +459,45 @@ async function run(argv: string[]): Promise<number> {
     return 1
   }
   const cli = resolvePlaywrightCli(process.cwd())
+  const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-run-dir-'))
+  const privateFile = path.join(privateDir, 'run-dir')
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     SHOTWRIGHT_RUN: '1',
     SHOTWRIGHT_VIDEO: args.video ? '1' : '0',
     SHOTWRIGHT_TRACE: args.trace ? '1' : '0',
+    SHOTWRIGHT_RUN_DIR_FILE: privateFile,
   }
+  delete env.SHOTWRIGHT_RUN_DIR
+  delete env.SHOTWRIGHT_CONFIG_PROBE_FILE
   if (args.only !== null) env.SHOTWRIGHT_ONLY = args.only
-  const child = spawn(process.execPath, [cli, 'test', '-c', args.config, ...args.passthrough], {
-    stdio: 'inherit',
-    env,
-  })
-  return new Promise((resolve) => child.on('close', (code) => resolve(code ?? 1)))
+  try {
+    const child = spawn(process.execPath, [cli, 'test', '-c', args.config, ...args.passthrough], {
+      stdio: 'inherit',
+      env,
+    })
+    const code = await new Promise<number>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('close', (status) => resolve(status ?? 1))
+    })
+    if (fs.existsSync(privateFile)) {
+      const runDir = fs.readFileSync(privateFile, 'utf8')
+      if (callerFile) {
+        const target = path.resolve(callerFile)
+        const temp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.tmp`)
+        try {
+          fs.writeFileSync(temp, runDir, { flag: 'wx' })
+          fs.renameSync(temp, target)
+        } finally {
+          fs.rmSync(temp, { force: true })
+        }
+      }
+      console.log(`run-dir: ${runDir}`)
+    }
+    return code
+  } finally {
+    fs.rmSync(privateDir, { recursive: true, force: true })
+  }
 }
 
 async function gallery(argv: string[]): Promise<number> {
@@ -430,10 +509,14 @@ async function gallery(argv: string[]): Promise<number> {
     return 1
   }
   const outputDir = await probeOutputDir(args.config)
-  const selected = resolveGalleryRun(outputDir, args.runId)
+  const selected = resolveGalleryRun(outputDir, args.last ? '--last' : args.runId)
   const generated = generateGallery(selected.runDir)
 
-  console.log(formatGallerySelection(selected.runId, selected.selectedViaLatest))
+  console.log(
+    selected.selectedViaLast
+      ? formatLastSelection(selected.runId, outputDir)
+      : formatGallerySelection(selected.runId, selected.selectedViaLatest),
+  )
   if (generated.diagnostics.length > 0) {
     console.error(formatGalleryDiagnostics(generated.diagnostics))
   }
@@ -455,9 +538,51 @@ async function gallery(argv: string[]): Promise<number> {
 }
 
 function formatCompareSelection(side: 'A' | 'B', selected: ResolvedGalleryRun): string {
+  if (selected.selectedViaLast)
+    return `shotwright compare ${side}: ${formatLastSelection(selected.runId, selected.outputDir)}`
   return selected.selectedViaLatest
     ? `shotwright compare: selected ${side} ${selected.runId} via latest (last fully passed run)`
     : `shotwright compare: selected ${side} ${selected.runId} explicitly`
+}
+
+function formatLastSelection(runId: string, outputDir: string): string {
+  let latest = 'none'
+  try {
+    latest = resolveGalleryRun(outputDir, null).runId
+  } catch {
+    // An absent last-passed link is normal for a failed first run.
+  }
+  return `selected ${runId} (--last: newest run with a manifest; latest = last passed run is ${latest})`
+}
+
+function digestRunPath(runDir: string): string {
+  return crypto.createHash('sha256').update(runDir).digest('hex').slice(0, 10)
+}
+
+async function runs(argv: string[]): Promise<number> {
+  let config = 'shots.config.ts'
+  let json = false
+  for (let i = 0; i < argv.length; i++) {
+    const argument = argv[i]!
+    if (argument === '--config') config = requireValue(argv, ++i, argument)
+    else if (argument === '--json') json = true
+    else throw new Error(`unknown argument: ${argument}\n${RUNS_USAGE}`)
+  }
+  if (!fs.existsSync(config)) {
+    console.error(
+      `shotwright: config not found: ${config} — pass --config or create shots.config.ts`,
+    )
+    return 1
+  }
+  const rows = listRuns(await probeOutputDir(config))
+  if (json) console.log(JSON.stringify(rows, null, 2))
+  else {
+    console.log('id\tstarted\tstatus\tshots')
+    for (const row of rows) {
+      console.log(`${row.runId}\t${row.startedAt ?? '-'}\t${row.status}\t${row.shotCount ?? '-'}`)
+    }
+  }
+  return 0
 }
 
 async function compare(argv: string[]): Promise<number> {
@@ -472,10 +597,36 @@ async function compare(argv: string[]): Promise<number> {
   const outputDir = await probeOutputDir(args.config)
   const selected = resolveCompareRuns(outputDir, args.a, args.b)
   const generated = generateCompareGallery(selected.outputDir, selected.a.runDir, selected.b.runDir)
+  let comparePath = generated.comparePath
+  if (args.output !== null || selected.a.runId === selected.b.runId) {
+    const destination =
+      args.output === null
+        ? path.join(
+            selected.outputDir,
+            'compare',
+            `${selected.a.runId}-${digestRunPath(selected.a.runDir)}.vs.${selected.b.runId}-${digestRunPath(selected.b.runDir)}.html`,
+          )
+        : path.resolve(args.output)
+    fs.mkdirSync(path.dirname(destination), { recursive: true })
+    if (destination !== generated.comparePath) {
+      const temp = path.join(
+        path.dirname(destination),
+        `.${path.basename(destination)}.${process.pid}.tmp`,
+      )
+      try {
+        fs.copyFileSync(generated.comparePath, temp)
+        fs.renameSync(temp, destination)
+        fs.rmSync(generated.comparePath)
+      } finally {
+        fs.rmSync(temp, { force: true })
+      }
+    }
+    comparePath = destination
+  }
 
   console.log(formatCompareSelection('A', selected.a))
   console.log(formatCompareSelection('B', selected.b))
-  console.log(`shotwright compare: wrote ${generated.comparePath}`)
+  console.log(`shotwright compare: wrote ${comparePath}`)
   if (generated.diagnostics.length > 0) {
     console.error(
       generated.diagnostics
@@ -514,6 +665,8 @@ async function main(): Promise<void> {
   const [cmd, ...rest] = argv
   if (cmd === 'run') {
     process.exitCode = await run(rest)
+  } else if (cmd === 'runs') {
+    process.exitCode = await runs(rest)
   } else if (cmd === 'gallery') {
     process.exitCode = await gallery(rest)
   } else if (cmd === 'compare') {
