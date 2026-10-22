@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import pixelmatch from 'pixelmatch'
 import { PNG } from 'pngjs'
-import type { CompareOptions, CompareVerdict } from './model.js'
-
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+import { pngStructureReason, type CompareOptions, type CompareVerdict } from './model.js'
 
 /**
- * A reviewer-facing reason for a PNG the decoder rejected. pngjs reports
- * stream-level errors ("There are some read requests waitng on finished
- * stream") that say nothing about the file; the raw text is kept separately as
- * the detail.
+ * A reviewer-facing reason for a PNG the decoder rejected. A structural defect
+ * gets the same reason the gallery placeholder shows for that file
+ * ({@link pngStructureReason}), so a compare pair describes it one way. Only a
+ * structurally sound file the decoder still rejects (bad compressed data, an
+ * unsupported format) falls back to classifying pngjs's message, whose
+ * stream-level text ("There are some read requests waitng on finished stream")
+ * says nothing about the file; the raw text is kept separately as the detail.
  */
 export function pngDecodeReason(bytes: Buffer, raw: string): string {
-  if (bytes.length < PNG_SIGNATURE.length || !bytes.subarray(0, 8).equals(PNG_SIGNATURE))
-    return 'not a PNG file (missing PNG signature)'
+  const structural = pngStructureReason(bytes)
+  if (structural !== null) return structural
   if (/crc/i.test(raw)) return 'corrupt chunk (CRC mismatch)'
   if (/waiti?ng on finished stream|unexpected end/i.test(raw))
     return 'truncated PNG (data ends early)'

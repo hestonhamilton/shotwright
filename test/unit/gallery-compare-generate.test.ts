@@ -234,3 +234,21 @@ it('decides JSON parity on source bytes: a formatting-only change is changed and
   expect(fs.readFileSync(semantic.outputFile, 'utf8')).toContain('Diff shown pretty-printed')
   expect(fs.readFileSync(formatting.outputFile, 'utf8')).not.toContain('Diff shown pretty-printed')
 })
+
+it('writes the compare.json sidecar and diff PNGs beside an explicit outputFile', () => {
+  const { a, b } = fixture()
+  const target = path.join(path.dirname(a), 'reviews', 'nested', 'parity.html')
+  const result = generateCompareGallery(a, b, { outputFile: target })
+  expect(result.outputFile).toBe(target)
+  expect(fs.readdirSync(path.dirname(target)).sort()).toEqual([
+    'parity.compare.json',
+    'parity.diff-0.png',
+    'parity.html',
+  ])
+  const summary = JSON.parse(
+    fs.readFileSync(path.join(path.dirname(target), 'parity.compare.json'), 'utf8'),
+  )
+  expect(summary.pairs[0]).toMatchObject({ state: 'changed', diff: 'parity.diff-0.png' })
+  // Nothing lands in the default compare directory when the page is placed elsewhere.
+  expect(fs.existsSync(path.join(path.dirname(a), 'compare'))).toBe(false)
+})

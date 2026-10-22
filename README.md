@@ -86,8 +86,8 @@ manifest sidecar. Options: `fullPage` (default true unless `clip` or `locator` i
 
 ```
 shotwright run      [--only a,b] [--video] [--trace] [--config <path>] [-- <playwright args>]
-shotwright gallery  [run-id] [--config <path>] [--host <host>] [--port <port>] [--lan]
-shotwright compare  <run-a|latest> <run-b|latest> [--config <path>]
+shotwright gallery  [run-id] [--config <path>] [--host <host>] [--port <port>] [--lan] [--include-traces]
+shotwright compare  <run-a|latest> <run-b|latest> [--config <path>] [--output <file.html>] [--fail-on-change]
 shotwright init     [--dry-run]
 ```
 

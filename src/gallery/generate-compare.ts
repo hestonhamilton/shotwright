@@ -91,10 +91,16 @@ export function generateCompareGallery(
   const a = loadGalleryModel(aRun),
     b = loadGalleryModel(bRun)
   const outputDir = legacy ? first : path.dirname(aRun)
-  const stem = `${a.manifest.runId}.vs.${b.manifest.runId}`
-  const compareDir = path.join(outputDir, 'compare')
+  // The page's own name is the stem: its compare.json sidecar and diff PNGs land
+  // beside it as `<stem>.compare.json` and `<stem>.diff-<n>.png`, wherever it is.
+  const outputFile = path.resolve(
+    options.outputFile ??
+      path.join(outputDir, 'compare', `${a.manifest.runId}.vs.${b.manifest.runId}.html`),
+  )
+  const htmlName = path.basename(outputFile)
+  const stem = path.basename(outputFile, path.extname(outputFile))
+  const compareDir = path.dirname(outputFile)
   fs.mkdirSync(compareDir, { recursive: true })
-  const outputFile = options.outputFile ?? path.join(compareDir, `${stem}.html`)
   const model = buildCompareModel(a, b, {
     aRunDir: aRun,
     bRunDir: bRun,
@@ -160,7 +166,7 @@ export function generateCompareGallery(
   // Only after the new HTML is in place: prune diff PNGs and temps a previous run of this stem left.
   const keep = new Set(diffFiles.map((entry) => path.basename(entry.file)))
   const stale = new RegExp(
-    `^(?:${escapeRegExp(stem)}\\.diff-\\d+\\.png|\\.compare\\.${escapeRegExp(stem)}\\.(?:html|compare\\.json|diff-\\d+\\.png)\\.\\d+\\.tmp)$`,
+    `^(?:${escapeRegExp(stem)}\\.diff-\\d+\\.png|\\.compare\\.(?:${escapeRegExp(htmlName)}|${escapeRegExp(stem)}\\.(?:compare\\.json|diff-\\d+\\.png))\\.\\d+\\.tmp)$`,
   )
   for (const name of fs.readdirSync(compareDir))
     if (stale.test(name) && !keep.has(name))
