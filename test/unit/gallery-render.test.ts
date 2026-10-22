@@ -196,7 +196,7 @@ describe('gallery rendering', () => {
       }),
     )
     expect(renderGallery(loadGalleryModel(runDir))).toContain(
-      '<span class="badge durable">Run status: failed · tests: 1/2 · publication: evidence failed</span>',
+      '<span class="badge durable bad-status">Run status: failed · tests: 1/2 · publication: evidence failed</span>',
     )
   })
 
@@ -216,7 +216,7 @@ describe('gallery rendering', () => {
     fs.mkdirSync(runDir, { recursive: true })
     fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(legacy))
     expect(renderGallery(loadGalleryModel(runDir))).toContain(
-      '<span class="badge durable">Run status: unrecorded (manifest v1)</span>',
+      '<span class="badge durable">Run status: unrecorded (manifest v1) · publication: unrecorded</span>',
     )
   })
 
@@ -343,4 +343,115 @@ describe('gallery rendering', () => {
     expect(GALLERY_SCRIPT).toContain("location.hash === '#debug'")
     expect(GALLERY_SCRIPT).toContain("querySelectorAll('.overview-image').length")
   })
+})
+
+it('pins escaped artifact previews, JSON formatting, the 256 KiB cap, and full-file links from the corpus', () => {
+  const runDir = path.join(tmpDir(), 'corpus-run')
+  fs.mkdirSync(path.join(runDir, 'data'), { recursive: true })
+  const source = path.join('test', 'fixtures', 'compare-corpus', 'a')
+  const names = [
+    'page-10k.html',
+    'page-600k.html',
+    'reading-2k.json',
+    'reading-300k.jsonl',
+    'workbook-50k.xlsx',
+  ]
+  const mime = (name: string): string =>
+    name.endsWith('.html')
+      ? 'text/html'
+      : name.endsWith('.json')
+        ? 'application/json'
+        : name.endsWith('.jsonl')
+          ? 'text/plain'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  const artifacts = names.map((name) => {
+    const bytes = fs.readFileSync(path.join(source, name))
+    fs.writeFileSync(path.join(runDir, 'data', name), bytes)
+    return {
+      spec: 'data.shots.ts',
+      name,
+      file: `data/${name}`,
+      contentType: mime(name),
+      bytes: bytes.length,
+      testId: 'data-test',
+    }
+  })
+  fs.writeFileSync(
+    path.join(runDir, 'manifest.json'),
+    JSON.stringify(makeManifest({ runId: 'corpus-run', artifacts })),
+  )
+  const html = generateGallery(runDir).galleryPath
+  const contents = fs.readFileSync(html, 'utf8')
+  expect(contents).toContain('&lt;script&gt;alert(&quot;corpus&quot;)&lt;/script&gt;')
+  expect(contents).not.toContain('<script>alert("corpus")</script>')
+  expect(contents).toContain('Preview truncated at 256 KiB')
+  expect(contents).toContain('href="data/page-600k.html" download>Download full file')
+  expect(contents).toContain('&quot;marker&quot;: &quot;original&quot;')
+  expect(contents).toContain('workbook-50k.xlsx')
+  expect(contents).not.toContain('BBBBBBBBBBBBBBBBBBBBBBBB')
+})
+
+it('pins failed-test and checked shot badges plus copied failure evidence links', () => {
+  const runDir = path.join(tmpDir(), 'failed-run')
+  const entry = shot('after-action', 'flow.shots.ts', 0, { testId: 'test-failed', checked: true })
+  const value = manifest('failed-run', [entry])
+  value.status = 'failed'
+  value.tests = [
+    {
+      id: 'test-failed',
+      title: 'form submits',
+      spec: 'flow.shots.ts',
+      project: 'chromium',
+      status: 'failed',
+      retry: 0,
+      durationMs: 12,
+      error: { message: 'Expected success' },
+    },
+  ]
+  value.failures = [
+    {
+      testId: 'test-failed',
+      files: [{ name: 'error-context', contentType: 'text/markdown', file: 'failures/context.md' }],
+    },
+  ]
+  writeRun(runDir, value)
+  fs.mkdirSync(path.join(runDir, 'failures'))
+  fs.writeFileSync(path.join(runDir, 'failures/context.md'), '# Failed')
+  const html = fs.readFileSync(generateGallery(runDir).galleryPath, 'utf8')
+  expect(html).toContain('test: failed')
+  expect(html).toContain('>checked</span>')
+  expect(html).toContain('Failure evidence')
+  expect(html).toContain('href="failures/context.md"')
+  expect(html).toContain('Expected success')
+})
+
+it('pins the 256 KiB preview boundary including expanded pretty JSON', () => {
+  const runDir = path.join(tmpDir(), 'cap-run')
+  fs.mkdirSync(path.join(runDir, 'data'), { recursive: true })
+  const contents = [
+    Buffer.alloc(256 * 1024, 'a'),
+    Buffer.alloc(256 * 1024 + 1, 'b'),
+    Buffer.from(JSON.stringify(Array(70000).fill(0))),
+  ]
+  const names = ['exact.txt', 'over.txt', 'expanded.json']
+  const artifacts = names.map((name, index) => {
+    const file = `data/${name}`,
+      body = contents[index]!
+    fs.writeFileSync(path.join(runDir, file), body)
+    return {
+      spec: 'cap.shots.ts',
+      name,
+      file,
+      contentType: name.endsWith('.json') ? 'application/json' : 'text/plain',
+      bytes: body.length,
+      testId: 'cap-test',
+    }
+  })
+  fs.writeFileSync(
+    path.join(runDir, 'manifest.json'),
+    JSON.stringify(makeManifest({ runId: 'cap-run', artifacts })),
+  )
+  const html = fs.readFileSync(generateGallery(runDir).galleryPath, 'utf8')
+  expect(html.match(/Preview truncated at 256 KiB/g) ?? []).toHaveLength(2)
+  expect(html.match(/Download full file/g) ?? []).toHaveLength(3)
 })

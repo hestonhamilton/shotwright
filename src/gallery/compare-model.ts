@@ -1,122 +1,278 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { GalleryDiagnostic, GalleryModel, GalleryShot } from './model.js'
+import fs from 'node:fs'
+import path from 'node:path'
 
-// Superseded by the canonical seven-state ComparePairState in model.ts.
-// The gallery bead removes this legacy type when it replaces the compare model.
-export type ComparePairState = 'paired' | 'a-only' | 'b-only' | 'not-comparable'
+import type { ArtifactEntry } from '../manifest.js'
+import { compareImageFiles } from './pixels.js'
+import {
+  shotKey,
+  validateRelativePath,
+  type CompareModel,
+  type CompareOptions,
+  type ComparePairState,
+  type CompareVerdict,
+  type GalleryModel,
+  type GalleryShot,
+} from './model.js'
 
 export interface ComparePair {
   key: string
-  state: ComparePairState
-  a: GalleryShot | null
-  b: GalleryShot | null
   spec: string
+  name: string
+  kind: 'shot' | 'artifact'
+  state: ComparePairState
+  a: GalleryShot | ArtifactEntry | null
+  b: GalleryShot | ArtifactEntry | null
+  verdict: CompareVerdict | null
+  diffText: string | null
+  /** How `diffText` is shown: source lines, or both JSON values re-serialized for display. */
+  diffFormat: 'source' | 'pretty-json' | null
+  contentType: string | null
+  error: string | null
+  /** Raw reader or decoder message behind `error`, for `compare.json` only. */
+  errorDetail: string | null
   order: number
-  notComparableReason: string | null
 }
 
-export interface CompareCounts {
-  total: number
-  nameMatched: number
-  comparable: number
-  aOnly: number
-  bOnly: number
-  unmatchedByName: number
-  notComparable: number
-}
-
-export interface CompareModel {
-  a: GalleryModel
-  b: GalleryModel
+export interface GalleryCompareModel extends Omit<CompareModel, 'pairs'> {
   pairs: ComparePair[]
-  counts: CompareCounts
-  diagnostics: GalleryDiagnostic[]
+  options: CompareOptions
 }
 
-const stateOrder: Record<ComparePairState, number> = {
-  'not-comparable': 0,
-  'a-only': 1,
-  'b-only': 2,
-  paired: 3,
+export const compareStates: ComparePairState[] = [
+  'identical',
+  'similar',
+  'changed',
+  'size-changed',
+  'added',
+  'removed',
+  'unreadable',
+]
+
+export function comparePairOrder(a: ComparePair, b: ComparePair): number {
+  const rank = (state: ComparePairState): number =>
+    state === 'changed'
+      ? 0
+      : state === 'size-changed'
+        ? 1
+        : state === 'unreadable'
+          ? 2
+          : state === 'added' || state === 'removed'
+            ? 3
+            : 4
+  return rank(a.state) - rank(b.state) || a.order - b.order
 }
 
-export function comparePairOrder(left: ComparePair, right: ComparePair): number {
-  return stateOrder[left.state] - stateOrder[right.state] || left.order - right.order
+class ReadFailure extends Error {
+  constructor(
+    message: string,
+    readonly detail: string,
+  ) {
+    super(message)
+  }
 }
 
-function shots(model: GalleryModel): GalleryShot[] {
-  return model.specs.flatMap((spec) => spec.shots)
+function readBytes(runDir: string | undefined, file: string, dataUri?: string): Buffer {
+  if (runDir) {
+    const root = fs.realpathSync(runDir)
+    let target = root
+    for (const segment of validateRelativePath(file)) {
+      target = path.join(target, segment)
+      if (fs.lstatSync(target).isSymbolicLink()) throw new Error('symlink reference')
+    }
+    if (!fs.statSync(target).isFile()) throw new Error('referenced path is not a file')
+    return fs.readFileSync(target)
+  }
+  if (dataUri?.startsWith('data:image/png;base64,'))
+    return Buffer.from(dataUri.slice('data:image/png;base64,'.length), 'base64')
+  throw new Error('referenced file unavailable')
 }
 
-function unavailableReason(side: 'A' | 'B', shot: GalleryShot): string {
-  return `${side}: ${shot.imageError ?? 'Referenced PNG is unavailable'}`
+/** Side- and path-labelled read failure; the detail carries no host path. */
+function bytes(
+  side: 'A' | 'B',
+  runDir: string | undefined,
+  file: string,
+  dataUri?: string,
+): Buffer {
+  try {
+    return readBytes(runDir, file, dataUri)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    const reason =
+      code === 'ENOENT' || code === 'ENOTDIR'
+        ? 'file not found'
+        : code === 'EACCES' || code === 'EPERM'
+          ? 'permission denied'
+          : code !== undefined
+            ? `read failed (${code})`
+            : error instanceof Error
+              ? error.message
+              : String(error)
+    const syscall = (error as NodeJS.ErrnoException).syscall
+    throw new ReadFailure(
+      `${side}: unreadable file (${file}): ${reason}`,
+      `${side}: ${code === undefined ? reason : `${code}${syscall ? ` (${syscall})` : ''}`}`,
+    )
+  }
 }
 
-export function buildCompareModel(a: GalleryModel, b: GalleryModel): CompareModel {
-  const aShots = shots(a)
-  const bShots = shots(b)
-  const aByName = new Map(aShots.map((shot) => [shot.entry.name, shot]))
-  const bByName = new Map(bShots.map((shot) => [shot.entry.name, shot]))
-  const unionOrder = new Map<string, number>()
+function textLike(mime: string): boolean {
+  return (
+    mime.toLowerCase().startsWith('text/') ||
+    /^(application|text)\/(?:[\w.+-]*\+)?(?:json|jsonl)(?:;|$)/i.test(mime)
+  )
+}
 
-  for (const shot of [...aShots, ...bShots]) {
-    if (!unionOrder.has(shot.entry.name)) {
-      unionOrder.set(shot.entry.name, unionOrder.size)
+function isJson(mime: string): boolean {
+  return /\bjson\b|\+json\b/i.test(mime)
+}
+
+function sourceLines(value: Buffer): string[] {
+  return value.toString('utf8').split('\n')
+}
+
+function prettyJsonLines(value: Buffer): string[] | null {
+  try {
+    return JSON.stringify(JSON.parse(value.toString('utf8')), null, 2).split('\n')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Parity is decided on the source bytes, never on re-serialized output: two
+ * byte-distinct JSON files are `changed` even when they parse to one value. A
+ * JSON change whose values also differ is *displayed* pretty-printed, which the
+ * page says; a formatting-only change shows the differing source lines.
+ */
+function textDiff(
+  a: Buffer,
+  b: Buffer,
+  aMime: string,
+  bMime: string,
+): { text: string; format: 'source' | 'pretty-json' } {
+  if (isJson(aMime) && isJson(bMime)) {
+    const prettyA = prettyJsonLines(a),
+      prettyB = prettyJsonLines(b)
+    if (prettyA && prettyB) {
+      const pretty = lineDiff(prettyA, prettyB)
+      if (pretty) return { text: pretty, format: 'pretty-json' }
     }
   }
+  return { text: lineDiff(sourceLines(a), sourceLines(b)), format: 'source' }
+}
 
-  const pairs = [...unionOrder].map(([key, order]): ComparePair => {
-    const aShot = aByName.get(key) ?? null
-    const bShot = bByName.get(key) ?? null
-    let state: ComparePairState
-    let notComparableReason: string | null = null
-
-    if (aShot === null) {
-      state = 'b-only'
-    } else if (bShot === null) {
-      state = 'a-only'
-    } else if (aShot.image === null || bShot.image === null) {
-      state = 'not-comparable'
-      notComparableReason = [
-        ...(aShot.image === null ? [unavailableReason('A', aShot)] : []),
-        ...(bShot.image === null ? [unavailableReason('B', bShot)] : []),
-      ].join('; ')
-    } else {
-      state = 'paired'
+function lineDiff(a: string[], b: string[]): string {
+  const max = Math.max(a.length, b.length)
+  const out: string[] = []
+  let size = 0
+  for (let i = 0; i < max; i++) {
+    if (a[i] === b[i]) continue
+    if (a[i] !== undefined) {
+      const line = `- ${a[i]}`
+      out.push(line)
+      size += line.length
     }
-
-    return {
-      key,
-      state,
-      a: aShot,
-      b: bShot,
-      spec: aShot?.entry.spec ?? bShot!.entry.spec,
-      order,
-      notComparableReason,
+    if (b[i] !== undefined) {
+      const line = `+ ${b[i]}`
+      out.push(line)
+      size += line.length
     }
-  })
+    if (size > 262144) {
+      out.push('… diff truncated')
+      break
+    }
+  }
+  return out.join('\n')
+}
 
+export function buildCompareModel(
+  a: GalleryModel,
+  b: GalleryModel,
+  options: Partial<CompareOptions> & { aRunDir?: string; bRunDir?: string } = {},
+): GalleryCompareModel {
+  const opts = { threshold: options.threshold ?? 0.1, includeAA: options.includeAA ?? false }
+  const pairs: ComparePair[] = []
+  const assemble = <T extends GalleryShot | ArtifactEntry>(
+    kind: 'shot' | 'artifact',
+    left: T[],
+    right: T[],
+  ): void => {
+    const identity = (entry: T): [string, string] =>
+      kind === 'shot'
+        ? [(entry as GalleryShot).entry.spec, (entry as GalleryShot).entry.name]
+        : [(entry as ArtifactEntry).spec, (entry as ArtifactEntry).name]
+    const aMap = new Map(left.map((entry) => [shotKey(...identity(entry)), entry]))
+    const bMap = new Map(right.map((entry) => [shotKey(...identity(entry)), entry]))
+    for (const key of new Set([...aMap.keys(), ...bMap.keys()])) {
+      const x = aMap.get(key) ?? null,
+        y = bMap.get(key) ?? null
+      const [spec, name] = identity((x ?? y)!)
+      const pair: ComparePair = {
+        key,
+        spec,
+        name,
+        kind,
+        a: x,
+        b: y,
+        state: x === null ? 'added' : y === null ? 'removed' : 'unreadable',
+        verdict: null,
+        diffText: null,
+        diffFormat: null,
+        contentType: null,
+        error: null,
+        errorDetail: null,
+        order: pairs.length,
+      }
+      if (x && y) {
+        try {
+          if (kind === 'shot') {
+            const ax = x as GalleryShot,
+              by = y as GalleryShot
+            const { verdict, errorDetail } = compareImageFiles(
+              bytes('A', options.aRunDir, ax.entry.file, ax.image?.dataUri),
+              bytes('B', options.bRunDir, by.entry.file, by.image?.dataUri),
+              opts,
+              { a: ax.entry.file, b: by.entry.file },
+            )
+            pair.verdict = verdict
+            pair.state = verdict.state
+            pair.error = verdict.error ?? null
+            pair.errorDetail = errorDetail
+          } else {
+            const ax = x as ArtifactEntry,
+              by = y as ArtifactEntry
+            const aBytes = bytes('A', options.aRunDir, ax.file),
+              bBytes = bytes('B', options.bRunDir, by.file)
+            pair.contentType = by.contentType
+            pair.state = aBytes.equals(bBytes) ? 'identical' : 'changed'
+            if (pair.state === 'changed' && textLike(ax.contentType) && textLike(by.contentType)) {
+              const diff = textDiff(aBytes, bBytes, ax.contentType, by.contentType)
+              if (diff.text) {
+                pair.diffText = diff.text
+                pair.diffFormat = diff.format
+              }
+            }
+          }
+        } catch (error) {
+          pair.error = error instanceof Error ? error.message : String(error)
+          pair.errorDetail = error instanceof ReadFailure ? error.detail : pair.error
+          pair.state = 'unreadable'
+        }
+      }
+      pairs.push(pair)
+    }
+  }
+  assemble(
+    'shot',
+    a.specs.flatMap((spec) => spec.shots),
+    b.specs.flatMap((spec) => spec.shots),
+  )
+  assemble('artifact', a.manifest.artifacts, b.manifest.artifacts)
   pairs.sort(comparePairOrder)
-
-  const comparable = pairs.filter((pair) => pair.state === 'paired').length
-  const aOnly = pairs.filter((pair) => pair.state === 'a-only').length
-  const bOnly = pairs.filter((pair) => pair.state === 'b-only').length
-  const notComparable = pairs.filter((pair) => pair.state === 'not-comparable').length
-  const nameMatched = comparable + notComparable
-
-  return {
-    a,
-    b,
-    pairs,
-    counts: {
-      total: pairs.length,
-      nameMatched,
-      comparable,
-      aOnly,
-      bOnly,
-      unmatchedByName: aOnly + bOnly,
-      notComparable,
-    },
-    diagnostics: [...a.diagnostics, ...b.diagnostics],
-  }
+  const counts = Object.fromEntries(
+    compareStates.map((state) => [state, pairs.filter((pair) => pair.state === state).length]),
+  ) as Record<ComparePairState, number>
+  return { a, b, pairs, counts, diagnostics: [...a.diagnostics, ...b.diagnostics], options: opts }
 }

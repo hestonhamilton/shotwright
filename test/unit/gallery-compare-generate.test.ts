@@ -1,149 +1,236 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-
-import { afterEach, describe, expect, it } from 'vitest'
-
+import { PNG } from 'pngjs'
+import { afterEach, expect, it, vi } from 'vitest'
 import { generateCompareGallery } from '../../src/gallery/generate-compare.js'
-import type { Manifest, ShotEntry } from '../../src/manifest.js'
 import { makeManifest, makeShot } from '../fixtures/manifest.js'
-import { makePng } from '../fixtures/png.js'
 
-const tmpDirs: string[] = []
-
-function tmpDir(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-generate-'))
-  tmpDirs.push(directory)
-  return directory
-}
-
-afterEach(() => {
-  for (const directory of tmpDirs.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true })
+const roots: string[] = []
+const pixelmatchVersion = (
+  JSON.parse(fs.readFileSync('node_modules/pixelmatch/package.json', 'utf8')) as {
+    version: string
   }
+).version
+afterEach(() => {
+  vi.restoreAllMocks()
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true })
+})
+function fixture(): { a: string; b: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-generate-'))
+  roots.push(root)
+  const write = (id: string, fill: number): string => {
+    const dir = path.join(root, id)
+    fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+    const image = new PNG({ width: 3, height: 3 })
+    image.data.fill(fill)
+    fs.writeFileSync(path.join(dir, 'shots/one.png'), PNG.sync.write(image))
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify(
+        makeManifest({
+          runId: id,
+          shots: [makeShot({ spec: 'home.shots.ts', name: 'one', file: 'shots/one.png' })],
+        }),
+      ),
+    )
+    return dir
+  }
+  return { a: write('run-a', 0), b: write('run-b', 255) }
+}
+it('pins compare.json numbers, default settings, diff PNG and generation result gate', () => {
+  const { a, b } = fixture(),
+    result = generateCompareGallery(a, b)
+  const dir = path.dirname(result.outputFile),
+    summary = JSON.parse(fs.readFileSync(path.join(dir, 'run-a.vs.run-b.compare.json'), 'utf8'))
+  expect(result.outputFile).toBe(path.join(dir, 'run-a.vs.run-b.html'))
+  expect(result.counts.changed).toBe(1)
+  expect(result.gate).toEqual({ nonParity: 1, failOnChange: false })
+  expect(summary).toMatchObject({
+    tool: 'shotwright',
+    comparator: { name: 'pixelmatch', version: pixelmatchVersion },
+    settings: { threshold: 0.1, includeAA: false, source: 'default' },
+    pairs: [{ state: 'changed', totalPixels: 9, aSize: { width: 3, height: 3 } }],
+  })
+  expect(PNG.sync.read(fs.readFileSync(path.join(dir, summary.pairs[0].diff))).width).toBe(3)
+})
+it('pins recovery from partial prior write and atomic temp cleanup', () => {
+  const { a, b } = fixture(),
+    result = generateCompareGallery(a, b)
+  const dir = path.dirname(result.outputFile)
+  fs.writeFileSync(path.join(dir, 'run-a.vs.run-b.compare.json'), '{partial')
+  fs.writeFileSync(path.join(dir, 'run-a.vs.run-b.diff-99.png'), 'stale')
+  generateCompareGallery(a, b)
+  expect(
+    JSON.parse(fs.readFileSync(path.join(dir, 'run-a.vs.run-b.compare.json'), 'utf8')).counts
+      .changed,
+  ).toBe(1)
+  expect(fs.existsSync(path.join(dir, 'run-a.vs.run-b.diff-99.png'))).toBe(false)
+  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
+})
+it('keeps the previous complete HTML, JSON and diff PNG when staging the new HTML fails', () => {
+  const { a, b } = fixture(),
+    first = generateCompareGallery(a, b)
+  const dir = path.dirname(first.outputFile)
+  const names = ['run-a.vs.run-b.html', 'run-a.vs.run-b.compare.json', 'run-a.vs.run-b.diff-0.png']
+  const before = names.map((name) => fs.readFileSync(path.join(dir, name)))
+  // Make the HTML's temp target a directory so its staged write fails after the diff and JSON temps.
+  const blocker = path.join(dir, `.compare.run-a.vs.run-b.html.${process.pid}.tmp`)
+  fs.mkdirSync(blocker)
+  fs.writeFileSync(path.join(a, 'shots/one.png'), fs.readFileSync(path.join(b, 'shots/one.png')))
+  expect(() => generateCompareGallery(a, b)).toThrow(/EISDIR/)
+  expect(names.map((name) => fs.readFileSync(path.join(dir, name)))).toEqual(before)
+  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([
+    path.basename(blocker),
+  ])
+  fs.rmdirSync(blocker)
+  const recovered = generateCompareGallery(a, b)
+  expect(recovered.counts.identical).toBe(1)
+  expect(fs.existsSync(path.join(dir, 'run-a.vs.run-b.diff-0.png'))).toBe(false)
+  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
+})
+it('keeps the previous complete HTML when renaming the new HTML into place fails', () => {
+  const { a, b } = fixture(),
+    first = generateCompareGallery(a, b)
+  const before = fs.readFileSync(first.outputFile)
+  const rename = fs.renameSync
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (to === first.outputFile) throw new Error('injected rename failure')
+    rename(from, to)
+  })
+  expect(() => generateCompareGallery(a, b, { threshold: 0.5 })).toThrow('injected rename failure')
+  expect(fs.readFileSync(first.outputFile)).toEqual(before)
+  expect(
+    fs.readdirSync(path.dirname(first.outputFile)).filter((name) => name.startsWith('.compare.')),
+  ).toEqual([])
+})
+it('records caller threshold and includeAA and echoes the optional parity gate', () => {
+  const { a, b } = fixture()
+  const result = generateCompareGallery(a, b, {
+    threshold: 0.25,
+    includeAA: true,
+    failOnChange: true,
+  })
+  const summary = JSON.parse(
+    fs.readFileSync(
+      path.join(path.dirname(result.outputFile), 'run-a.vs.run-b.compare.json'),
+      'utf8',
+    ),
+  )
+  expect(summary).toMatchObject({
+    settings: { threshold: 0.25, includeAA: true, source: 'option' },
+    gate: { nonParity: 1, failOnChange: true },
+  })
+  expect(result.gate).toEqual({ nonParity: 1, failOnChange: true })
 })
 
-function entry(name: string, spec: string, index: number): ShotEntry {
-  return makeShot({
-    name,
-    spec,
-    file: `shots/${spec}/${name}.png`,
-    viewport: { width: 1440, height: 960 },
-    deviceScaleFactor: 2,
-    fullPage: true,
-    capturedAt: `2026-07-31T00:00:0${index}.000Z`,
-    durationMs: 50 + index,
-    video: null,
-    trace: null,
-  })
-}
-
-function manifest(runId: string, shots: ShotEntry[]): Manifest {
-  return makeManifest({
-    runId,
-    startedAt: '2026-07-31T00:00:00.000Z',
-    finishedAt: '2026-07-31T00:00:10.000Z',
-    shotwrightVersion: '0.1.0',
-    playwrightVersion: '1.62.0',
-    flags: { only: [], video: false, trace: false },
-    shots,
-  })
-}
-
-function writeRun(runDir: string, value: Manifest, options: { omit?: string[] } = {}): void {
-  fs.mkdirSync(runDir, { recursive: true })
-  fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(value, null, 2) + '\n')
-  for (const [index, shot] of value.shots.entries()) {
-    if (options.omit?.includes(shot.file)) continue
-    const target = path.join(runDir, ...shot.file.split('/'))
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.writeFileSync(target, makePng(100 + index, 80 + index, index))
+it('pins the artifact corpus: text and JSON line diffs, binary byte equality, and changed pairs', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-corpus-'))
+  roots.push(root)
+  const corpus = path.join('test', 'fixtures', 'compare-corpus')
+  const names = [
+    'page-10k.html',
+    'page-600k.html',
+    'reading-2k.json',
+    'reading-300k.jsonl',
+    'workbook-50k.xlsx',
+  ]
+  const mime = (name: string): string =>
+    name.endsWith('.html')
+      ? 'text/html'
+      : name.endsWith('.json')
+        ? 'application/json'
+        : name.endsWith('.jsonl')
+          ? 'text/plain'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  const makeRun = (id: string, side: string): string => {
+    const dir = path.join(root, id)
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true })
+    const artifacts = names.map((name) => {
+      const file = `data/${name}`,
+        bytes = fs.readFileSync(path.join(corpus, side, name))
+      fs.writeFileSync(path.join(dir, file), bytes)
+      return {
+        spec: 'data.shots.ts',
+        name,
+        file,
+        contentType: mime(name),
+        bytes: bytes.length,
+        testId: 'test-data',
+      }
+    })
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify(makeManifest({ runId: id, artifacts })),
+    )
+    return dir
   }
-}
-
-function fixture(root: string): { output: string; a: string; b: string } {
-  const output = path.join(root, 'output')
-  const a = path.join(output, 'run-a')
-  const b = path.join(output, 'run-b')
-  writeRun(
-    a,
-    manifest('run-a', [entry('shared', 'home.shots.ts', 0), entry('a-only', 'home.shots.ts', 1)]),
-  )
-  writeRun(
-    b,
-    manifest('run-b', [entry('shared', 'home.shots.ts', 2), entry('b-only', 'about.shots.ts', 3)]),
-  )
-  return { output, a, b }
-}
-
-describe('compare gallery generation', () => {
-  it('publishes the accepted dot-separated artifact path and result model', () => {
-    const { output, a, b } = fixture(tmpDir())
-    const result = generateCompareGallery(output, a, b)
-
-    expect(result.comparePath).toBe(path.join(output, 'compare', 'run-a.vs.run-b.html'))
-    expect(fs.existsSync(result.comparePath)).toBe(true)
-    expect(result.model.counts).toMatchObject({ total: 3, comparable: 1, aOnly: 1, bOnly: 1 })
-    expect(result.diagnostics).toEqual([])
+  const a = makeRun('a', 'a'),
+    identical = makeRun('identical', 'identical'),
+    changed = makeRun('changed', 'changed')
+  const same = generateCompareGallery(a, identical)
+  expect(same.counts.identical).toBe(5)
+  expect(same.gate.nonParity).toBe(0)
+  const different = generateCompareGallery(a, changed)
+  expect(different.counts.changed).toBe(5)
+  expect(different.model.pairs.filter((pair) => pair.diffText?.includes('- '))).toHaveLength(4)
+  expect(different.model.pairs.find((pair) => pair.name === 'page-10k.html')).toMatchObject({
+    state: 'changed',
+    diffFormat: 'source',
+    diffText: '- <p>reviewable HTML</p>\n+ <p>reviewable HTMLX/p>',
   })
+  expect(different.model.pairs.find((pair) => pair.name.endsWith('.xlsx'))?.diffText).toBeNull()
+})
 
-  it('produces byte-identical HTML from identical inputs in different temp roots', () => {
-    const first = fixture(path.join(tmpDir(), 'first'))
-    const second = fixture(path.join(tmpDir(), 'second'))
-    const firstResult = generateCompareGallery(first.output, first.a, first.b)
-    const secondResult = generateCompareGallery(second.output, second.a, second.b)
-
-    expect(fs.readFileSync(firstResult.comparePath)).toEqual(
-      fs.readFileSync(secondResult.comparePath),
+it('decides JSON parity on source bytes: a formatting-only change is changed and counts toward the gate', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-json-parity-'))
+  roots.push(root)
+  const makeRun = (id: string, source: string): string => {
+    const dir = path.join(root, id)
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'data/value.json'), source)
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify(
+        makeManifest({
+          runId: id,
+          artifacts: [
+            {
+              spec: 'data.shots.ts',
+              name: 'value.json',
+              file: 'data/value.json',
+              contentType: 'application/json',
+              bytes: Buffer.byteLength(source),
+              testId: 'test-data',
+            },
+          ],
+        }),
+      ),
     )
+    return dir
+  }
+  const a = makeRun('compact', '{"a":1}'),
+    spaced = makeRun('spaced', '{ "a": 1 }'),
+    same = makeRun('same', '{"a":1}'),
+    valueChanged = makeRun('value-changed', '{"a":2}')
+  const formatting = generateCompareGallery(a, spaced)
+  expect(formatting.model.pairs[0]).toMatchObject({
+    state: 'changed',
+    diffFormat: 'source',
+    diffText: '- {"a":1}\n+ { "a": 1 }',
   })
-
-  it('regenerates atomically without leaving compare writer temp files', () => {
-    const { output, a, b } = fixture(tmpDir())
-    const first = generateCompareGallery(output, a, b)
-    const bytes = fs.readFileSync(first.comparePath)
-    const second = generateCompareGallery(output, a, b)
-
-    expect(fs.readFileSync(second.comparePath)).toEqual(bytes)
-    expect(
-      fs.readdirSync(path.join(output, 'compare')).filter((name) => name.startsWith('.compare.')),
-    ).toEqual([])
+  expect(formatting.gate.nonParity).toBe(1)
+  expect(formatting.counts.changed).toBe(1)
+  expect(generateCompareGallery(a, same).model.pairs[0]).toMatchObject({
+    state: 'identical',
+    diffText: null,
   })
-
-  it('does not overwrite an existing artifact when either manifest is missing or invalid', () => {
-    for (const [side, contents] of [
-      ['a', null],
-      ['b', '{nope'],
-    ] as const) {
-      const { output, a, b } = fixture(path.join(tmpDir(), side))
-      const compareDir = path.join(output, 'compare')
-      const comparePath = path.join(compareDir, 'run-a.vs.run-b.html')
-      fs.mkdirSync(compareDir)
-      fs.writeFileSync(comparePath, 'keep me')
-      const manifestPath = path.join(side === 'a' ? a : b, 'manifest.json')
-      if (contents === null) fs.rmSync(manifestPath)
-      else fs.writeFileSync(manifestPath, contents)
-
-      expect(() => generateCompareGallery(output, a, b)).toThrow(/invalid manifest/)
-      expect(fs.readFileSync(comparePath, 'utf8')).toBe('keep me')
-      expect(fs.readdirSync(compareDir).filter((name) => name.startsWith('.compare.'))).toEqual([])
-    }
+  const semantic = generateCompareGallery(a, valueChanged)
+  expect(semantic.model.pairs[0]).toMatchObject({
+    state: 'changed',
+    diffFormat: 'pretty-json',
+    diffText: '-   "a": 1\n+   "a": 2',
   })
-
-  it('returns diagnostics and still writes HTML for an unreadable screenshot', () => {
-    const root = tmpDir()
-    const output = path.join(root, 'output')
-    const a = path.join(output, 'run-a')
-    const b = path.join(output, 'run-b')
-    const shared = entry('shared', 'home.shots.ts', 0)
-    writeRun(a, manifest('run-a', [shared]), { omit: [shared.file] })
-    writeRun(b, manifest('run-b', [shared]))
-
-    const result = generateCompareGallery(output, a, b)
-    expect(result.diagnostics).toHaveLength(1)
-    expect(result.model.pairs[0]?.state).toBe('not-comparable')
-    expect(fs.readFileSync(result.comparePath, 'utf8')).toContain(
-      'not comparable · unreadable image',
-    )
-  })
+  expect(fs.readFileSync(semantic.outputFile, 'utf8')).toContain('Diff shown pretty-printed')
+  expect(fs.readFileSync(formatting.outputFile, 'utf8')).not.toContain('Diff shown pretty-printed')
 })

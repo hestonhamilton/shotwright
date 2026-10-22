@@ -219,7 +219,7 @@ export const GALLERY_SCRIPT = `
       if (hidden) unload(card);
     });
     document.querySelectorAll('.spec').forEach((spec) => {
-      spec.classList.toggle('hidden', !spec.querySelector('.card:not(.hidden)'));
+      if (spec.querySelector('.card')) spec.classList.toggle('hidden', !spec.querySelector('.card:not(.hidden)'));
     });
     reconcile();
   };

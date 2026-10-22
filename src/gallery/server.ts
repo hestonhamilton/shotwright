@@ -70,8 +70,17 @@ function canonicalReferencedFile(canonicalRun: string, relativePath: string): st
   const segments = validateRelativePath(relativePath)
   let canonical: string
   try {
+    let current = canonicalRun
+    for (const segment of segments) {
+      current = path.join(current, segment)
+      if (fs.lstatSync(current).isSymbolicLink())
+        throw new Error(
+          `shotwright gallery: referenced file escapes the run via symlink: ${relativePath}`,
+        )
+    }
     canonical = fs.realpathSync(path.join(canonicalRun, ...segments))
   } catch (error) {
+    if (error instanceof Error && error.message.includes('via symlink')) throw error
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT' || code === 'ENOTDIR') return null
     throw new Error(`shotwright gallery: referenced file is unreadable: ${relativePath}`, {
@@ -103,9 +112,42 @@ function addAllowed(
   allowlist.set(urlPath, { file, mime, size: fs.statSync(file).size })
 }
 
+interface ManifestReference {
+  file: string
+  mime: string
+  name: string
+  kind: 'screenshot' | 'video' | 'trace' | 'artifact' | 'failure'
+}
+
+const LOOPBACK_BINDS = new Set(['127.0.0.1', '::1', 'localhost'])
+
+export function isLoopbackBind(boundAddress: string): boolean {
+  return LOOPBACK_BINDS.has(boundAddress.toLowerCase())
+}
+
+/**
+ * The single trace predicate (traces can carry cookies and storage): a
+ * reference is trace-like when its MIME type is `application/zip`, or its name
+ * or file basename is `trace` or ends with `.zip`. It applies to every
+ * manifest reference, shot traces, failure files and data artifacts alike.
+ */
+export function isTraceLike(reference: { file: string; mime: string; name: string }): boolean {
+  const mime = reference.mime.split(';')[0]!.trim().toLowerCase()
+  const looksLikeTrace = (value: string): boolean => {
+    const lower = value.toLowerCase()
+    return lower === 'trace' || lower.endsWith('.zip')
+  }
+  return (
+    mime === 'application/zip' ||
+    looksLikeTrace(reference.name) ||
+    looksLikeTrace(path.posix.basename(reference.file))
+  )
+}
+
 export function buildGalleryAllowlist(
   runDir: string,
   galleryPath = path.join(runDir, 'gallery.html'),
+  options: { boundAddress?: string; includeTraces?: boolean } = {},
 ): Map<string, AllowedFile> {
   const canonicalRun = fs.realpathSync(runDir)
   const canonicalGallery = fs.realpathSync(galleryPath)
@@ -118,25 +160,54 @@ export function buildGalleryAllowlist(
   addAllowed(allowlist, '/gallery.html', canonicalGallery, 'text/html; charset=utf-8')
 
   const manifest = readManifest(canonicalRun)
+  // Classify every manifest reference once, then apply one trace predicate to all of them.
+  const references: ManifestReference[] = []
   for (const shot of manifest.shots) {
-    const references: Array<[string, string, string]> = [[shot.file, 'screenshot', 'image/png']]
-    if (shot.video !== null) references.push([shot.video, 'video', 'video/webm'])
-    if (shot.trace !== null) references.push([shot.trace, 'trace', 'application/zip'])
+    references.push({ file: shot.file, mime: 'image/png', name: shot.name, kind: 'screenshot' })
+    if (shot.video !== null)
+      references.push({ file: shot.video, mime: 'video/webm', name: 'video', kind: 'video' })
+    if (shot.trace !== null)
+      references.push({ file: shot.trace, mime: 'application/zip', name: 'trace', kind: 'trace' })
+  }
+  for (const artifact of manifest.artifacts)
+    references.push({
+      file: artifact.file,
+      mime: artifact.contentType,
+      name: artifact.name,
+      kind: 'artifact',
+    })
+  for (const failure of manifest.failures)
+    for (const file of failure.files)
+      references.push({ file: file.file, mime: file.contentType, name: file.name, kind: 'failure' })
 
-    for (const [relativePath, kind, mime] of references) {
-      const extension = path.posix.extname(relativePath).toLowerCase()
-      if (
-        (kind === 'screenshot' && extension !== '.png') ||
-        (kind === 'video' && extension !== '.webm') ||
-        (kind === 'trace' && extension !== '.zip')
-      ) {
-        throw new Error(`shotwright gallery: unsupported ${kind} extension: ${relativePath}`)
-      }
-      const canonical = canonicalReferencedFile(canonicalRun, relativePath)
-      if (canonical !== null) {
-        addAllowed(allowlist, encodedUrlPath(relativePath), canonical, mime)
-      }
+  for (const { file, kind } of references) {
+    const extension = path.posix.extname(file).toLowerCase()
+    if (
+      (kind === 'screenshot' && extension !== '.png') ||
+      (kind === 'video' && extension !== '.webm') ||
+      (kind === 'trace' && extension !== '.zip')
+    ) {
+      throw new Error(`shotwright gallery: unsupported ${kind} extension: ${file}`)
     }
+  }
+
+  const loopback = isLoopbackBind(options.boundAddress ?? '127.0.0.1')
+  // A path any reference marks trace-like is withheld, whatever else also references it.
+  const withheld = new Set(
+    !loopback && !options.includeTraces
+      ? references.filter(isTraceLike).map((reference) => reference.file)
+      : [],
+  )
+  for (const { file, mime } of references) {
+    if (withheld.has(file)) continue
+    const canonical = canonicalReferencedFile(canonicalRun, file)
+    if (canonical !== null)
+      addAllowed(
+        allowlist,
+        encodedUrlPath(file),
+        canonical,
+        /^[\w.+-]+\/[\w.+-]+(?:; charset=utf-8)?$/i.test(mime) ? mime : 'application/octet-stream',
+      )
   }
   return allowlist
 }
@@ -291,15 +362,34 @@ function handler(allowlist: Map<string, AllowedFile>, boundAddress: () => string
   }
 }
 
+export function createGalleryRequestHandler(
+  runDir: string,
+  boundAddress: string,
+  includeTraces = false,
+): (request: IncomingMessage, response: ServerResponse) => void {
+  return handler(
+    buildGalleryAllowlist(runDir, path.join(runDir, 'gallery.html'), {
+      boundAddress,
+      includeTraces,
+    }),
+    () => boundAddress,
+  )
+}
+
 export async function startGalleryServer(
   runDir: string,
   host = '127.0.0.1',
   port = 0,
+  options: { includeTraces?: boolean } = {},
 ): Promise<GalleryServer> {
-  const allowlist = buildGalleryAllowlist(runDir)
-  const server: Server = http.createServer(
-    handler(allowlist, () => (server.address() as AddressInfo).address),
-  )
+  let serve: (request: IncomingMessage, response: ServerResponse) => void = (
+    _request,
+    response,
+  ) => {
+    response.writeHead(503)
+    response.end()
+  }
+  const server: Server = http.createServer((request, response) => serve(request, response))
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error): void => reject(error)
     server.once('error', onError)
@@ -309,6 +399,12 @@ export async function startGalleryServer(
     })
   })
   const address = server.address() as AddressInfo
+  try {
+    serve = createGalleryRequestHandler(runDir, address.address, options.includeTraces)
+  } catch (error) {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    throw error
+  }
   return {
     server,
     host: address.address,
