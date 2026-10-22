@@ -1,12 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -91,9 +85,7 @@ function scanJson(
               version: canary ? '4.17.20' : '1.0.0',
               ecosystem: 'npm',
             },
-            ...(canary || differentAdvisory || finding
-              ? { vulnerabilities: [vulnerability] }
-              : {}),
+            ...(canary || differentAdvisory || finding ? { vulnerabilities: [vulnerability] } : {}),
           },
         ],
       },
@@ -151,9 +143,12 @@ function fakeExecutor(calls, overrides = {}) {
   return async (call) => {
     calls.push(call)
     if (call.target === 'identity') {
-      return overrides.identity ?? processResult({
-        stdout: 'osv-scanner version: 2.5.1\nosv-scalibr version: test\n',
-      })
+      return (
+        overrides.identity ??
+        processResult({
+          stdout: 'osv-scanner version: 2.5.1\nosv-scalibr version: test\n',
+        })
+      )
     }
     const key = `${call.mode}:${call.target}`
     if (overrides[key]) return overrides[key](call)
@@ -161,18 +156,12 @@ function fakeExecutor(calls, overrides = {}) {
     const path = lockfileArg(call)
     if (call.mode === 'fresh-database' && call.target === 'current') {
       assert.ok(call.args.includes('--download-offline-databases'))
-      await writeFile(
-        join(call.env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY, 'downloaded'),
-        'fresh\n',
-      )
+      await writeFile(join(call.env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY, 'downloaded'), 'fresh\n')
     }
     if (call.mode === 'fresh-database' && call.target === 'canary') {
       assert.ok(!call.args.includes('--download-offline-databases'))
       assert.equal(
-        await readFile(
-          join(call.env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY, 'downloaded'),
-          'utf8',
-        ),
+        await readFile(join(call.env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY, 'downloaded'), 'utf8'),
         'fresh\n',
       )
     }
@@ -232,9 +221,10 @@ await check('optional, peer and bundled dependencies are runtime dependencies to
 await check('the ADR 0002 peer dependency is the only peer the gate accepts', () => {
   validateRuntimePackage('{"peerDependencies":{"@playwright/test":">=1.60 <2"}}')
   assert.throws(
-    () => validateRuntimePackage(
-      '{"peerDependencies":{"@playwright/test":">=1.60 <2","left-pad":"1"}}',
-    ),
+    () =>
+      validateRuntimePackage(
+        '{"peerDependencies":{"@playwright/test":">=1.60 <2","left-pad":"1"}}',
+      ),
     (error) =>
       error instanceof GateError &&
       error.kind === 'policy' &&
@@ -260,9 +250,15 @@ for (const [name, policy] of [
   ['expiry today', '[[IgnoredVulns]]\nid = "GHSA-a"\nreason = "x"\nignoreUntil = 2026-09-03\n'],
   ['past expiry', '[[IgnoredVulns]]\nid = "GHSA-a"\nreason = "x"\nignoreUntil = 2026-09-02\n'],
   ['invalid date', '[[IgnoredVulns]]\nid = "GHSA-a"\nreason = "x"\nignoreUntil = 2026-02-30\n'],
-  ['unknown field', '[[IgnoredVulns]]\nid = "GHSA-a"\nreason = "x"\nignoreUntil = 2026-09-04\nwide = true\n'],
+  [
+    'unknown field',
+    '[[IgnoredVulns]]\nid = "GHSA-a"\nreason = "x"\nignoreUntil = 2026-09-04\nwide = true\n',
+  ],
   ['package override', '[[PackageOverrides]]\nname = "lodash"\nignore = true\n'],
-  ['duplicate ID', '[[IgnoredVulns]]\nid = "GHSA-a"\nreason = "x"\nignoreUntil = 2026-09-04\n[[IgnoredVulns]]\nid = "ghsa-a"\nreason = "y"\nignoreUntil = 2026-09-05\n'],
+  [
+    'duplicate ID',
+    '[[IgnoredVulns]]\nid = "GHSA-a"\nreason = "x"\nignoreUntil = 2026-09-04\n[[IgnoredVulns]]\nid = "ghsa-a"\nreason = "y"\nignoreUntil = 2026-09-05\n',
+  ],
 ]) {
   await check(`policy rejects ${name}`, () => {
     assert.throws(() => parsePolicy(policy, '2026-09-03'), GateError)
@@ -276,7 +272,10 @@ await check('lockfile reader accepts schema 9.0 and quoted scoped keys', () => {
 for (const [name, text] of [
   ['wrong schema', lockfile().replace("'9.0'", "'8.0'")],
   ['empty package map', lockfile().replace('  safe-package@1.0.0: {}\n', '')],
-  ['duplicate package key', lockfile().replace('snapshots:', '  safe-package@1.0.0: {}\n\nsnapshots:')],
+  [
+    'duplicate package key',
+    lockfile().replace('snapshots:', '  safe-package@1.0.0: {}\n\nsnapshots:'),
+  ],
   ['missing snapshots map', lockfile().replace('snapshots:', 'resolved:')],
 ]) {
   await check(`lockfile reader rejects ${name}`, () => {
@@ -315,7 +314,11 @@ await withProject({}, async (project) => {
     ['no-package exit', processResult({ code: 128 }), 1],
     ['general error exit', processResult({ code: 127 }), 1],
     ['timeout', processResult({ timedOut: true }), 1],
-    ['exit/finding disagreement', processResult({ code: 0, stdout: scanJson(current, { finding: true, severity: 'LOW' }) }), 1],
+    [
+      'exit/finding disagreement',
+      processResult({ code: 0, stdout: scanJson(current, { finding: true, severity: 'LOW' }) }),
+      1,
+    ],
     ['wrong source', processResult({ stdout: scanJson(canary) }), 1],
     [
       'duplicate extracted package',
@@ -336,10 +339,8 @@ await withProject({}, async (project) => {
 
   await check('canary accepts the pinned GHSA through aliases', () => {
     assert.equal(
-      classifyCanary(
-        processResult({ code: 1, stdout: scanJson(canary, { canary: true }) }),
-        canary,
-      ).kind,
+      classifyCanary(processResult({ code: 1, stdout: scanJson(canary, { canary: true }) }), canary)
+        .kind,
       'detected',
     )
   })
@@ -356,11 +357,10 @@ await withProject({}, async (project) => {
 })
 
 await check('portable process deadline terminates a hung child', async () => {
-  const result = await runProcess(
-    process.execPath,
-    ['-e', 'setTimeout(() => {}, 10_000)'],
-    { cwd: process.cwd(), timeoutMs: 20 },
-  )
+  const result = await runProcess(process.execPath, ['-e', 'setTimeout(() => {}, 10_000)'], {
+    cwd: process.cwd(),
+    timeoutMs: 20,
+  })
   assert.equal(result.timedOut, true)
   assert.notEqual(result.code, 0)
 })
@@ -371,25 +371,30 @@ await check('online clean current plus detected canary passes without fallback',
   withProject({}, async (project) => {
     const calls = []
     await runFixtureGate(project, fakeExecutor(calls))
-    assert.deepEqual(calls.map(({ mode, target }) => `${mode}:${target}`), [
-      'identity:identity',
-      'online:current',
-      'online:canary',
-    ])
-  }))
+    assert.deepEqual(
+      calls.map(({ mode, target }) => `${mode}:${target}`),
+      ['identity:identity', 'online:current', 'online:canary'],
+    )
+  }),
+)
 
 await check('a current finding fails immediately and never falls back', () =>
   withProject({}, async (project) => {
     const calls = []
     const execute = fakeExecutor(calls, {
-      'online:current': (call) => processResult({
-        code: 1,
-        stdout: scanJson(lockfileArg(call), { finding: true, severity: 'LOW' }),
-      }),
+      'online:current': (call) =>
+        processResult({
+          code: 1,
+          stdout: scanJson(lockfileArg(call), { finding: true, severity: 'LOW' }),
+        }),
     })
     await expectGateError(() => runFixtureGate(project, execute), 'vulnerable')
-    assert.equal(calls.some(({ mode }) => mode === 'fresh-database'), false)
-  }))
+    assert.equal(
+      calls.some(({ mode }) => mode === 'fresh-database'),
+      false,
+    )
+  }),
+)
 
 await check('current exit 1 with malformed JSON still never falls back', () =>
   withProject({}, async (project) => {
@@ -398,8 +403,12 @@ await check('current exit 1 with malformed JSON still never falls back', () =>
       'online:current': () => processResult({ code: 1, stdout: '{}' }),
     })
     await expectGateError(() => runFixtureGate(project, execute), 'vulnerable')
-    assert.equal(calls.some(({ mode }) => mode === 'fresh-database'), false)
-  }))
+    assert.equal(
+      calls.some(({ mode }) => mode === 'fresh-database'),
+      false,
+    )
+  }),
+)
 
 await check('online error uses one isolated fresh-database pair', () =>
   withProject({}, async (project) => {
@@ -411,10 +420,11 @@ await check('online error uses one isolated fresh-database pair', () =>
     process.env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY = sentinel
     try {
       const execute = fakeExecutor(calls, {
-        'online:current': () => processResult({
-          code: 127,
-          stderr: `API unavailable while reading ${join(project.root, 'pnpm-lock.yaml')}`,
-        }),
+        'online:current': () =>
+          processResult({
+            code: 127,
+            stderr: `API unavailable while reading ${join(project.root, 'pnpm-lock.yaml')}`,
+          }),
       })
       await runFixtureGate(project, execute, logs)
     } finally {
@@ -431,23 +441,26 @@ await check('online error uses one isolated fresh-database pair', () =>
     )
     assert.notEqual(fallback[0].env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY, sentinel)
     assert.equal(logs.join('\n').includes(project.root), false)
-  }))
+  }),
+)
 
 await check('missing online canary retries the complete pair', () =>
   withProject({}, async (project) => {
     const calls = []
     const execute = fakeExecutor(calls, {
-      'online:canary': (call) => processResult({
-        code: 1,
-        stdout: scanJson(lockfileArg(call), { differentAdvisory: true }),
-      }),
+      'online:canary': (call) =>
+        processResult({
+          code: 1,
+          stdout: scanJson(lockfileArg(call), { differentAdvisory: true }),
+        }),
     })
     await runFixtureGate(project, execute)
     assert.deepEqual(
       calls.filter(({ mode }) => mode === 'fresh-database').map(({ target }) => target),
       ['current', 'canary'],
     )
-  }))
+  }),
+)
 
 await check('two unavailable sources fail indeterminate', () =>
   withProject({}, async (project) => {
@@ -458,7 +471,8 @@ await check('two unavailable sources fail indeterminate', () =>
       'fresh-database:current': unavailable,
     })
     await expectGateError(() => runFixtureGate(project, execute), 'indeterminate')
-  }))
+  }),
+)
 
 await check('malformed output on both paths never becomes clean', () =>
   withProject({}, async (project) => {
@@ -469,7 +483,8 @@ await check('malformed output on both paths never becomes clean', () =>
       'fresh-database:current': malformed,
     })
     await expectGateError(() => runFixtureGate(project, execute), 'indeterminate')
-  }))
+  }),
+)
 
 await check('production exception cannot mask the canary config', () =>
   withProject(
@@ -488,7 +503,8 @@ ignoreUntil = 2099-01-01
       assert.ok(configIndex >= 0)
       assert.notEqual(canaryCall.args[configIndex + 1], join(project.root, 'osv-scanner.toml'))
     },
-  ))
+  ),
+)
 
 await check('wrong scanner version fails before dependency scans', () =>
   withProject({}, async (project) => {
@@ -497,34 +513,38 @@ await check('wrong scanner version fails before dependency scans', () =>
       identity: processResult({ stdout: 'osv-scanner version: 2.5.0\n' }),
     })
     await expectGateError(() => runFixtureGate(project, execute), 'indeterminate')
-    assert.deepEqual(calls.map(({ target }) => target), ['identity'])
-  }))
+    assert.deepEqual(
+      calls.map(({ target }) => target),
+      ['identity'],
+    )
+  }),
+)
 
 await check('wrong scanner checksum fails before executing it', () =>
   withProject({}, async (project) => {
     const calls = []
     await expectGateError(
-      () => runFixtureGate(
-        { ...project, expectedSha256: '0'.repeat(64) },
-        fakeExecutor(calls),
-      ),
+      () => runFixtureGate({ ...project, expectedSha256: '0'.repeat(64) }, fakeExecutor(calls)),
       'indeterminate',
     )
     assert.equal(calls.length, 0)
-  }))
+  }),
+)
 
 await check('missing scanner file fails indeterminate', () =>
   withProject({}, async (project) => {
     const calls = []
     await expectGateError(
-      () => runFixtureGate(
-        { ...project, scannerPath: join(project.root, 'missing-scanner') },
-        fakeExecutor(calls),
-      ),
+      () =>
+        runFixtureGate(
+          { ...project, scannerPath: join(project.root, 'missing-scanner') },
+          fakeExecutor(calls),
+        ),
       'indeterminate',
     )
     assert.equal(calls.length, 0)
-  }))
+  }),
+)
 
 await check('runtime dependency fails before scanner identity or network', () =>
   withProject(
@@ -534,7 +554,8 @@ await check('runtime dependency fails before scanner identity or network', () =>
       await expectGateError(() => runFixtureGate(project, fakeExecutor(calls)), 'policy')
       assert.equal(calls.length, 0)
     },
-  ))
+  ),
+)
 
 console.log('')
 if (failures > 0) {

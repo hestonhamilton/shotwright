@@ -70,7 +70,11 @@ describe('validateManifest', () => {
     ['non-object root', null, /manifest must be an object/],
     ['wrong version', { ...manifest(), manifestVersion: 2 }, /manifestVersion must be 1/],
     ['mismatched run id', manifest('other'), /does not match run directory/],
-    ['invalid flags', { ...manifest(), flags: { only: 'x', video: false, trace: false } }, /flags.only/],
+    [
+      'invalid flags',
+      { ...manifest(), flags: { only: 'x', video: false, trace: false } },
+      /flags.only/,
+    ],
     ['invalid shots', { ...manifest(), shots: null }, /shots must be an array/],
     [
       'invalid viewport',
@@ -162,11 +166,7 @@ describe('PNG model', () => {
       /CRC/,
     ],
     ['missing IEND', makePng().subarray(0, -12), /IEND/],
-    [
-      'missing IDAT',
-      Buffer.concat([makePng().subarray(0, 33), makePng().subarray(-12)]),
-      /IDAT/,
-    ],
+    ['missing IDAT', Buffer.concat([makePng().subarray(0, 33), makePng().subarray(-12)]), /IDAT/],
     [
       'IHDR',
       (() => {

@@ -280,7 +280,10 @@ describe('leak gate layer B — rule patterns', () => {
     // tarball. E9.R section 3.1 measured a naive scan being wrong here.
     it('does not fire on package.json repository.url', () => {
       expect(
-        fires('operator-username-in-path', '"url": "git+https://github.com/hestonhamilton/shotwright.git"'),
+        fires(
+          'operator-username-in-path',
+          '"url": "git+https://github.com/hestonhamilton/shotwright.git"',
+        ),
       ).toBe(false)
     })
 
@@ -294,9 +297,9 @@ describe('leak gate layer B — rule patterns', () => {
     })
 
     it('does not fire on an ssh remote URL', () => {
-      expect(fires('operator-username-in-path', 'git@github.com:hestonhamilton/shotwright.git')).toBe(
-        false,
-      )
+      expect(
+        fires('operator-username-in-path', 'git@github.com:hestonhamilton/shotwright.git'),
+      ).toBe(false)
     })
   })
 })

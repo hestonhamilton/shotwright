@@ -96,9 +96,7 @@ describe('defineShotsConfig', () => {
         outputDir: output,
         webServer: { command: 'must-not-run', port: 9999 },
       })
-      expect(fs.readFileSync(probeFile, 'utf8')).toBe(
-        path.resolve(root, output ?? 'shots-output'),
-      )
+      expect(fs.readFileSync(probeFile, 'utf8')).toBe(path.resolve(root, output ?? 'shots-output'))
       expect(config.testMatch).toEqual([])
       expect(config.webServer).toBeUndefined()
       expect(config.reporter).toBeUndefined()

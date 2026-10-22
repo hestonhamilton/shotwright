@@ -26,7 +26,12 @@ afterEach(() => {
   }
 })
 
-function shot(name: string, spec: string, index: number, overrides: Partial<ShotEntry> = {}): ShotEntry {
+function shot(
+  name: string,
+  spec: string,
+  index: number,
+  overrides: Partial<ShotEntry> = {},
+): ShotEntry {
   return {
     name,
     spec,
@@ -74,7 +79,9 @@ function writeRun(
     )
   }
   const artifactPaths = new Set(
-    value.shots.flatMap((entry) => [entry.video, entry.trace]).filter((item): item is string => item !== null),
+    value.shots
+      .flatMap((entry) => [entry.video, entry.trace])
+      .filter((item): item is string => item !== null),
   )
   for (const artifactPath of artifactPaths) {
     const target = path.join(runDir, ...artifactPath.split('/'))
@@ -139,8 +146,8 @@ describe('gallery rendering', () => {
     const runDir = path.join(tmpDir(), 'run')
     writeRun(runDir, manifest('run', fiveShots()))
     const html = renderGallery(loadGalleryModel(runDir))
-    expect((html.match(/data:image\/png;base64,/g) ?? [])).toHaveLength(5)
-    expect((html.match(/<article class="card/g) ?? [])).toHaveLength(5)
+    expect(html.match(/data:image\/png;base64,/g) ?? []).toHaveLength(5)
+    expect(html.match(/<article class="card/g) ?? []).toHaveLength(5)
     expect(html.indexOf('about.shots.ts')).toBeLessThan(html.indexOf('home.shots.ts'))
     for (const entry of fiveShots()) {
       expect(html).toContain(entry.name)
@@ -168,8 +175,8 @@ describe('gallery rendering', () => {
     ])
     writeRun(runDir, value)
     const html = renderGallery(loadGalleryModel(runDir))
-    expect((html.match(/<script>/g) ?? [])).toHaveLength(1)
-    expect((html.match(/<\/style>/g) ?? [])).toHaveLength(1)
+    expect(html.match(/<script>/g) ?? []).toHaveLength(1)
+    expect(html.match(/<\/style>/g) ?? []).toHaveLength(1)
     expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&#39;&lt;/style&gt;')
     expect(html).toContain('video/%3Cscript%3Equote%22%27.webm')
     expect(html).toContain('trace/%3C/style%3E/trace%27.zip')
@@ -200,9 +207,7 @@ describe('gallery rendering', () => {
     )
     const html = renderGallery(loadGalleryModel(runDir))
     expect(html).toContain('Viewport unavailable · DSF 2')
-    expect(html).toContain(
-      '<div class="meta"><span>Viewport unavailable</span><span>DSF 2</span>',
-    )
+    expect(html).toContain('<div class="meta"><span>Viewport unavailable</span><span>DSF 2</span>')
     expect(html).toContain('<dt>Logical viewport</dt><dd>Viewport unavailable</dd>')
     expect(html).toContain('<dt>Device scale factor</dt><dd>2</dd>')
   })
@@ -235,9 +240,11 @@ describe('gallery rendering', () => {
     ]
     writeRun(runDir, manifest('run', shots))
     const html = renderGallery(loadGalleryModel(runDir))
-    expect((html.match(/<video /g) ?? [])).toHaveLength(1)
-    expect((html.match(/shared by 3 shots by identical manifest path; test title unavailable/g) ?? [])).toHaveLength(1)
-    expect((html.match(/Download sibling trace/g) ?? [])).toHaveLength(1)
+    expect(html.match(/<video /g) ?? []).toHaveLength(1)
+    expect(
+      html.match(/shared by 3 shots by identical manifest path; test title unavailable/g) ?? [],
+    ).toHaveLength(1)
+    expect(html.match(/Download sibling trace/g) ?? []).toHaveLength(1)
     expect(html).toContain('requires this gallery beside the run directory')
   })
 
@@ -264,8 +271,8 @@ describe('gallery rendering', () => {
     const runDir = path.join(tmpDir(), 'run')
     writeRun(runDir, manifest('run', fiveShots().slice(0, 2)))
     const html = renderGallery(loadGalleryModel(runDir))
-    expect((html.match(/Video not captured/g) ?? [])).toHaveLength(1)
-    expect((html.match(/Trace not captured/g) ?? [])).toHaveLength(1)
+    expect(html.match(/Video not captured/g) ?? []).toHaveLength(1)
+    expect(html.match(/Trace not captured/g) ?? []).toHaveLength(1)
     expect(html).not.toContain('<video ')
     expect(html).toContain('Video and trace absent in this run')
   })

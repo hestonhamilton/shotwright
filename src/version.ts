@@ -9,8 +9,8 @@ import fs from 'node:fs'
  * would drift from what the Version PR wrote.
  */
 export function shotwrightVersion(): string {
-  const pkg = JSON.parse(
-    fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-  ) as { version: string }
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+    version: string
+  }
   return pkg.version
 }

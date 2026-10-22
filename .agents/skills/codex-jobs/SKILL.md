@@ -41,6 +41,9 @@ id=$(.agents/skills/codex-jobs/scripts/codex-job.sh dispatch --write "<prompt>")
   directory relative to the repo root, phase contract, acceptance criteria
   verbatim, `file:line` demanded for every claim, "flag a wrong premise rather
   than build on it", "no git commit / push / bd writes".
+- Every implement or repair brief ends with `pnpm run format` (Prettier is the
+  repo's formatter; `pnpm run lint` fails on unformatted code, and delegates
+  left to themselves emit compressed one-line code).
 - Only one Playwright-launching lane at a time across all delegates and the
   orchestrator unless each has its own worktree and output dir.
 

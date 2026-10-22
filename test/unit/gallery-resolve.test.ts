@@ -4,11 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import {
-  resolveCompareRuns,
-  resolveGalleryRun,
-  validateRunId,
-} from '../../src/gallery/resolve.js'
+import { resolveCompareRuns, resolveGalleryRun, validateRunId } from '../../src/gallery/resolve.js'
 
 const tmpDirs: string[] = []
 

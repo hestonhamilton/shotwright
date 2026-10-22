@@ -28,10 +28,7 @@ export function generateCompareGallery(
     compareDir,
     `${model.a.manifest.runId}.vs.${model.b.manifest.runId}.html`,
   )
-  const tempPath = path.join(
-    compareDir,
-    `.compare.${process.pid}-${++generationCounter}.tmp`,
-  )
+  const tempPath = path.join(compareDir, `.compare.${process.pid}-${++generationCounter}.tmp`)
   try {
     fs.writeFileSync(tempPath, html)
     fs.renameSync(tempPath, comparePath)

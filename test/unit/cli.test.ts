@@ -34,7 +34,9 @@ describe('parseRunArgs', () => {
   })
 
   it('parses flags and passthrough', () => {
-    expect(parseRunArgs(['--only', 'checkout,cart', '--video', '--config', 'x.ts', '--', '--workers=1'])).toEqual({
+    expect(
+      parseRunArgs(['--only', 'checkout,cart', '--video', '--config', 'x.ts', '--', '--workers=1']),
+    ).toEqual({
       only: 'checkout,cart',
       video: true,
       trace: false,
@@ -48,9 +50,7 @@ describe('parseRunArgs', () => {
     expect(parseRunArgs(['--', '--only', 'home', '--workers=1'])).toMatchObject({
       only: 'home',
       passthrough: ['--workers=1'],
-      separatorWarnings: [
-        expect.stringContaining('--only came after `--`; shotwright applied it'),
-      ],
+      separatorWarnings: [expect.stringContaining('--only came after `--`; shotwright applied it')],
     })
   })
 
@@ -182,9 +182,7 @@ describe('parseGalleryArgs', () => {
 
   it('rejects duplicate --lan and its conflict with --host', () => {
     expect(() => parseGalleryArgs(['--lan', '--lan'])).toThrow(/duplicate/)
-    expect(() => parseGalleryArgs(['--host', '127.0.0.1', '--lan'])).toThrow(
-      /mutually exclusive/,
-    )
+    expect(() => parseGalleryArgs(['--host', '127.0.0.1', '--lan'])).toThrow(/mutually exclusive/)
   })
 
   it.each([
@@ -258,13 +256,7 @@ describe('probeOutputDir', () => {
         tempRoot,
         invoke: async (cli, args, options) => {
           expect(cli).toBe('/synthetic/playwright.js')
-          expect(args).toEqual([
-            'test',
-            '--list',
-            '--pass-with-no-tests',
-            '-c',
-            'custom.ts',
-          ])
+          expect(args).toEqual(['test', '--list', '--pass-with-no-tests', '-c', 'custom.ts'])
           expect(options.env.SHOTWRIGHT_RUN).toBe('0')
           expect(options.env.SHOTWRIGHT_RUN_DIR).toBeUndefined()
           const probeFile = options.env.SHOTWRIGHT_CONFIG_PROBE_FILE!
@@ -385,7 +377,7 @@ describe('helpFor', () => {
     [['gallery', '-h'], 'Usage: shotwright gallery '],
     [['help', 'compare'], 'Usage: shotwright compare '],
     [['help', 'init'], 'Usage: shotwright init '],
-  ])('%j prints only that command\'s usage', (argv, prefix) => {
+  ])("%j prints only that command's usage", (argv, prefix) => {
     const text = helpFor(argv)
     expect(text).not.toBeNull()
     expect(text!.startsWith(prefix)).toBe(true)
@@ -396,12 +388,15 @@ describe('helpFor', () => {
     expect(helpFor(['run', '--', '--help'])).toBeNull()
   })
 
-  it.each([[['run']], [['gallery', 'latest']], [['init', '--dry-run']], [['nope']], [['nope', '--help']]])(
-    '%j is not a help request',
-    (argv) => {
-      expect(helpFor(argv)).toBeNull()
-    },
-  )
+  it.each([
+    [['run']],
+    [['gallery', 'latest']],
+    [['init', '--dry-run']],
+    [['nope']],
+    [['nope', '--help']],
+  ])('%j is not a help request', (argv) => {
+    expect(helpFor(argv)).toBeNull()
+  })
 
   it('falls back to the full usage for help on an unknown command', () => {
     expect(helpFor(['help', 'nope'])).toContain('Usage: shotwright gallery')

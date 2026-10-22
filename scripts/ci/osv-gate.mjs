@@ -1,14 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  realpath,
-  readdir,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -41,12 +33,7 @@ function appendBounded(chunks, chunk, state, maxBytes) {
 export function runProcess(
   command,
   args,
-  {
-    cwd,
-    env = process.env,
-    timeoutMs,
-    maxOutputBytes = MAX_OUTPUT_BYTES,
-  },
+  { cwd, env = process.env, timeoutMs, maxOutputBytes = MAX_OUTPUT_BYTES },
 ) {
   return new Promise((resolveResult) => {
     let child
@@ -204,21 +191,13 @@ export function parsePolicy(text, today = new Date().toISOString().slice(0, 10))
     }
     const [, field, rawValue] = assignment
     if (!['id', 'reason', 'ignoreUntil'].includes(field)) {
-      throw new GateError(
-        'indeterminate',
-        `policy line ${lineNumber}: unknown field ${field}`,
-      )
+      throw new GateError('indeterminate', `policy line ${lineNumber}: unknown field ${field}`)
     }
     if (field in current) {
-      throw new GateError(
-        'indeterminate',
-        `policy line ${lineNumber}: duplicate field ${field}`,
-      )
+      throw new GateError('indeterminate', `policy line ${lineNumber}: duplicate field ${field}`)
     }
     current[field] =
-      field === 'ignoreUntil'
-        ? rawValue
-        : parseQuotedValue(rawValue, field, lineNumber)
+      field === 'ignoreUntil' ? rawValue : parseQuotedValue(rawValue, field, lineNumber)
   }
   finishCurrent(lines.length)
   return exceptions
@@ -269,10 +248,7 @@ export function validateRuntimePackage(text) {
   }
   found.sort()
   if (found.length > 0) {
-    throw new GateError(
-      'policy',
-      `shotwright has runtime dependencies: ${found.join(', ')}`,
-    )
+    throw new GateError('policy', `shotwright has runtime dependencies: ${found.join(', ')}`)
   }
 }
 
@@ -323,10 +299,7 @@ export function readPnpmLockPackageCount(text) {
       )
     }
     if (keys.has(entry[1])) {
-      throw new GateError(
-        'indeterminate',
-        `pnpm lockfile repeats package key ${entry[1]}`,
-      )
+      throw new GateError('indeterminate', `pnpm lockfile repeats package key ${entry[1]}`)
     }
     keys.add(entry[1])
   }
@@ -390,10 +363,7 @@ function inspectResultJson(text, expectedPath, expectedPackages) {
     }
     const identity = `${name}@${version}`
     if (seenPackages.has(identity)) {
-      throw new GateError(
-        'indeterminate',
-        `scanner result repeats package ${identity}`,
-      )
+      throw new GateError('indeterminate', `scanner result repeats package ${identity}`)
     }
     seenPackages.add(identity)
     const vulnerabilities = entry.vulnerabilities ?? []
@@ -488,9 +458,7 @@ export function classifyCanary(result, expectedPath, expectedPackages = 1) {
     if (error instanceof GateError) return { kind: 'indeterminate', reason: error.message }
     throw error
   }
-  const detected = inspected.findings.some((finding) =>
-    finding.ids.includes(CANARY_ADVISORY),
-  )
+  const detected = inspected.findings.some((finding) => finding.ids.includes(CANARY_ADVISORY))
   if (!detected) {
     return {
       kind: 'indeterminate',
@@ -501,9 +469,7 @@ export function classifyCanary(result, expectedPath, expectedPackages = 1) {
 }
 
 function findingDetails(findings) {
-  return findings.map(
-    (finding) => `${finding.package}: ${finding.ids.join(', ')}`,
-  )
+  return findings.map((finding) => `${finding.package}: ${finding.ids.join(', ')}`)
 }
 
 async function verifyScannerIdentity({
@@ -517,10 +483,7 @@ async function verifyScannerIdentity({
   try {
     scannerBytes = await readFile(scannerPath)
   } catch (error) {
-    throw new GateError(
-      'indeterminate',
-      `could not read osv-scanner (${error.code ?? error.name})`,
-    )
+    throw new GateError('indeterminate', `could not read osv-scanner (${error.code ?? error.name})`)
   }
   const actualSha256 = createHash('sha256').update(scannerBytes).digest('hex')
   if (actualSha256 !== expectedSha256) {
@@ -650,12 +613,14 @@ export async function runGate({
   )
   const packagePath = join(canonicalRoot, 'package.json')
   const policyPath = join(canonicalRoot, 'osv-scanner.toml')
-  const command = execute ?? ((options) =>
-    runProcess(scannerPath, options.args, {
-      cwd: options.cwd,
-      env: options.env,
-      timeoutMs: options.timeoutMs,
-    }))
+  const command =
+    execute ??
+    ((options) =>
+      runProcess(scannerPath, options.args, {
+        cwd: options.cwd,
+        env: options.env,
+        timeoutMs: options.timeoutMs,
+      }))
 
   log('==> audit gate: local package invariants')
   validateRuntimePackage(await readFile(packagePath, 'utf8'))
@@ -773,8 +738,12 @@ async function cli() {
       process.exitCode = 2
       return
     }
-    const label = error.kind === 'vulnerable' ? 'VULNERABLE' :
-      error.kind === 'policy' ? 'POLICY FAILURE' : 'INDETERMINATE'
+    const label =
+      error.kind === 'vulnerable'
+        ? 'VULNERABLE'
+        : error.kind === 'policy'
+          ? 'POLICY FAILURE'
+          : 'INDETERMINATE'
     console.error(`audit gate: ${label} — ${error.message}`)
     for (const detail of error.details) console.error(`  ${detail}`)
     process.exitCode = error.kind === 'indeterminate' ? 2 : 1

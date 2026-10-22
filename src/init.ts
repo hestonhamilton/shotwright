@@ -117,7 +117,8 @@ export function mutatePackageJsonScripts(
 
   const newline = raw.endsWith('\n') ? '\n' : ''
   const indent = detectJsonIndent(raw)
-  const note = indent === null ? 'package.json had no indented property lines; using 2-space indent' : null
+  const note =
+    indent === null ? 'package.json had no indented property lines; using 2-space indent' : null
   const indentString = indent ?? '  '
   const scripts = isObject(pkg.scripts) ? pkg.scripts : {}
   const conflicts: ScriptConflict[] = []
@@ -167,7 +168,8 @@ export function planInit(cwd: string, loadTemplate: (rel: string) => string): In
   try {
     packageRaw = fs.readFileSync(packagePath, 'utf8')
   } catch (error) {
-    if (isNotFound(error)) throw new Error('shotwright init: package.json not found', { cause: error })
+    if (isNotFound(error))
+      throw new Error('shotwright init: package.json not found', { cause: error })
     throw error
   }
 
@@ -256,7 +258,10 @@ export function initExitCode(result: InitResult): number {
   return initOutcomeExitCode(classifyInitOutcome(result))
 }
 
-export function formatInitResult(result: InitResult, options: { omitNotices?: boolean } = {}): string {
+export function formatInitResult(
+  result: InitResult,
+  options: { omitNotices?: boolean } = {},
+): string {
   const outcome = classifyInitOutcome(result)
   if (outcome.kind === 'partial-write-failure') return formatInitFailure(result, outcome)
   const lines: string[] = []
@@ -267,12 +272,28 @@ export function formatInitResult(result: InitResult, options: { omitNotices?: bo
   appendConflicts(lines, plan.conflicts)
 
   if (result.dryRun) {
-    appendActionSection(lines, 'Would create', plan.actions.filter((action) => action.kind === 'create'))
-    appendActionSection(lines, 'Would update', plan.actions.filter((action) => action.kind === 'update'))
+    appendActionSection(
+      lines,
+      'Would create',
+      plan.actions.filter((action) => action.kind === 'create'),
+    )
+    appendActionSection(
+      lines,
+      'Would update',
+      plan.actions.filter((action) => action.kind === 'update'),
+    )
     appendReportSection(lines, 'Would leave alone (yours)', plan.leftAlone)
   } else {
-    appendActionSection(lines, 'Created', result.written.filter((action) => action.kind === 'create'))
-    appendActionSection(lines, 'Updated', result.written.filter((action) => action.kind === 'update'))
+    appendActionSection(
+      lines,
+      'Created',
+      result.written.filter((action) => action.kind === 'create'),
+    )
+    appendActionSection(
+      lines,
+      'Updated',
+      result.written.filter((action) => action.kind === 'update'),
+    )
     appendReportSection(lines, 'Left alone (yours)', plan.leftAlone)
   }
 
@@ -375,7 +396,8 @@ function planSkill(plan: InitPlan, contents: string): void {
     if (newExisting === contents) {
       plan.needsReview.push({
         path: newRel,
-        detail: 'your SKILL.md differs and was not overwritten; compare and merge if you want the updated guidance',
+        detail:
+          'your SKILL.md differs and was not overwritten; compare and merge if you want the updated guidance',
       })
     } else if (newExisting === null) {
       plan.actions.push({
@@ -386,7 +408,8 @@ function planSkill(plan: InitPlan, contents: string): void {
       })
       plan.needsReview.push({
         path: newRel,
-        detail: 'your SKILL.md differs and was not overwritten; compare and merge if you want the updated guidance',
+        detail:
+          'your SKILL.md differs and was not overwritten; compare and merge if you want the updated guidance',
       })
     } else {
       plan.needsReview.push({
@@ -420,20 +443,19 @@ function formatHeadline(outcome: InitOutcome): string {
   }
 }
 
-function formatInitFailure(result: InitResult, outcome: Extract<InitOutcome, { kind: 'partial-write-failure' }>): string {
-  const lines = [
-    formatHeadline(outcome),
-    '',
-    'Error',
-    `  ${formatError(result.error)}`,
-    '',
-  ]
+function formatInitFailure(
+  result: InitResult,
+  outcome: Extract<InitOutcome, { kind: 'partial-write-failure' }>,
+): string {
+  const lines = [formatHeadline(outcome), '', 'Error', `  ${formatError(result.error)}`, '']
   appendActionNotices(lines, result.written)
   appendActionSection(lines, 'Written before the failure', result.written)
   const failedIndex = result.plan.actions.indexOf(result.failedAction!)
   appendActionSection(lines, 'Not written', result.plan.actions.slice(failedIndex))
   lines.push('')
-  lines.push('Fix the error and re-run `pnpm exec shotwright init` — it will skip what already exists.')
+  lines.push(
+    'Fix the error and re-run `pnpm exec shotwright init` — it will skip what already exists.',
+  )
   return trimTrailingBlank(lines).join('\n')
 }
 
@@ -538,7 +560,9 @@ function appendNotices(lines: string[], notices: string[]): void {
 function appendActionNotices(lines: string[], actions: InitAction[]): void {
   appendNotices(
     lines,
-    actions.map((action) => action.notice).filter((notice): notice is string => notice !== undefined),
+    actions
+      .map((action) => action.notice)
+      .filter((notice): notice is string => notice !== undefined),
   )
 }
 

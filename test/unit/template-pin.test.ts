@@ -48,13 +48,17 @@ describe('template workflow pin', () => {
     const result = run(['--check', '--root', root])
     expect(result.status).toBe(1)
     expect(result.output).toContain('pins v0.1.0 but package.json is 0.1.1')
-    expect(fs.readFileSync(path.join(root, 'templates/github/shotwright.yml'), 'utf8')).toBe(pinned('v0.1.0'))
+    expect(fs.readFileSync(path.join(root, 'templates/github/shotwright.yml'), 'utf8')).toBe(
+      pinned('v0.1.0'),
+    )
   })
 
   it('rewrites only the pin, including for a prerelease version', () => {
     const root = tree('0.2.0-rc.1', pinned('v0.1.1'))
     expect(run(['--root', root]).status).toBe(0)
-    expect(fs.readFileSync(path.join(root, 'templates/github/shotwright.yml'), 'utf8')).toBe(pinned('v0.2.0-rc.1'))
+    expect(fs.readFileSync(path.join(root, 'templates/github/shotwright.yml'), 'utf8')).toBe(
+      pinned('v0.2.0-rc.1'),
+    )
     expect(run(['--check', '--root', root]).status).toBe(0)
   })
 

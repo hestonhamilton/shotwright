@@ -38,7 +38,9 @@ const pin = /^(\s*uses:\s*\S+\/\.github\/workflows\/shotwright\.yml@)(\S+)\s*$/g
 const template = fs.readFileSync(templatePath, 'utf8')
 const matches = [...template.matchAll(pin)]
 if (matches.length !== 1) {
-  console.error(`sync-template-pin: expected exactly one pinned uses: line, found ${matches.length}`)
+  console.error(
+    `sync-template-pin: expected exactly one pinned uses: line, found ${matches.length}`,
+  )
   process.exit(2)
 }
 

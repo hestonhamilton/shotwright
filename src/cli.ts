@@ -22,11 +22,7 @@ import {
   resolveGalleryRun,
   type ResolvedGalleryRun,
 } from './gallery/resolve.js'
-import {
-  galleryUrls,
-  startGalleryServer,
-  waitForGalleryShutdown,
-} from './gallery/server.js'
+import { galleryUrls, startGalleryServer, waitForGalleryShutdown } from './gallery/server.js'
 import {
   applyInitPlan,
   dryRunInitPlan,
@@ -271,8 +267,8 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
 }
 
 export function misplacedSeparatorWarnings(passthrough: string[]): string[] {
-  const misplaced = passthrough.filter((argument) =>
-    argument === '--only' || argument === '--video' || argument === '--trace',
+  const misplaced = passthrough.filter(
+    (argument) => argument === '--only' || argument === '--video' || argument === '--trace',
   )
   return misplaced.map(separatorWarning)
 }
@@ -296,7 +292,9 @@ export function resolvePlaywrightCli(cwd: string): string {
         '(e.g. `pnpm add -D @playwright/test`)',
     )
   }
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { bin?: string | Record<string, string> }
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as {
+    bin?: string | Record<string, string>
+  }
   const bin = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin?.['playwright']
   if (!bin) throw new Error('shotwright: could not locate the playwright CLI in @playwright/test')
   return path.join(path.dirname(pkgPath), bin)
@@ -403,7 +401,9 @@ async function run(argv: string[]): Promise<number> {
     console.warn(warning)
   }
   if (!fs.existsSync(args.config)) {
-    console.error(`shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`)
+    console.error(
+      `shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`,
+    )
     return 1
   }
   const cli = resolvePlaywrightCli(process.cwd())
@@ -424,7 +424,9 @@ async function run(argv: string[]): Promise<number> {
 async function gallery(argv: string[]): Promise<number> {
   const args = parseGalleryArgs(argv)
   if (!fs.existsSync(args.config)) {
-    console.error(`shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`)
+    console.error(
+      `shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`,
+    )
     return 1
   }
   const outputDir = await probeOutputDir(args.config)
@@ -461,17 +463,15 @@ function formatCompareSelection(side: 'A' | 'B', selected: ResolvedGalleryRun): 
 async function compare(argv: string[]): Promise<number> {
   const args = parseCompareArgs(argv)
   if (!fs.existsSync(args.config)) {
-    console.error(`shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`)
+    console.error(
+      `shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`,
+    )
     return 1
   }
 
   const outputDir = await probeOutputDir(args.config)
   const selected = resolveCompareRuns(outputDir, args.a, args.b)
-  const generated = generateCompareGallery(
-    selected.outputDir,
-    selected.a.runDir,
-    selected.b.runDir,
-  )
+  const generated = generateCompareGallery(selected.outputDir, selected.a.runDir, selected.b.runDir)
 
   console.log(formatCompareSelection('A', selected.a))
   console.log(formatCompareSelection('B', selected.b))

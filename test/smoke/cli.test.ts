@@ -76,9 +76,7 @@ function fileInsideRun(runDir: string, relativePath: string): string {
   const absolute = path.resolve(runDir, relativePath)
   const fromRunDir = path.relative(runDir, absolute)
   expect(
-    fromRunDir === '..' ||
-      fromRunDir.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(fromRunDir),
+    fromRunDir === '..' || fromRunDir.startsWith(`..${path.sep}`) || path.isAbsolute(fromRunDir),
   ).toBe(false)
   return absolute
 }
@@ -201,10 +199,7 @@ async function startGallery(runId: string | null): Promise<RunningGallery> {
   return { child, url, stdout: () => stdout, stderr: () => stderr }
 }
 
-async function stopGallery(
-  running: RunningGallery,
-  expectedCode = 0,
-): Promise<void> {
+async function stopGallery(running: RunningGallery, expectedCode = 0): Promise<void> {
   const exit =
     running.child.exitCode === null
       ? new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
@@ -289,14 +284,16 @@ function invokeCli(cliSpecificArgs: string[], extraEnv: NodeJS.ProcessEnv = {}):
     const childError = error as Error & { stdout?: string | Buffer; stderr?: string | Buffer }
     const stdout = childError.stdout?.toString().trimEnd()
     const stderr = childError.stderr?.toString().trimEnd()
-    const output = [
-      stdout ? `stdout:\n${stdout}` : '',
-      stderr ? `stderr:\n${stderr}` : '',
-    ].filter(Boolean)
+    const output = [stdout ? `stdout:\n${stdout}` : '', stderr ? `stderr:\n${stderr}` : ''].filter(
+      Boolean,
+    )
     if (output.length === 0) throw error
-    throw new Error(`${error.message.trimEnd()}\n\nCaptured child output:\n${output.join('\n\n')}`, {
-      cause: error,
-    })
+    throw new Error(
+      `${error.message.trimEnd()}\n\nCaptured child output:\n${output.join('\n\n')}`,
+      {
+        cause: error,
+      },
+    )
   }
 }
 
@@ -324,9 +321,11 @@ function runCli(cliSpecificArgs: string[], expectedFlags: Flags): CliRun {
   ])
   expect(new Set(manifestFiles)).toHaveLength(manifestFiles.length)
   for (const manifestFile of manifestFiles) fileInsideRun(runDir, manifestFile)
-  expect(filesUnder(runDir).filter((file) => file !== 'manifest.json' && file !== 'gallery.html').sort()).toEqual(
-    [...manifestFiles].sort(),
-  )
+  expect(
+    filesUnder(runDir)
+      .filter((file) => file !== 'manifest.json' && file !== 'gallery.html')
+      .sort(),
+  ).toEqual([...manifestFiles].sort())
   expect(fs.existsSync(path.join(runDir, 'gallery.html'))).toBe(true)
 
   for (const shot of manifest.shots) {
@@ -756,13 +755,15 @@ function expectPackInventory(): void {
       'dist/gallery/resolve.js',
       'dist/gallery/server.js',
     ])
-    expect(packed.files).toEqual(expect.arrayContaining([
-      'templates/init/shots.config.ts',
-      'templates/init/shots/example.shots.ts',
-      'templates/init/gitignore.snippet',
-      'templates/github/shotwright.yml',
-      'templates/skills/shots-harness/SKILL.md',
-    ]))
+    expect(packed.files).toEqual(
+      expect.arrayContaining([
+        'templates/init/shots.config.ts',
+        'templates/init/shots/example.shots.ts',
+        'templates/init/gitignore.snippet',
+        'templates/github/shotwright.yml',
+        'templates/skills/shots-harness/SKILL.md',
+      ]),
+    )
     expect(packed.files.some((file) => file.startsWith('docs/'))).toBe(false)
     expect(packed.files.some((file) => file.includes('mockup'))).toBe(false)
     expect(packed.files.some((file) => file.startsWith('test/'))).toBe(false)
@@ -786,7 +787,10 @@ function packShotwrightPackage(prefix: string): PackedPackage {
   const entry = Array.isArray(parsed) ? parsed[0]! : parsed
   const tarball = entry.filename
     ? path.resolve(root, entry.filename)
-    : path.join(packDir, fs.readdirSync(packDir).find((file) => file.endsWith('.tgz'))!)
+    : path.join(
+        packDir,
+        fs.readdirSync(packDir).find((file) => file.endsWith('.tgz'))!,
+      )
   return { packDir, tarball, files: entry.files.map((file) => file.path) }
 }
 
@@ -794,7 +798,11 @@ function createConsumerApp(prefix: string, packageJson: Record<string, unknown>)
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
   fs.writeFileSync(
     path.join(cwd, 'package.json'),
-    JSON.stringify({ name: 'shotwright-consumer', private: true, type: 'module', ...packageJson }, null, 2) + '\n',
+    JSON.stringify(
+      { name: 'shotwright-consumer', private: true, type: 'module', ...packageJson },
+      null,
+      2,
+    ) + '\n',
   )
   fs.writeFileSync(
     path.join(cwd, 'index.html'),
@@ -836,7 +844,11 @@ function runPnpm(cwd: string, args: string[], timeout = 180_000): string {
   }
 }
 
-function runPnpmStatus(cwd: string, args: string[], timeout = 120_000): ReturnType<typeof spawnSync> {
+function runPnpmStatus(
+  cwd: string,
+  args: string[],
+  timeout = 120_000,
+): ReturnType<typeof spawnSync> {
   fs.mkdirSync(consumerPnpmStore, { recursive: true })
   return spawnSync('pnpm', args, {
     cwd,
@@ -862,7 +874,11 @@ async function startConsumerGallery(cwd: string): Promise<RunningGallery> {
   })
   const url = await new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
-      reject(new Error(`consumer gallery did not print a Local URL\nstdout:\n${stdout}\nstderr:\n${stderr}`))
+      reject(
+        new Error(
+          `consumer gallery did not print a Local URL\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+        ),
+      )
     }, 60_000)
     const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
       clearTimeout(timeout)
@@ -992,13 +1008,9 @@ describe('shotwright run against the demo app', () => {
     expectInjectedGalleryFailurePreservesRunContract()
   })
 
-  it(
-    'keeps latest on the previous completed run and serves its one-shot partial gallery',
-    async () => {
-      await expectFailedRunPreservesLatest()
-    },
-    60_000,
-  )
+  it('keeps latest on the previous completed run and serves its one-shot partial gallery', async () => {
+    await expectFailedRunPreservesLatest()
+  }, 60_000)
 
   it('captures all five shots in a sorted manifest using two workers', () => {
     expect(unfilteredRun.stdout).toMatch(/Running 2 tests using 2 workers/)
@@ -1020,13 +1032,9 @@ describe('shotwright run against the demo app', () => {
     expectCompareGallery()
   })
 
-  it(
-    'regenerates the latest gallery byte-identically and serves only allowlisted files',
-    async () => {
-      await expectLatestGalleryServer()
-    },
-    60_000,
-  )
+  it('regenerates the latest gallery byte-identically and serves only allowlisted files', async () => {
+    await expectLatestGalleryServer()
+  }, 60_000)
 
   it('does not claim to be serving when the selected port is occupied', async () => {
     await expectOccupiedPortDoesNotClaimServing()
@@ -1048,13 +1056,9 @@ describe('shotwright run against the demo app', () => {
     }
   })
 
-  it(
-    'serves an exact byte range from a real captured WebM',
-    async () => {
-      await expectVideoRange()
-    },
-    60_000,
-  )
+  it('serves an exact byte range from a real captured WebM', async () => {
+    await expectVideoRange()
+  }, 60_000)
 
   it('records distinct traces across both specs with videos disabled', () => {
     expect(traceRun.manifest.shots.map((shot) => [shot.spec, shot.name])).toEqual([
@@ -1076,83 +1080,71 @@ describe('shotwright run against the demo app', () => {
     const modalOpen = unfilteredRun.manifest.shots.find((shot) => shot.name === 'modal-open')!
     expect(modalOpen.fullPage).toBe(false)
 
-    const aboutDesktop = unfilteredRun.manifest.shots.find(
-      (shot) => shot.name === 'about-desktop',
-    )!
+    const aboutDesktop = unfilteredRun.manifest.shots.find((shot) => shot.name === 'about-desktop')!
     expect(aboutDesktop.viewport).toEqual({ width: 1440, height: 960 })
 
-    const mobileLayout = unfilteredRun.manifest.shots.find(
-      (shot) => shot.name === 'mobile-layout',
-    )!
+    const mobileLayout = unfilteredRun.manifest.shots.find((shot) => shot.name === 'mobile-layout')!
     expect(mobileLayout.viewport).toEqual({ width: 390, height: 844 })
   })
 
-  it(
-    'generates a gallery for a deterministic byte-unique 60-shot corpus',
-    async () => {
-      await expectSyntheticGallery()
-    },
-    60_000,
-  )
+  it('generates a gallery for a deterministic byte-unique 60-shot corpus', async () => {
+    await expectSyntheticGallery()
+  }, 60_000)
 
   it('packs gallery runtime modules without docs, mockups, or test fixtures', () => {
     expectPackInventory()
   })
 
-  it(
-    'packs, installs, initializes, captures, galleries, and re-runs idempotently in a fresh vite app',
-    async () => {
-      const packed = packShotwrightPackage('shotwright-consumer-pack-')
-      const cwd = createConsumerApp('shotwright-consumer-vite-', {
-        scripts: { dev: 'vite' },
-      })
-      let running: RunningGallery | null = null
-      try {
-        runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.62.0', 'vite@~8.1.5'])
-        const initOutput = runPnpm(cwd, ['exec', 'shotwright', 'init'])
-        expect(initOutput).toContain('shotwright init: detected vite')
-        expect(initOutput).toContain('shots.config.ts')
-        expect(initOutput).toContain('shots/example.shots.ts')
-        expect(initOutput).toContain('.gitignore (+3 entries)')
-        expect(initOutput).toContain('pnpm shots:install')
-        expect(initOutput).not.toContain('Edit shots.config.ts')
+  it('packs, installs, initializes, captures, galleries, and re-runs idempotently in a fresh vite app', async () => {
+    const packed = packShotwrightPackage('shotwright-consumer-pack-')
+    const cwd = createConsumerApp('shotwright-consumer-vite-', {
+      scripts: { dev: 'vite' },
+    })
+    let running: RunningGallery | null = null
+    try {
+      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.62.0', 'vite@~8.1.5'])
+      const initOutput = runPnpm(cwd, ['exec', 'shotwright', 'init'])
+      expect(initOutput).toContain('shotwright init: detected vite')
+      expect(initOutput).toContain('shots.config.ts')
+      expect(initOutput).toContain('shots/example.shots.ts')
+      expect(initOutput).toContain('.gitignore (+3 entries)')
+      expect(initOutput).toContain('pnpm shots:install')
+      expect(initOutput).not.toContain('Edit shots.config.ts')
 
-        runGeneratedShotsInstall(cwd)
-        runPnpm(cwd, ['shots'], 240_000)
-        const latest = fs.readlinkSync(path.join(cwd, 'shots-output', 'latest'))
-        const runDir = path.join(cwd, 'shots-output', latest)
-        const manifest = JSON.parse(
-          fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'),
-        ) as Manifest
-        expect(manifest.shots.map((shot) => shot.name)).toEqual(['home'])
-        expect(fs.existsSync(path.join(runDir, 'gallery.html'))).toBe(true)
+      runGeneratedShotsInstall(cwd)
+      runPnpm(cwd, ['shots'], 240_000)
+      const latest = fs.readlinkSync(path.join(cwd, 'shots-output', 'latest'))
+      const runDir = path.join(cwd, 'shots-output', latest)
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'),
+      ) as Manifest
+      expect(manifest.shots.map((shot) => shot.name)).toEqual(['home'])
+      expect(fs.existsSync(path.join(runDir, 'gallery.html'))).toBe(true)
 
-        running = await startConsumerGallery(cwd)
-        expect(running.stdout()).toContain(`shotwright gallery: serving ${latest}`)
-        const response = await fetch(running.url)
-        expect(response.status).toBe(200)
-        expect(await response.text()).toContain('home')
-        await stopConsumerGallery(running)
-        running = null
+      running = await startConsumerGallery(cwd)
+      expect(running.stdout()).toContain(`shotwright gallery: serving ${latest}`)
+      const response = await fetch(running.url)
+      expect(response.status).toBe(200)
+      expect(await response.text()).toContain('home')
+      await stopConsumerGallery(running)
+      running = null
 
-        const configPath = path.join(cwd, 'shots.config.ts')
-        const customizedConfig = fs
-          .readFileSync(configPath, 'utf8')
-          .replace('http://127.0.0.1:5173', 'http://127.0.0.1:4173')
-        fs.writeFileSync(configPath, customizedConfig)
-        const rerunOutput = runPnpm(cwd, ['exec', 'shotwright', 'init'])
-        expect(rerunOutput).toContain('shotwright init: already set up — nothing to change')
-        expect(rerunOutput).toContain('Left alone (yours)')
-        expect(fs.readFileSync(configPath, 'utf8')).toBe(customizedConfig)
-        expectNoDuplicateGeneratedState(cwd)
-      } finally {
-        if (running !== null && running.child.exitCode === null) await stopConsumerGallery(running)
-        fs.rmSync(cwd, { recursive: true, force: true })
-        fs.rmSync(packed.packDir, { recursive: true, force: true })
-      }
-    },
-    420_000,
-  )
+      const configPath = path.join(cwd, 'shots.config.ts')
+      const customizedConfig = fs
+        .readFileSync(configPath, 'utf8')
+        .replace('http://127.0.0.1:5173', 'http://127.0.0.1:4173')
+      fs.writeFileSync(configPath, customizedConfig)
+      const rerunOutput = runPnpm(cwd, ['exec', 'shotwright', 'init'])
+      expect(rerunOutput).toContain('shotwright init: already set up — nothing to change')
+      expect(rerunOutput).toContain('Left alone (yours)')
+      expect(fs.readFileSync(configPath, 'utf8')).toBe(customizedConfig)
+      expectNoDuplicateGeneratedState(cwd)
+    } finally {
+      if (running !== null && running.child.exitCode === null) await stopConsumerGallery(running)
+      fs.rmSync(cwd, { recursive: true, force: true })
+      fs.rmSync(packed.packDir, { recursive: true, force: true })
+    }
+  }, 420_000)
 
   it('fails init without overwriting an existing shots script', () => {
     const packed = packShotwrightPackage('shotwright-collision-pack-')
@@ -1184,8 +1176,12 @@ describe('shotwright run against the demo app', () => {
     try {
       runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.62.0'])
       const output = runPnpm(cwd, ['exec', 'shotwright', 'init'])
-      expect(output).toContain('shotwright init: wrote scaffold with a commented webServer placeholder')
-      expect(output).toContain('  1. Edit shots.config.ts - uncomment and set webServer for your app')
+      expect(output).toContain(
+        'shotwright init: wrote scaffold with a commented webServer placeholder',
+      )
+      expect(output).toContain(
+        '  1. Edit shots.config.ts - uncomment and set webServer for your app',
+      )
       expect(output.indexOf('Edit shots.config.ts')).toBeLessThan(output.indexOf('pnpm shots'))
       expect(output).toContain('  4. pnpm shots:gallery')
     } finally {

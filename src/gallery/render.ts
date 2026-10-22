@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { GALLERY_CSS, GALLERY_SCRIPT } from './assets.js'
-import type {
-  ArtifactReference,
-  GalleryModel,
-  GalleryShot,
-  GallerySpec,
-} from './model.js'
+import type { ArtifactReference, GalleryModel, GalleryShot, GallerySpec } from './model.js'
 
 const siblingWarning = 'requires this gallery beside the run directory'
 
@@ -45,7 +40,9 @@ function siblingHref(relativePath: string): string {
 
 function elapsed(startedAt: string, finishedAt: string): string {
   const duration = Date.parse(finishedAt) - Date.parse(startedAt)
-  return Number.isFinite(duration) && duration >= 0 ? `${(duration / 1000).toFixed(3)} s` : 'Unavailable'
+  return Number.isFinite(duration) && duration >= 0
+    ? `${(duration / 1000).toFixed(3)} s`
+    : 'Unavailable'
 }
 
 function viewportLabel(shot: GalleryShot): string {
@@ -180,10 +177,7 @@ function artifactGroups(spec: GallerySpec): ArtifactGroup[] {
   return groups
 }
 
-function artifactLink(
-  artifact: ArtifactReference,
-  kind: 'video' | 'trace',
-): string {
+function artifactLink(artifact: ArtifactReference, kind: 'video' | 'trace'): string {
   const label = kind === 'video' ? 'Download sibling video' : 'Download sibling trace'
   if (!artifact.available) {
     return `<span class="artifact-preview broken">Broken ${kind} reference: ${escapeHtml(artifact.path)}</span>`

@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  buildCompareModel,
-  type CompareModel,
-} from '../../src/gallery/compare-model.js'
+import { buildCompareModel, type CompareModel } from '../../src/gallery/compare-model.js'
 import type {
   GalleryDiagnostic,
   GalleryModel,
@@ -72,12 +69,8 @@ function gallery(
 }
 
 function expectCountInvariants(model: CompareModel): void {
-  expect(model.counts.nameMatched).toBe(
-    model.counts.comparable + model.counts.notComparable,
-  )
-  expect(model.counts.total).toBe(
-    model.counts.nameMatched + model.counts.unmatchedByName,
-  )
+  expect(model.counts.nameMatched).toBe(model.counts.comparable + model.counts.notComparable)
+  expect(model.counts.total).toBe(model.counts.nameMatched + model.counts.unmatchedByName)
 }
 
 describe('compare model', () => {

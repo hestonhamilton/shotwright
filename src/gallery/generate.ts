@@ -25,10 +25,7 @@ export function generateGallery(runDir: string): GalleryGenerationResult {
   const model = loadGalleryModel(runDir)
   const html = renderGallery(model)
   const galleryPath = path.join(runDir, 'gallery.html')
-  const tempPath = path.join(
-    runDir,
-    `.gallery.${process.pid}-${++generationCounter}.tmp`,
-  )
+  const tempPath = path.join(runDir, `.gallery.${process.pid}-${++generationCounter}.tmp`)
   try {
     fs.writeFileSync(tempPath, html)
     fs.renameSync(tempPath, galleryPath)

@@ -1,6 +1,7 @@
 import eslint from '@eslint/js'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
+import prettier from 'eslint-config-prettier'
 
 export default tseslint.config(
   // Keep in sync with .gitignore's generated/scratch paths: eslint does not read
@@ -31,4 +32,6 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  // Must be last: turns off every ESLint rule that conflicts with Prettier.
+  prettier,
 )

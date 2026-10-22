@@ -191,9 +191,13 @@ function filterToken(kind: string, value: string): string {
 }
 
 function pairViewportLabels(pair: ComparePair): string[] {
-  return [...new Set([pair.a, pair.b].filter((shot): shot is GalleryShot => shot !== null).map(
-    (shot) => `${viewportLabel(shot)} · ${deviceScaleFactorLabel(shot)}`,
-  ))]
+  return [
+    ...new Set(
+      [pair.a, pair.b]
+        .filter((shot): shot is GalleryShot => shot !== null)
+        .map((shot) => `${viewportLabel(shot)} · ${deviceScaleFactorLabel(shot)}`),
+    ),
+  ]
 }
 
 function pairFilterTags(pair: ComparePair): string {
@@ -222,7 +226,7 @@ function renderHeader(model: CompareModel): string {
       ? []
       : [`<span class="badge" data-selected-badge>selected: ${escapeHtml(selected.key)}</span>`]),
   ].join('\n')
-  const onlyLabel = (values: string[]): string => values.length === 0 ? 'none' : values.join(', ')
+  const onlyLabel = (values: string[]): string => (values.length === 0 ? 'none' : values.join(', '))
   const emptySide =
     aManifest.shots.length === 0 && bManifest.shots.length > 0
       ? `<div><dt>Empty side</dt><dd>${escapeHtml(aManifest.runId)} has no shots</dd></div>`
@@ -262,7 +266,9 @@ function renderControls(model: CompareModel): string {
     }),
     ...viewports.map((label) => {
       const token = filterToken('viewport', label)
-      const viewportCount = model.pairs.filter((pair) => pairViewportLabels(pair).includes(label)).length
+      const viewportCount = model.pairs.filter((pair) =>
+        pairViewportLabels(pair).includes(label),
+      ).length
       return `<button class="chip" type="button" data-filter="${escapeHtml(token)}" aria-pressed="false">${escapeHtml(label)} · ${viewportCount}</button>`
     }),
   ].join('\n')
@@ -295,9 +301,10 @@ function renderSideMedia(
 
 function renderSideMeta(shot: GalleryShot | null): string {
   if (shot === null) return '<div class="meta"><span>No manifest entry</span></div>'
-  const imageMeta = shot.image === null
-    ? '<span>Intrinsic unavailable</span>'
-    : `<span>${number(shot.image.width)}×${number(shot.image.height)} intrinsic</span><span>${number(shot.image.byteLength)} B</span>`
+  const imageMeta =
+    shot.image === null
+      ? '<span>Intrinsic unavailable</span>'
+      : `<span>${number(shot.image.width)}×${number(shot.image.height)} intrinsic</span><span>${number(shot.image.byteLength)} B</span>`
   return `<div class="meta"><span>${escapeHtml(viewportLabel(shot))}</span><span>${escapeHtml(deviceScaleFactorLabel(shot))}</span><span>${shot.entry.fullPage ? 'full page' : 'cropped'}</span><span>${number(shot.entry.durationMs)} ms</span>${imageMeta}</div>`
 }
 
@@ -317,11 +324,8 @@ function renderActions(pair: ComparePair, index: number): string {
 }
 
 function renderPairTile(pair: ComparePair, index: number): string {
-  const cssState = pair.state === 'not-comparable'
-    ? ' problem'
-    : pair.state === 'paired'
-      ? ''
-      : ' unmatched'
+  const cssState =
+    pair.state === 'not-comparable' ? ' problem' : pair.state === 'paired' ? '' : ' unmatched'
   const search = `${pair.key} ${pair.spec}`.toLowerCase()
   const representative = pair.a ?? pair.b
   return `<a class="tile${cssState}" href="#pair-${index}" aria-current="${index === 0 ? 'true' : 'false'}" data-key="${escapeHtml(pair.key)}" data-search="${escapeHtml(search)}" data-tags="${escapeHtml(pairFilterTags(pair))}">
@@ -332,9 +336,10 @@ function renderPairTile(pair: ComparePair, index: number): string {
 }
 
 function renderDetail(pair: ComparePair, index: number): string {
-  const reason = pair.notComparableReason === null
-    ? ''
-    : `<p><strong>Unreadable detail:</strong> ${escapeHtml(pair.notComparableReason)}</p>`
+  const reason =
+    pair.notComparableReason === null
+      ? ''
+      : `<p><strong>Unreadable detail:</strong> ${escapeHtml(pair.notComparableReason)}</p>`
   return `<aside class="detail" id="pair-${index}" aria-labelledby="detail-title-${index}"${index === 0 ? '' : ' hidden'}>
       <header class="detail-head"><div><h2 id="detail-title-${index}">${escapeHtml(pair.key)}</h2><p class="note">Selected pair detail</p></div><span class="${badgeClass(pair.state)}">${pairStateLabel(pair.state)}</span></header>
       <div class="pair-large">
@@ -357,12 +362,10 @@ function renderSheet(model: CompareModel): string {
   const context = model.pairs
     .map((pair, index) => ({ pair, index }))
     .filter(({ pair }) => pair.state === 'paired')
-  const renderSection = (
-    label: string,
-    entries: { pair: ComparePair; index: number }[],
-  ): string => entries.length === 0
-    ? ''
-    : `<p class="section-label">${label}</p>
+  const renderSection = (label: string, entries: { pair: ComparePair; index: number }[]): string =>
+    entries.length === 0
+      ? ''
+      : `<p class="section-label">${label}</p>
         <div class="grid">${entries.map(({ pair, index }) => renderPairTile(pair, index)).join('\n')}</div>`
   return `<div class="board">
       <section class="sheet" aria-labelledby="sheet-title">
@@ -390,9 +393,10 @@ function degenerateCopy(model: CompareModel): string {
 
 export function renderCompare(model: CompareModel): string {
   const stateCopy = degenerateCopy(model)
-  const body = model.counts.total === 0
-    ? `<section class="empty" aria-labelledby="empty-title"><h2 id="empty-title">Empty compare</h2><p>${stateCopy}</p></section>`
-    : `${renderControls(model)}${stateCopy === '' ? '' : `<p class="state-copy">${stateCopy}</p>`}${renderSheet(model)}`
+  const body =
+    model.counts.total === 0
+      ? `<section class="empty" aria-labelledby="empty-title"><h2 id="empty-title">Empty compare</h2><p>${stateCopy}</p></section>`
+      : `${renderControls(model)}${stateCopy === '' ? '' : `<p class="state-copy">${stateCopy}</p>`}${renderSheet(model)}`
 
   return `<!doctype html>
 <html lang="en">
