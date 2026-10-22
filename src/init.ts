@@ -103,7 +103,8 @@ export function parseInitArgs(argv: string[]): InitArgs {
       args.dryRun = true
     } else if (argument === '--package-manager') {
       const value = argv[++i]
-      if (value !== 'npm' && value !== 'pnpm' && value !== 'yarn') throw new Error(`invalid package manager: ${value ?? '(missing)'}\n${INIT_USAGE}`)
+      if (value !== 'npm' && value !== 'pnpm' && value !== 'yarn')
+        throw new Error(`invalid package manager: ${value ?? '(missing)'}\n${INIT_USAGE}`)
       args.packageManager = value
     } else {
       throw new Error(`unknown argument: ${argument}\n${INIT_USAGE}`)
@@ -177,31 +178,55 @@ export function findGitRoot(cwd: string): string {
     if (fs.existsSync(path.join(current, '.git'))) return current
     const parent = path.dirname(current)
     if (parent === current) {
-      throw new Error('shotwright init: no containing Git root found; run init inside a Git repository')
+      throw new Error(
+        'shotwright init: no containing Git root found; run init inside a Git repository',
+      )
     }
     current = parent
   }
 }
 
-export function detectPackageManager(cwd: string, pkg: unknown, explicit?: PackageManager): PackageManager {
+export function detectPackageManager(
+  cwd: string,
+  pkg: unknown,
+  explicit?: PackageManager,
+): PackageManager {
   if (explicit) return explicit
-  const locks: Record<PackageManager, string> = { npm: 'package-lock.json', pnpm: 'pnpm-lock.yaml', yarn: 'yarn.lock' }
-  const found = (Object.keys(locks) as PackageManager[]).filter((key) => fs.existsSync(path.join(cwd, locks[key])))
-  const declaration = isObject(pkg) && typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@')[0] : ''
+  const locks: Record<PackageManager, string> = {
+    npm: 'package-lock.json',
+    pnpm: 'pnpm-lock.yaml',
+    yarn: 'yarn.lock',
+  }
+  const found = (Object.keys(locks) as PackageManager[]).filter((key) =>
+    fs.existsSync(path.join(cwd, locks[key])),
+  )
+  const declaration =
+    isObject(pkg) && typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@')[0] : ''
   if (declaration && declaration !== 'npm' && declaration !== 'pnpm' && declaration !== 'yarn') {
     throw new Error(`shotwright init: unsupported packageManager ${declaration}`)
   }
-  if (found.length > 1) throw new Error('shotwright init: ambiguous package-manager lockfiles; pass --package-manager')
+  if (found.length > 1)
+    throw new Error('shotwright init: ambiguous package-manager lockfiles; pass --package-manager')
   if (declaration && found.length === 1 && declaration !== found[0]) {
-    throw new Error('shotwright init: packageManager conflicts with lockfile; pass --package-manager')
+    throw new Error(
+      'shotwright init: packageManager conflicts with lockfile; pass --package-manager',
+    )
   }
   const agent = process.env.npm_config_user_agent?.split('/')[0]
-  const inferred = (declaration as PackageManager) || found[0] || ((agent === 'npm' || agent === 'pnpm' || agent === 'yarn') ? agent : null)
-  if (!inferred) throw new Error('shotwright init: no package manager found; pass --package-manager')
+  const inferred =
+    (declaration as PackageManager) ||
+    found[0] ||
+    (agent === 'npm' || agent === 'pnpm' || agent === 'yarn' ? agent : null)
+  if (!inferred)
+    throw new Error('shotwright init: no package manager found; pass --package-manager')
   return inferred
 }
 
-export function planInit(cwd: string, loadTemplate: (rel: string) => string, explicitManager?: PackageManager): InitPlan {
+export function planInit(
+  cwd: string,
+  loadTemplate: (rel: string) => string,
+  explicitManager?: PackageManager,
+): InitPlan {
   const packagePath = path.join(cwd, 'package.json')
   let packageRaw: string
   try {
@@ -227,11 +252,20 @@ export function planInit(cwd: string, loadTemplate: (rel: string) => string, exp
   const vite = detectVite(packageJson)
   const config = loadTemplate('init/shots.config.ts').replace(
     '  // {{webServerBlock}}',
-    (vite ? viteWebServerBlock : placeholderWebServerBlock).replace('pnpm exec vite', `${managerExec(manager)} vite`),
+    (vite ? viteWebServerBlock : placeholderWebServerBlock).replace(
+      'pnpm exec vite',
+      `${managerExec(manager)} vite`,
+    ),
   )
   const example = loadTemplate('init/shots/example.shots.ts')
-  const workingDirectory = path.relative(root, fs.realpathSync(cwd)).split(path.sep).join('/') || '.'
-  const ciWorkflow = loadTemplate('github/shotwright.yml').replace('working-directory: .', `working-directory: ${workingDirectory === '.' ? '.' : JSON.stringify(workingDirectory)}`).replace('package-manager: pnpm', `package-manager: ${manager}`)
+  const workingDirectory =
+    path.relative(root, fs.realpathSync(cwd)).split(path.sep).join('/') || '.'
+  const ciWorkflow = loadTemplate('github/shotwright.yml')
+    .replace(
+      'working-directory: .',
+      `working-directory: ${workingDirectory === '.' ? '.' : JSON.stringify(workingDirectory)}`,
+    )
+    .replace('package-manager: pnpm', `package-manager: ${manager}`)
   const gitignoreSnippet = loadTemplate('init/gitignore.snippet')
   const skill = renderSkill(loadTemplate('skills/shots-harness/SKILL.md'), manager)
   const plan: InitPlan = {
@@ -246,11 +280,18 @@ export function planInit(cwd: string, loadTemplate: (rel: string) => string, exp
     conflicts: packageMutation.conflicts,
     notices: [],
   }
-  const declaredManager = isObject(packageJson) && typeof packageJson.packageManager === 'string'
-    ? packageJson.packageManager.split('@')[0]
-    : ''
+  const declaredManager =
+    isObject(packageJson) && typeof packageJson.packageManager === 'string'
+      ? packageJson.packageManager.split('@')[0]
+      : ''
   if (explicitManager && declaredManager && explicitManager !== declaredManager) {
-    plan.notices.push('Note: --package-manager ' + explicitManager + ' overrides package.json packageManager ' + declaredManager + '.')
+    plan.notices.push(
+      'Note: --package-manager ' +
+        explicitManager +
+        ' overrides package.json packageManager ' +
+        declaredManager +
+        '.',
+    )
   }
   assertContained(root, cwd)
   planManagedFile(plan, 'shots.config.ts', config)
@@ -506,7 +547,9 @@ function formatInitFailure(
   const failedIndex = result.plan.actions.indexOf(result.failedAction!)
   appendActionSection(lines, 'Not written', result.plan.actions.slice(failedIndex))
   lines.push('')
-  lines.push(`Fix the error and re-run \`${managerExec(result.plan.manager)} shotwright init\` — it will skip what already exists.`)
+  lines.push(
+    `Fix the error and re-run \`${managerExec(result.plan.manager)} shotwright init\` — it will skip what already exists.`,
+  )
   return trimTrailingBlank(lines).join('\n')
 }
 
@@ -537,7 +580,11 @@ function appendUpToDate(lines: string[], entries: string[]): void {
   lines.push(`  ${entries.join(', ')}`)
 }
 
-function appendConflicts(lines: string[], conflicts: ScriptConflict[], manager: PackageManager): void {
+function appendConflicts(
+  lines: string[],
+  conflicts: ScriptConflict[],
+  manager: PackageManager,
+): void {
   if (conflicts.length === 0) return
   for (const conflict of conflicts) {
     lines.push('')
@@ -545,7 +592,9 @@ function appendConflicts(lines: string[], conflicts: ScriptConflict[], manager: 
     lines.push(`      "${conflict.name}": "${conflict.actual}"`)
     lines.push('  shotwright did not change it.')
     lines.push('')
-    lines.push(`  Rename your existing script, or run captures with \`${managerExec(manager)} shotwright run\`.`)
+    lines.push(
+      `  Rename your existing script, or run captures with \`${managerExec(manager)} shotwright run\`.`,
+    )
   }
 }
 
@@ -684,7 +733,8 @@ function managerRun(manager: PackageManager, script: string): string {
 
 function renderSkill(template: string, manager: PackageManager): string {
   if (manager === 'pnpm') return template
-  if (manager === 'yarn') return template.replaceAll('pnpm exec ', 'yarn ').replaceAll('pnpm shots', 'yarn shots')
+  if (manager === 'yarn')
+    return template.replaceAll('pnpm exec ', 'yarn ').replaceAll('pnpm shots', 'yarn shots')
   return template
     .replaceAll('pnpm exec ', 'npm exec -- ')
     .replaceAll('pnpm shots --only', 'npm run shots -- --only')
