@@ -8,7 +8,8 @@ import { chromium, type Browser, type Locator, type Page } from '@playwright/tes
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { generateGallery } from '../../src/gallery/generate.js'
-import { MANIFEST_VERSION, type Manifest, type ShotEntry } from '../../src/manifest.js'
+import type { Manifest, ShotEntry } from '../../src/manifest.js'
+import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
 let browser: Browser
 let root: string
@@ -162,11 +163,8 @@ beforeAll(async () => {
     const name =
       index === 0 ? '<script>inert</script>' : index === 2 ? 'tall-aspect' : `shot-${index + 1}`
     const file = `shots/browser.shots.ts/shot-${index + 1}.png`
-    fs.writeFileSync(
-      path.join(runDir, file),
-      uniquePng(index, index === 2 ? 24 : 32, index === 2 ? 96 : 24),
-    )
-    shots.push({
+    fs.writeFileSync(path.join(runDir, file), uniquePng(index, index === 2 ? 24 : 32, index === 2 ? 96 : 24))
+    shots.push(makeShot({
       name,
       spec: 'browser.shots.ts',
       file,
@@ -177,10 +175,9 @@ beforeAll(async () => {
       durationMs: index,
       video: null,
       trace: null,
-    })
+    }))
   }
-  const manifest: Manifest = {
-    manifestVersion: MANIFEST_VERSION,
+  const manifest: Manifest = makeManifest({
     runId: 'run',
     startedAt: '2026-07-29T00:00:00.000Z',
     finishedAt: '2026-07-29T00:01:00.000Z',
@@ -188,7 +185,7 @@ beforeAll(async () => {
     playwrightVersion: '1.62.0',
     flags: { only: [], video: false, trace: false },
     shots,
-  }
+  })
   fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(manifest))
   galleryUrl = `${pathToFileURL(generateGallery(runDir).galleryPath).href}#debug`
   browser = await chromium.launch({ headless: true })

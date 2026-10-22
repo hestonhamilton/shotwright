@@ -5,7 +5,8 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { generateCompareGallery } from '../../src/gallery/generate-compare.js'
-import { MANIFEST_VERSION, type Manifest, type ShotEntry } from '../../src/manifest.js'
+import type { Manifest, ShotEntry } from '../../src/manifest.js'
+import { makeManifest, makeShot } from '../fixtures/manifest.js'
 import { makePng } from '../fixtures/png.js'
 
 const tmpDirs: string[] = []
@@ -23,7 +24,7 @@ afterEach(() => {
 })
 
 function entry(name: string, spec: string, index: number): ShotEntry {
-  return {
+  return makeShot({
     name,
     spec,
     file: `shots/${spec}/${name}.png`,
@@ -34,12 +35,11 @@ function entry(name: string, spec: string, index: number): ShotEntry {
     durationMs: 50 + index,
     video: null,
     trace: null,
-  }
+  })
 }
 
 function manifest(runId: string, shots: ShotEntry[]): Manifest {
-  return {
-    manifestVersion: MANIFEST_VERSION,
+  return makeManifest({
     runId,
     startedAt: '2026-07-31T00:00:00.000Z',
     finishedAt: '2026-07-31T00:00:10.000Z',
@@ -47,7 +47,7 @@ function manifest(runId: string, shots: ShotEntry[]): Manifest {
     playwrightVersion: '1.62.0',
     flags: { only: [], video: false, trace: false },
     shots,
-  }
+  })
 }
 
 function writeRun(runDir: string, value: Manifest, options: { omit?: string[] } = {}): void {

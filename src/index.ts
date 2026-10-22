@@ -21,21 +21,13 @@ export type { Manifest, ShotEntry, Viewport } from './manifest.js'
 
 let configProbeCounter = 0
 
-export interface ShotsConfigOptions {
-  /** Spec directory (relative to the config file). Default: 'shots'. */
+export type HarnessOwnedKeys = 'testDir' | 'testMatch' | 'retries' | 'reporter' | 'outputDir'
+export type ShotsConfigOptions = Omit<PlaywrightTestConfig, HarnessOwnedKeys | 'use'> & {
   shotsDir?: string
-  /** Where run directories are created (relative to cwd). Default: 'shots-output'. */
   outputDir?: string
-  /** Default project viewport. Default: 1440×960. */
   viewport?: { width: number; height: number }
-  /** Default project device scale factor. Default: 2. */
   deviceScaleFactor?: number
-  /** Passthrough `use` (e.g. baseURL, the executablePath escape hatch). Harness invariants win. */
-  use?: PlaywrightTestConfig['use']
-  /** Passthrough, untouched — shotwright is stack-agnostic. */
-  webServer?: PlaywrightTestConfig['webServer']
-  /** Replaces the default single 'shots' Desktop Chrome project. */
-  projects?: PlaywrightTestConfig['projects']
+  use?: Omit<NonNullable<PlaywrightTestConfig['use']>, 'screenshot' | 'video' | 'trace'>
 }
 
 export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTestConfig {
@@ -54,15 +46,25 @@ export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTest
       testMatch: [],
     })
   }
+  if (process.env.SHOTWRIGHT_RUN !== '1' && !process.argv.includes('--list')) {
+    throw new Error('shotwright: use `shotwright run` to execute capture specs')
+  }
   if (process.env.SHOTWRIGHT_RUN === '1' && !process.env.SHOTWRIGHT_RUN_DIR) {
     process.env.SHOTWRIGHT_RUN_DIR = createRunDir(outputDir).runDir
+    const runDirFile = process.env.SHOTWRIGHT_RUN_DIR_FILE
+    if (runDirFile) {
+      const temp = `${runDirFile}.${process.pid}.tmp`
+      try { fs.writeFileSync(temp, process.env.SHOTWRIGHT_RUN_DIR); fs.renameSync(temp, runDirFile) }
+      finally { fs.rmSync(temp, { force: true }) }
+    }
   }
   const runDir = process.env.SHOTWRIGHT_RUN_DIR
 
   const config: PlaywrightTestConfig = {
+    ...opts,
     testDir: opts.shotsDir ?? 'shots',
     testMatch: '**/*.shots.ts',
-    fullyParallel: true,
+    fullyParallel: opts.fullyParallel ?? false,
     retries: 0,
     reporter: [['list'], [fileURLToPath(new URL('./reporter.js', import.meta.url))]],
     use: {
@@ -71,13 +73,18 @@ export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTest
       video: process.env.SHOTWRIGHT_VIDEO === '1' ? 'on' : 'off',
       trace: process.env.SHOTWRIGHT_TRACE === '1' ? 'on' : 'off',
     },
-    projects: opts.projects ?? [
+    projects: opts.projects?.map(project => ({ ...project, use: { ...project.use, screenshot: 'off',
+      video: process.env.SHOTWRIGHT_VIDEO === '1' ? 'on' : 'off',
+      trace: process.env.SHOTWRIGHT_TRACE === '1' ? 'on' : 'off' } })) ?? [
       {
         name: 'shots',
         use: {
           ...devices['Desktop Chrome'],
           viewport: opts.viewport ?? { width: 1440, height: 960 },
           deviceScaleFactor: opts.deviceScaleFactor ?? 2,
+          screenshot: 'off',
+          video: process.env.SHOTWRIGHT_VIDEO === '1' ? 'on' : 'off',
+          trace: process.env.SHOTWRIGHT_TRACE === '1' ? 'on' : 'off',
         },
       },
     ],

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
-import { assembleManifest, type AssembleInput, type ShotSidecar } from '../../src/manifest.js'
+import {
+  assembleManifest,
+  shotKey,
+  type AssembleInput,
+  type ShotSidecar,
+} from '../../src/manifest.js'
 
 function sidecar(overrides: Partial<ShotSidecar>): ShotSidecar {
   return {
@@ -12,7 +20,7 @@ function sidecar(overrides: Partial<ShotSidecar>): ShotSidecar {
     fullPage: true,
     capturedAt: '2026-07-29T00:00:00.000Z',
     durationMs: 100,
-    testId: 't1',
+    kind: 'shot', checked: false, retry: 0, testId: 't1',
     ...overrides,
   }
 }
@@ -29,11 +37,16 @@ function input(
     playwrightVersion: '1.62.0',
     flags: { only: [], video: false, trace: false },
     sidecars,
-    artifacts,
+    artifacts, runDir: '/tmp/shotwright-unit', status:'passed',
+    publication:{gallery:{ok:true},evidence:{ok:true}}, failures:[],
+    tests:[...new Set(sidecars.map(s => s.testId))].map(id => ({id,title:id,spec:'a.shots.ts',project:'shots',status:'passed' as const,retry:0,durationMs:1})),
   }
 }
 
 describe('assembleManifest', () => {
+  it('length-prefixed composite shot keys cannot alias across delimiter boundaries', () => {
+    expect(shotKey('a:b','c')).not.toBe(shotKey('a','b:c'))
+  })
   it('an empty run assembles to shots: []', () => {
     expect(assembleManifest(input([])).shots).toEqual([])
   })
@@ -49,13 +62,44 @@ describe('assembleManifest', () => {
     expect(shots.map((s) => s.name)).toEqual(['early', 'late', 'z'])
   })
 
-  it('duplicate shot names are a run-level error', () => {
+  it('same name across specs has distinct composite identity', () => {
+    const shots=assembleManifest(input([sidecar({name:'shared',spec:'a.shots.ts'}),sidecar({name:'shared',spec:'b.shots.ts',testId:'t2'})])).shots
+    expect(shots.map(s=>s.spec)).toEqual(['a.shots.ts','b.shots.ts'])
+  })
+
+  it('final retry removes stale capture and retry recapture wins', () => {
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'shotwright-retry-'))
+    try {
+      const old=sidecar({name:'old',retry:0,file:'shots/a/old.png'})
+      const newer=sidecar({name:'new',retry:1,file:'shots/a/new.png'})
+      for(const s of [old,newer]) { fs.mkdirSync(path.dirname(path.join(dir,s.file)),{recursive:true});fs.writeFileSync(path.join(dir,s.file),s.name) }
+      const value=input([old,newer]);value.runDir=dir;value.tests[0]!.retry=1
+      const result=assembleManifest(value)
+      expect(result.shots.map(s=>s.name)).toEqual(['new'])
+      expect(fs.existsSync(path.join(dir,old.file))).toBe(false)
+      expect(fs.readFileSync(path.join(dir,newer.file),'utf8')).toBe('new')
+    } finally { fs.rmSync(dir,{recursive:true,force:true}) }
+  })
+
+  it('retry-1 recapture owns the same path and final sidecar metadata', () => {
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'shotwright-recapture-'))
+    try {
+      const old=sidecar({name:'same',retry:0,file:'shots/a/same.png',capturedAt:'2026-07-29T00:00:00.000Z'})
+      const newer=sidecar({name:'same',retry:1,file:'shots/a/same.png',capturedAt:'2026-07-29T00:00:01.000Z',checked:true})
+      fs.mkdirSync(path.dirname(path.join(dir,newer.file)),{recursive:true})
+      fs.writeFileSync(path.join(dir,newer.file),'retry-one')
+      const value=input([old,newer]);value.runDir=dir;value.tests[0]!.retry=1
+      const result=assembleManifest(value)
+      expect(result.shots).toHaveLength(1)
+      expect(result.shots[0]).toMatchObject({retry:1,checked:true,capturedAt:newer.capturedAt})
+      expect(fs.readFileSync(path.join(dir,newer.file),'utf8')).toBe('retry-one')
+    } finally {fs.rmSync(dir,{recursive:true,force:true})}
+  })
+
+  it('duplicate within a spec is a run-level error', () => {
     expect(() =>
       assembleManifest(
-        input([
-          sidecar({ name: 'dup', spec: 'a.shots.ts' }),
-          sidecar({ name: 'dup', spec: 'b.shots.ts' }),
-        ]),
+        input([sidecar({ name: 'dup', spec: 'a.shots.ts' }), sidecar({ name: 'dup', spec: 'a.shots.ts' })]),
       ),
     ).toThrow(/duplicate shot name "dup"/)
   })

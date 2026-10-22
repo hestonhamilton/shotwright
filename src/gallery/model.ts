@@ -2,7 +2,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { MANIFEST_VERSION, type Manifest, type ShotEntry, type Viewport } from '../manifest.js'
+import {
+  MANIFEST_VERSION,
+  type Manifest,
+  type ShotEntry,
+  type Viewport,
+  shotKey,
+} from '../manifest.js'
 
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const crc32Table = new Uint32Array(256)
@@ -49,6 +55,7 @@ export interface GalleryModel {
   manifestByteLength: number
   specs: GallerySpec[]
   diagnostics: GalleryDiagnostic[]
+  sourceManifestVersion: 1 | 2
 }
 
 export class GalleryManifestError extends Error {
@@ -101,7 +108,7 @@ function viewport(value: unknown, label: string): Viewport | null {
   return { width, height }
 }
 
-function shot(value: unknown, index: number): ShotEntry {
+function shot(value: unknown, index: number, version: 1 | 2): ShotEntry {
   const label = `shots[${index}]`
   const candidate = record(value, label)
   return {
@@ -118,49 +125,74 @@ function shot(value: unknown, index: number): ShotEntry {
     durationMs: number(candidate.durationMs, `${label}.durationMs`),
     video: nullableString(candidate.video, `${label}.video`),
     trace: nullableString(candidate.trace, `${label}.trace`),
+    testId: version === 1 ? null : nullableString(candidate.testId, `${label}.testId`),
+    checked: version === 1 ? false : boolean(candidate.checked, `${label}.checked`),
+    retry: version === 1 ? 0 : integer(candidate.retry, `${label}.retry`),
   }
 }
 
+function integer(value: unknown, label: string): number {
+  const n = number(value, label)
+  if (!Number.isInteger(n)) throw new GalleryManifestError(`${label} must be an integer`)
+  return n
+}
+function array(value: unknown, label: string): unknown[] {
+  if (!Array.isArray(value)) throw new GalleryManifestError(`${label} must be an array`)
+  return value
+}
+function publication(value: unknown, label: string): {ok:boolean; error?:string} {
+  const v = record(value, label), ok = boolean(v.ok, `${label}.ok`)
+  if (ok && v.error !== undefined) throw new GalleryManifestError(`${label}.error forbidden when ok`)
+  if (!ok && v.error === undefined) throw new GalleryManifestError(`${label}.error required when failed`)
+  return v.error === undefined ? {ok} : {ok, error:string(v.error, `${label}.error`)}
+}
 export function validateManifest(value: unknown, expectedRunId?: string): Manifest {
   const candidate = record(value, 'manifest')
-  if (candidate.manifestVersion !== MANIFEST_VERSION) {
-    throw new GalleryManifestError(`manifestVersion must be ${MANIFEST_VERSION}`)
-  }
+  const version = candidate.manifestVersion
+  if (version !== 1 && version !== 2) throw new GalleryManifestError('manifestVersion must be 1 or 2')
   const runId = string(candidate.runId, 'runId')
-  if (expectedRunId !== undefined && runId !== expectedRunId) {
-    throw new GalleryManifestError(
-      `runId "${runId}" does not match run directory "${expectedRunId}"`,
-    )
-  }
+  if (expectedRunId !== undefined && runId !== expectedRunId)
+    throw new GalleryManifestError(`runId "${runId}" does not match run directory "${expectedRunId}"`)
   const flags = record(candidate.flags, 'flags')
-  if (!Array.isArray(flags.only) || !flags.only.every((item) => typeof item === 'string')) {
+  if (!Array.isArray(flags.only) || !flags.only.every(x => typeof x === 'string'))
     throw new GalleryManifestError('flags.only must be an array of strings')
-  }
-  if (!Array.isArray(candidate.shots)) {
-    throw new GalleryManifestError('shots must be an array')
-  }
-  const shots = candidate.shots.map(shot)
+  const shots = array(candidate.shots, 'shots').map((v,i) => shot(v,i,version))
   const seen = new Set<string>()
   for (const entry of shots) {
-    if (seen.has(entry.name)) {
-      throw new GalleryManifestError(`duplicate shot name "${entry.name}"`)
-    }
-    seen.add(entry.name)
+    const key = shotKey(entry.spec, entry.name)
+    if (seen.has(key)) throw new GalleryManifestError(`duplicate shot name "${entry.name}" in ${entry.spec}`)
+    seen.add(key)
   }
-  return {
-    manifestVersion: MANIFEST_VERSION,
-    runId,
-    startedAt: string(candidate.startedAt, 'startedAt'),
-    finishedAt: string(candidate.finishedAt, 'finishedAt'),
-    shotwrightVersion: string(candidate.shotwrightVersion, 'shotwrightVersion'),
-    playwrightVersion: string(candidate.playwrightVersion, 'playwrightVersion'),
-    flags: {
-      only: [...flags.only] as string[],
-      video: boolean(flags.video, 'flags.video'),
-      trace: boolean(flags.trace, 'flags.trace'),
-    },
-    shots,
-  }
+  const status = version === 1 ? 'unknown' : string(candidate.status, 'status')
+  if (!['passed','failed','timedout','interrupted','unknown'].includes(status) || (version === 2 && status === 'unknown'))
+    throw new GalleryManifestError('status is invalid')
+  const pub = version === 1 ? {gallery:{ok:true},evidence:{ok:true}} : record(candidate.publication, 'publication')
+  const tests = version === 1 ? [] : array(candidate.tests,'tests').map((v,i) => {
+    const label=`tests[${i}]`, t=record(v,label), state=string(t.status,`${label}.status`)
+    if (!['passed','failed','timedOut','skipped','interrupted'].includes(state)) throw new GalleryManifestError(`${label}.status invalid`)
+    return {id:string(t.id,`${label}.id`),title:string(t.title,`${label}.title`),spec:string(t.spec,`${label}.spec`),
+      project:string(t.project,`${label}.project`),status:state as Manifest['tests'][number]['status'],
+      retry:integer(t.retry,`${label}.retry`),durationMs:number(t.durationMs,`${label}.durationMs`),
+      ...(t.error===undefined?{}:{error:{message:string(record(t.error,`${label}.error`).message,`${label}.error.message`)}})}
+  })
+  const artifacts = version === 1 ? [] : array(candidate.artifacts,'artifacts').map((v,i) => {
+    const label=`artifacts[${i}]`, a=record(v,label)
+    return {name:string(a.name,`${label}.name`),spec:string(a.spec,`${label}.spec`),file:string(a.file,`${label}.file`),
+      contentType:string(a.contentType,`${label}.contentType`),bytes:integer(a.bytes,`${label}.bytes`),testId:string(a.testId,`${label}.testId`)}
+  })
+  const failures = version === 1 ? [] : array(candidate.failures,'failures').map((v,i) => {
+    const label=`failures[${i}]`, f=record(v,label)
+    return {testId:string(f.testId,`${label}.testId`),files:array(f.files,`${label}.files`).map((v,j) => {
+      const l=`${label}.files[${j}]`, a=record(v,l)
+      return {name:string(a.name,`${l}.name`),contentType:string(a.contentType,`${l}.contentType`),file:string(a.file,`${l}.file`)}
+    })}
+  })
+  return {manifestVersion:MANIFEST_VERSION,runId,startedAt:string(candidate.startedAt,'startedAt'),
+    finishedAt:string(candidate.finishedAt,'finishedAt'),shotwrightVersion:string(candidate.shotwrightVersion,'shotwrightVersion'),
+    playwrightVersion:string(candidate.playwrightVersion,'playwrightVersion'),
+    flags:{only:[...flags.only] as string[],video:boolean(flags.video,'flags.video'),trace:boolean(flags.trace,'flags.trace')},
+    status:status as Manifest['status'],publication:{gallery:publication(pub.gallery,'publication.gallery'),
+      evidence:publication(pub.evidence,'publication.evidence')},tests,shots,artifacts,failures}
 }
 
 export function validateRelativePath(value: string, label = 'path'): string[] {
@@ -190,9 +222,14 @@ function containedFile(runDir: string, relativePath: string): string {
   }
   let target: string
   try {
+    for (let i=1;i<=segments.length;i++) {
+      if (fs.lstatSync(path.join(realRunDir,...segments.slice(0,i))).isSymbolicLink())
+        throw new Error('referenced file escapes the run directory via symlink')
+    }
     target = fs.realpathSync(path.join(realRunDir, ...segments))
-  } catch {
-    throw new Error('referenced file is missing or unreadable')
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('via symlink')) throw error
+    throw new Error('referenced file is missing or unreadable', { cause: error })
   }
   const relative = path.relative(realRunDir, target)
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
@@ -304,8 +341,10 @@ export function loadGalleryModel(runDir: string): GalleryModel {
   } catch {
     throw new GalleryManifestError('manifest.json is not valid JSON')
   }
-  const manifest = validateManifest(parsed, path.basename(runDir))
+  return buildGalleryModel(runDir, validateManifest(parsed, path.basename(runDir)), manifestBytes.byteLength, (parsed as {manifestVersion:1|2}).manifestVersion)
+}
 
+export function buildGalleryModel(runDir: string, manifest: Manifest, manifestByteLength = Buffer.byteLength(JSON.stringify(manifest, null, 2) + '\n'), sourceManifestVersion: 1 | 2 = 2): GalleryModel {
   // Validate every consumer-controlled path before reading any referenced file.
   for (const [index, entry] of manifest.shots.entries()) {
     validateRelativePath(entry.file, `shots[${index}].file`)
@@ -313,8 +352,14 @@ export function loadGalleryModel(runDir: string): GalleryModel {
     if (entry.trace !== null) validateRelativePath(entry.trace, `shots[${index}].trace`)
   }
 
+  for (const [index, entry] of manifest.artifacts.entries()) validateRelativePath(entry.file, `artifacts[${index}].file`)
+  for (const [i, failure] of manifest.failures.entries()) for (const [j, entry] of failure.files.entries())
+    validateRelativePath(entry.file, `failures[${i}].files[${j}].file`)
+
   const diagnostics: GalleryDiagnostic[] = []
   const artifactCache = new Map<string, ArtifactReference>()
+  for (const entry of manifest.artifacts) readArtifact(runDir, entry.file, diagnostics)
+  for (const failure of manifest.failures) for (const entry of failure.files) readArtifact(runDir, entry.file, diagnostics)
   const galleryShots = manifest.shots.map((entry): GalleryShot => {
     let image: PngModel | null = null
     let imageError: string | null = null
@@ -355,8 +400,33 @@ export function loadGalleryModel(runDir: string): GalleryModel {
   }
   return {
     manifest,
-    manifestByteLength: manifestBytes.byteLength,
+    manifestByteLength,
+    sourceManifestVersion,
     specs,
     diagnostics,
   }
+}
+
+export interface CompareOptions { threshold: number; includeAA: boolean }
+export interface CompareVerdict {
+  state: 'identical' | 'similar' | 'changed' | 'size-changed' | 'unreadable'
+  differentPixels: number | null; totalPixels: number | null; ratio: number | null
+  aSize: Viewport | null; bSize: Viewport | null; diffPng: Buffer | null; error?: string
+}
+export function compareImages(_aPng: Buffer, _bPng: Buffer, _opts: CompareOptions): CompareVerdict {
+  throw new Error('not implemented')
+}
+export type ComparePairState = 'identical' | 'similar' | 'changed' | 'size-changed' | 'added' | 'removed' | 'unreadable'
+export interface CompareGenerationResult {
+  outputFile: string; counts: Record<ComparePairState, number>
+  gate: { nonParity: number; failOnChange: boolean }
+}
+export { shotKey }
+
+export interface CompareModel {
+  a: GalleryModel
+  b: GalleryModel
+  pairs: Array<{ key: string; state: ComparePairState; spec: string; name: string }>
+  counts: Record<ComparePairState, number>
+  diagnostics: GalleryDiagnostic[]
 }

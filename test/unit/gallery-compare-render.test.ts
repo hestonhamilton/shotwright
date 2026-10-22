@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest'
 import { buildCompareModel, type CompareModel } from '../../src/gallery/compare-model.js'
 import type { GalleryModel, GalleryShot, PngModel } from '../../src/gallery/model.js'
 import { renderCompare } from '../../src/gallery/render-compare.js'
-import { MANIFEST_VERSION, type Manifest, type ShotEntry } from '../../src/manifest.js'
+import type { Manifest, ShotEntry } from '../../src/manifest.js'
+import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
 function entry(name: string, spec: string, index: number): ShotEntry {
-  return {
+  return makeShot({
     name,
     spec,
     file: `shots/${name}.png`,
@@ -17,7 +18,7 @@ function entry(name: string, spec: string, index: number): ShotEntry {
     durationMs: 50 + index,
     video: null,
     trace: null,
-  }
+  })
 }
 
 function galleryShot(
@@ -45,8 +46,7 @@ function galleryShot(
 }
 
 function gallery(runId: string, galleryShots: GalleryShot[]): GalleryModel {
-  const manifest: Manifest = {
-    manifestVersion: MANIFEST_VERSION,
+  const manifest: Manifest = makeManifest({
     runId,
     startedAt: '2026-07-31T00:00:00.000Z',
     finishedAt: '2026-07-31T00:00:10.000Z',
@@ -54,12 +54,12 @@ function gallery(runId: string, galleryShots: GalleryShot[]): GalleryModel {
     playwrightVersion: '1.62.0',
     flags: { only: ['theme'], video: false, trace: false },
     shots: galleryShots.map((shot) => shot.entry),
-  }
+  })
   const specs = [...new Set(galleryShots.map((shot) => shot.entry.spec))].map((spec) => ({
     name: spec,
     shots: galleryShots.filter((shot) => shot.entry.spec === spec),
   }))
-  return { manifest, manifestByteLength: 2_155, specs, diagnostics: [] }
+  return { manifest, manifestByteLength: 2_155, specs, diagnostics: [], sourceManifestVersion: 2 }
 }
 
 function mixedModel(): CompareModel {

@@ -2,8 +2,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { loadGalleryModel, type GalleryDiagnostic } from './model.js'
+import { buildGalleryModel, loadGalleryModel, type GalleryDiagnostic } from './model.js'
 import { renderGallery } from './render.js'
+import type { Manifest } from '../manifest.js'
 
 let generationCounter = 0
 
@@ -18,11 +19,11 @@ export function formatGalleryDiagnostics(diagnostics: GalleryDiagnostic[]): stri
     .join('\n')
 }
 
-export function generateGallery(runDir: string): GalleryGenerationResult {
+export function generateGallery(runDir: string, manifest?: Manifest): GalleryGenerationResult {
   if (process.env.SHOTWRIGHT_INJECT_GALLERY_FAILURE === '1') {
     throw new Error('shotwright gallery: injected generator failure')
   }
-  const model = loadGalleryModel(runDir)
+  const model = manifest ? buildGalleryModel(runDir, manifest) : loadGalleryModel(runDir)
   const html = renderGallery(model)
   const galleryPath = path.join(runDir, 'gallery.html')
   const tempPath = path.join(runDir, `.gallery.${process.pid}-${++generationCounter}.tmp`)

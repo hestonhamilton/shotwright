@@ -1,121 +1,125 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The shotwright reporter — the manifest's single writer. Collects the per-shot
-// sidecars written by workers, maps each test's video/trace attachments into the
-// run layout, and publishes manifest.json atomically in onEnd. The `latest`
-// symlink flips only after a successful publish.
-
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-
-import type {
-  FullConfig,
-  FullResult,
-  Reporter,
-  TestCase,
-  TestResult,
-} from '@playwright/test/reporter'
-
+import type { FullConfig, FullResult, Reporter, TestCase, TestResult } from '@playwright/test/reporter'
 import { parseOnly } from './filter.js'
 import { formatGalleryDiagnostics, generateGallery } from './gallery/generate.js'
-import { assembleManifest, type TestArtifacts } from './manifest.js'
+import { assembleManifest, readSidecars, type FailureEntry, type TestArtifacts, type TestEntry } from './manifest.js'
 import { publishManifest, updateLatestSymlink, SIDECAR_DIR } from './runs.js'
-import { readSidecars } from './manifest.js'
 import { shotwrightVersion } from './version.js'
+import { storageSpec } from './capture.js'
 
+interface FinalResult { test: TestCase; result: TestResult }
 export default class ShotwrightReporter implements Reporter {
   private startedAt = ''
   private playwrightVersion = ''
-  private artifactSources = new Map<string, { video: string | null; trace: string | null }>()
-
-  onBegin(config: FullConfig): void {
-    this.startedAt = new Date().toISOString()
-    this.playwrightVersion = config.version
-  }
-
+  private finals = new Map<string, FinalResult>()
+  onBegin(config: FullConfig): void { this.startedAt = new Date().toISOString(); this.playwrightVersion = config.version }
   onTestEnd(test: TestCase, result: TestResult): void {
-    const video = result.attachments.find((a) => a.name === 'video' && a.path)?.path ?? null
-    const trace = result.attachments.find((a) => a.name === 'trace' && a.path)?.path ?? null
-    if (video || trace) this.artifactSources.set(test.id, { video, trace })
+    const prior = this.finals.get(test.id)
+    if (!prior || result.retry >= prior.result.retry) this.finals.set(test.id, { test, result })
   }
-
   async onEnd(result: FullResult): Promise<void> {
     const runDir = process.env.SHOTWRIGHT_RUN_DIR
-    if (!runDir) {
-      console.warn('shotwright reporter: SHOTWRIGHT_RUN_DIR not set — skipping manifest assembly')
-      return
+    if (!runDir) { console.warn('shotwright reporter: SHOTWRIGHT_RUN_DIR not set — skipping manifest assembly'); return }
+    const evidenceErrors: string[] = []
+    let sidecars
+    try { sidecars = readSidecars(runDir) } catch (error) {
+      fs.rmSync(path.join(runDir,SIDECAR_DIR),{recursive:true,force:true})
+      throw error
     }
-    const sidecars = readSidecars(runDir)
-
-    // Copy per-test videos/traces into the run layout, keyed by testId.
+    const tests: TestEntry[] = []
+    const failures: FailureEntry[] = []
     const artifacts: TestArtifacts = new Map()
-    for (const [testId, src] of this.artifactSources) {
-      const entry = { video: null as string | null, trace: null as string | null }
-      if (src.video && fs.existsSync(src.video)) {
-        entry.video = `video/${testId}${path.extname(src.video) || '.webm'}`
-        this.copyIn(runDir, src.video, entry.video)
-      }
-      if (src.trace && fs.existsSync(src.trace)) {
-        entry.trace = `trace/${testId}${path.extname(src.trace) || '.zip'}`
-        this.copyIn(runDir, src.trace, entry.trace)
-      }
-      artifacts.set(testId, entry)
-    }
-
-    const manifest = assembleManifest({
-      runId: path.basename(runDir),
-      startedAt: this.startedAt,
-      finishedAt: new Date().toISOString(),
-      shotwrightVersion: shotwrightVersion(),
-      playwrightVersion: this.playwrightVersion,
-      flags: {
-        only: parseOnly(process.env.SHOTWRIGHT_ONLY),
-        video: process.env.SHOTWRIGHT_VIDEO === '1',
-        trace: process.env.SHOTWRIGHT_TRACE === '1',
-      },
-      sidecars,
-      artifacts,
-    })
-    publishManifest(runDir, manifest)
-
-    let galleryFailure: string | null = null
+    const prefixes = new Map<string,string>()
     try {
-      const generated = generateGallery(runDir)
-      if (generated.diagnostics.length > 0) {
-        galleryFailure = formatGalleryDiagnostics(generated.diagnostics)
-      }
-    } catch (error) {
-      galleryFailure = error instanceof Error ? error.message : String(error)
-    }
-
-    try {
-      if (result.status === 'passed') {
-        updateLatestSymlink(path.dirname(runDir), path.basename(runDir))
+      for (const [id, {test,result:attempt}] of this.finals) {
+        const spec = path.relative(test.parent.project()?.testDir ?? '', test.location.file).split(path.sep).join('/')
+        const project = test.parent.project()?.name ?? ''
+        const title = test.title
+        const errorMessage = attempt.error?.message?.replace(new RegExp(String.fromCharCode(27)+'\\[[0-9;]*m','g'),'').split('\n')[0]
+        tests.push({id,title,spec,project,status:attempt.status,retry:attempt.retry,
+          durationMs:attempt.duration,...(errorMessage?{error:{message:errorMessage}}:{})})
+        const stem = this.stem(spec,title,id,project,prefixes)
+        const media = {video:null as string|null,trace:null as string|null}
+        const failed = attempt.status !== 'passed' && attempt.status !== 'skipped'
+        const failure: FailureEntry = {testId:id,files:[]}
+        const names = new Map<string,number>()
+        for (const attachment of attempt.attachments) {
+          const category = attachment.name === 'video' ? 'video' : attachment.name === 'trace' ? 'trace' : 'failure'
+          if (category === 'failure' && !failed) continue
+          const suffix = category === 'video' ? '.webm' : category === 'trace' ? '.zip' : ''
+          const basename = this.attachmentName(attachment.name, attachment.path, names)
+          const file = category === 'failure' ? `failures/${stem}/${basename}` : `${category}/${stem}${suffix}`
+          try {
+            const dest = path.join(runDir,file)
+            fs.mkdirSync(path.dirname(dest),{recursive:true})
+            if (attachment.path) fs.copyFileSync(attachment.path,dest)
+            else if (attachment.body) fs.writeFileSync(dest,attachment.body)
+            else throw new Error('attachment has no bytes')
+            if (category === 'video') media.video = file
+            if (category === 'trace') media.trace = file
+            if (failed) failure.files.push({name:attachment.name,contentType:attachment.contentType,file})
+            if (attachment.name === 'error-context') console.error(`shotwright: copied error-context: ${path.join(runDir,file)}`)
+          } catch (error) { evidenceErrors.push(`${file}: ${error instanceof Error ? error.message : String(error)}`) }
+        }
+        artifacts.set(id,media)
+        if (failed) failures.push(failure)
       }
     } finally {
-      // Staging areas are not part of the contract — drop them. (.pw is swept in
-      // onExit instead: the runner writes .last-run.json into outputDir after onEnd.)
-      fs.rmSync(path.join(runDir, SIDECAR_DIR), { recursive: true, force: true })
+      try { fs.rmSync(path.join(runDir,SIDECAR_DIR),{recursive:true,force:true}) }
+      catch (error) { evidenceErrors.push(`sidecar cleanup: ${error instanceof Error ? error.message : String(error)}`) }
     }
-
+    const evidence = evidenceErrors.length ? {ok:false,error:evidenceErrors.join('; ')} : {ok:true}
+    // Sidecars are held in memory; cleanup precedes publication.
+    const manifest = assembleManifest({runDir,runId:path.basename(runDir),startedAt:this.startedAt,
+      finishedAt:new Date().toISOString(),shotwrightVersion:shotwrightVersion(),
+      playwrightVersion:this.playwrightVersion,
+      flags:{only:parseOnly(process.env.SHOTWRIGHT_ONLY),video:process.env.SHOTWRIGHT_VIDEO==='1',trace:process.env.SHOTWRIGHT_TRACE==='1'},
+      status:result.status,publication:{evidence,gallery:{ok:true}},tests,failures,sidecars,artifacts})
+    let galleryError: string | null = null
+    try {
+      const generated = generateGallery(runDir,manifest)
+      if (generated.diagnostics.length) galleryError = formatGalleryDiagnostics(generated.diagnostics)
+    } catch (error) { galleryError = error instanceof Error ? error.message : String(error) }
+    if (galleryError) {
+      manifest.publication.gallery={ok:false,error:galleryError}
+      fs.rmSync(path.join(runDir,'gallery.html'),{force:true})
+      // A failed gallery still has a manifest for run discovery.
+    }
+    try { publishManifest(runDir,manifest) }
+    catch (error) {
+      fs.rmSync(path.join(runDir,'gallery.html'),{force:true})
+      fs.rmSync(path.join(runDir,'manifest.json'),{force:true})
+      fs.rmSync(path.join(runDir,'.manifest.tmp'),{force:true})
+      throw error
+    }
+    if (result.status==='passed' && manifest.publication.gallery.ok && manifest.publication.evidence.ok)
+      updateLatestSymlink(path.dirname(runDir),path.basename(runDir))
     console.log(`shotwright: ${manifest.shots.length} shot(s) → ${runDir}`)
-    if (galleryFailure !== null) {
-      console.error(galleryFailure)
-      throw new Error(galleryFailure)
-    }
+    if (galleryError) console.error(galleryError)
+    if (evidenceErrors.length) console.error(evidenceErrors.join('\n'))
   }
-
   async onExit(): Promise<void> {
-    const runDir = process.env.SHOTWRIGHT_RUN_DIR
-    if (runDir) fs.rmSync(path.join(runDir, '.pw'), { recursive: true, force: true })
+    const runDir=process.env.SHOTWRIGHT_RUN_DIR
+    if (runDir) try { fs.rmSync(path.join(runDir,'.pw'),{recursive:true,force:true}) }
+    catch(error) { console.error(`shotwright: staging cleanup failed: ${error instanceof Error?error.message:String(error)}`) }
   }
-
-  private copyIn(runDir: string, src: string, relDest: string): void {
-    const dest = path.join(runDir, relDest)
-    fs.mkdirSync(path.dirname(dest), { recursive: true })
-    fs.copyFileSync(src, dest)
+  private stem(spec:string,title:string,id:string,project:string,prefixes:Map<string,string>):string {
+    const digest=crypto.createHash('sha256').update(id).update('\0').update(project).digest('hex')
+    let short=digest.slice(0,12)
+    if (prefixes.has(short) && prefixes.get(short)!==digest) short=digest
+    prefixes.set(short,digest)
+    const slug=title.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,48)||'test'
+    return `${storageSpec(spec)}/${slug}-${short}`
   }
-
-  printsToStdio(): boolean {
-    return false
+  private attachmentName(name:string,source:string|undefined,names:Map<string,number>):string {
+    const ext=path.extname(source ?? '').toLowerCase().replace(/[^.a-z0-9]/g,'')
+    const slug=name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,48)||'attachment'
+    const base=`${slug}${ext}`
+    const count=(names.get(base)??0)+1; names.set(base,count)
+    return count===1?base:`${slug}-${count}${ext}`
   }
+  printsToStdio():boolean { return false }
 }

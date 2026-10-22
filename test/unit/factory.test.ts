@@ -2,9 +2,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { defineShotsConfig } from '../../src/index.js'
+
+import type { ShotsConfigOptions } from '../../src/index.js'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -13,12 +15,29 @@ afterEach(() => {
 })
 
 describe('defineShotsConfig', () => {
+  beforeEach(() => { vi.stubEnv('SHOTWRIGHT_RUN', '1') })
+  it('passes setup, workers, expect and project use while enforcing owned capture keys', () => {
+    const options: ShotsConfigOptions={globalSetup:'./setup.ts',workers:1,expect:{timeout:1234},
+      projects:[{name:'custom',use:{baseURL:'http://example.test',video:'on',trace:'on',screenshot:'on'}}]}
+    const config=defineShotsConfig(options)
+    expect(config.globalSetup).toBe('./setup.ts')
+    expect(config.workers).toBe(1)
+    expect(config.expect?.timeout).toBe(1234)
+    expect(config.projects?.[0]?.use).toMatchObject({baseURL:'http://example.test',video:'off',trace:'off',screenshot:'off'})
+    expect(config.reporter).toBeDefined()
+  })
+  it('guard refuses bare config evaluation before run directory creation', () => {
+    const out=fs.mkdtempSync(path.join(os.tmpdir(),'shotwright-guard-'))
+    try {vi.stubEnv('SHOTWRIGHT_RUN','0');expect(()=>defineShotsConfig({outputDir:out})).toThrow(/shotwright run/)
+      expect(fs.readdirSync(out)).toEqual([])} finally {fs.rmSync(out,{recursive:true,force:true})}
+  })
+
   it('sets the harness invariants', () => {
     const config = defineShotsConfig()
     expect(config.testDir).toBe('shots')
     expect(config.testMatch).toBe('**/*.shots.ts')
     expect(config.retries).toBe(0)
-    expect(config.fullyParallel).toBe(true)
+    expect(config.fullyParallel).toBe(false)
     expect(config.use?.screenshot).toBe('off')
     expect(config.use?.video).toBe('off')
     expect(config.use?.trace).toBe('off')
@@ -29,7 +48,7 @@ describe('defineShotsConfig', () => {
 
   it('use passthrough cannot override invariants, but its own keys survive', () => {
     const config = defineShotsConfig({
-      use: { screenshot: 'on', baseURL: 'http://example.test' },
+      use: { screenshot: 'on', baseURL: 'http://example.test' } as unknown as ShotsConfigOptions['use'],
     })
     expect(config.use?.screenshot).toBe('off')
     expect(config.use?.baseURL).toBe('http://example.test')
@@ -60,7 +79,8 @@ describe('defineShotsConfig', () => {
   it('creates the run dir only under SHOTWRIGHT_RUN=1 and exports it via env', () => {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-factory-'))
     try {
-      defineShotsConfig({ outputDir: out })
+      vi.stubEnv('SHOTWRIGHT_RUN', '0')
+      expect(() => defineShotsConfig({ outputDir: out })).toThrow(/shotwright run/)
       expect(process.env.SHOTWRIGHT_RUN_DIR).toBeUndefined()
       expect(fs.readdirSync(out)).toEqual([])
 

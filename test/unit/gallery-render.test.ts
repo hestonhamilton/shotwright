@@ -8,7 +8,8 @@ import { GALLERY_SCRIPT } from '../../src/gallery/assets.js'
 import { generateGallery } from '../../src/gallery/generate.js'
 import { loadGalleryModel } from '../../src/gallery/model.js'
 import { renderGallery } from '../../src/gallery/render.js'
-import { MANIFEST_VERSION, type Manifest, type ShotEntry } from '../../src/manifest.js'
+import type { Manifest, ShotEntry } from '../../src/manifest.js'
+import { makeManifest, makeShot } from '../fixtures/manifest.js'
 import { makePng } from '../fixtures/png.js'
 
 const tmpDirs: string[] = []
@@ -26,13 +27,8 @@ afterEach(() => {
   }
 })
 
-function shot(
-  name: string,
-  spec: string,
-  index: number,
-  overrides: Partial<ShotEntry> = {},
-): ShotEntry {
-  return {
+function shot(name: string, spec: string, index: number, overrides: Partial<ShotEntry> = {}): ShotEntry {
+  return makeShot({
     name,
     spec,
     file: `shots/${spec}/${name}.png`,
@@ -44,12 +40,11 @@ function shot(
     video: null,
     trace: null,
     ...overrides,
-  }
+  })
 }
 
 function manifest(runId: string, shots: ShotEntry[]): Manifest {
-  return {
-    manifestVersion: MANIFEST_VERSION,
+  return makeManifest({
     runId,
     startedAt: '2026-07-29T00:00:00.000Z',
     finishedAt: '2026-07-29T00:00:10.000Z',
@@ -57,7 +52,7 @@ function manifest(runId: string, shots: ShotEntry[]): Manifest {
     playwrightVersion: '1.62.0',
     flags: { only: ['theme'], video: false, trace: false },
     shots,
-  }
+  })
 }
 
 function writeRun(
@@ -129,7 +124,7 @@ describe('deterministic gallery publication', () => {
     for (const [name, contents] of [
       ['missing', null],
       ['json', '{nope'],
-      ['version', JSON.stringify({ ...manifest('version', []), manifestVersion: 2 })],
+      ['version', JSON.stringify({ ...manifest('version', []), manifestVersion: 3 })],
     ] as const) {
       const runDir = path.join(tmpDir(), name)
       fs.mkdirSync(runDir)
@@ -156,7 +151,7 @@ describe('gallery rendering', () => {
       expect(html).toContain(`${entry.durationMs} ms`)
     }
     expect(html).toContain('104×84 derived')
-    expect(html).toContain('Published manifest · pass/fail status is not embedded')
+    expect(html).toContain('Published manifest')
     expect(html).toContain('<noscript>')
     expect(html).toContain(
       `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">`,
