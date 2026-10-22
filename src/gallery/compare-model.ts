@@ -3,11 +3,7 @@ import type { GalleryDiagnostic, GalleryModel, GalleryShot } from './model.js'
 
 // Superseded by the canonical seven-state ComparePairState in model.ts.
 // The gallery bead removes this legacy type when it replaces the compare model.
-export type ComparePairState =
-  | 'paired'
-  | 'a-only'
-  | 'b-only'
-  | 'not-comparable'
+export type ComparePairState = 'paired' | 'a-only' | 'b-only' | 'not-comparable'
 
 export interface ComparePair {
   key: string

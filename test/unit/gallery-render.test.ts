@@ -27,7 +27,12 @@ afterEach(() => {
   }
 })
 
-function shot(name: string, spec: string, index: number, overrides: Partial<ShotEntry> = {}): ShotEntry {
+function shot(
+  name: string,
+  spec: string,
+  index: number,
+  overrides: Partial<ShotEntry> = {},
+): ShotEntry {
   return makeShot({
     name,
     spec,
@@ -151,7 +156,9 @@ describe('gallery rendering', () => {
       expect(html).toContain(`${entry.durationMs} ms`)
     }
     expect(html).toContain('104×84 derived')
-    expect(html).toContain('<span class="badge durable">Run status: passed · tests: 0/0 · publication: ok</span>')
+    expect(html).toContain(
+      '<span class="badge durable">Run status: passed · tests: 0/0 · publication: ok</span>',
+    )
     expect(html).toContain('<noscript>')
     expect(html).toContain(
       `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">`,
@@ -159,24 +166,55 @@ describe('gallery rendering', () => {
   })
 
   it('states failed v2 status, test count and evidence publication accurately', () => {
-    const runDir=path.join(tmpDir(),'run')
-    writeRun(runDir,makeManifest({runId:'run',status:'failed',publication:{gallery:{ok:true},evidence:{ok:false,error:'copy failed'}},
-      tests:[
-        {id:'passed',title:'passed',spec:'a.shots.ts',project:'shots',status:'passed',retry:0,durationMs:1},
-        {id:'failed',title:'failed',spec:'a.shots.ts',project:'shots',status:'failed',retry:0,durationMs:1},
-      ]}))
+    const runDir = path.join(tmpDir(), 'run')
+    writeRun(
+      runDir,
+      makeManifest({
+        runId: 'run',
+        status: 'failed',
+        publication: { gallery: { ok: true }, evidence: { ok: false, error: 'copy failed' } },
+        tests: [
+          {
+            id: 'passed',
+            title: 'passed',
+            spec: 'a.shots.ts',
+            project: 'shots',
+            status: 'passed',
+            retry: 0,
+            durationMs: 1,
+          },
+          {
+            id: 'failed',
+            title: 'failed',
+            spec: 'a.shots.ts',
+            project: 'shots',
+            status: 'failed',
+            retry: 0,
+            durationMs: 1,
+          },
+        ],
+      }),
+    )
     expect(renderGallery(loadGalleryModel(runDir))).toContain(
       '<span class="badge durable">Run status: failed · tests: 1/2 · publication: evidence failed</span>',
     )
   })
 
   it('labels a v1 run status as unrecorded', () => {
-    const runDir=path.join(tmpDir(),'run')
-    const value=manifest('run',[])
-    const legacy={manifestVersion:1,runId:value.runId,startedAt:value.startedAt,finishedAt:value.finishedAt,
-      shotwrightVersion:value.shotwrightVersion,playwrightVersion:value.playwrightVersion,flags:value.flags,shots:[]}
-    fs.mkdirSync(runDir,{recursive:true})
-    fs.writeFileSync(path.join(runDir,'manifest.json'),JSON.stringify(legacy))
+    const runDir = path.join(tmpDir(), 'run')
+    const value = manifest('run', [])
+    const legacy = {
+      manifestVersion: 1,
+      runId: value.runId,
+      startedAt: value.startedAt,
+      finishedAt: value.finishedAt,
+      shotwrightVersion: value.shotwrightVersion,
+      playwrightVersion: value.playwrightVersion,
+      flags: value.flags,
+      shots: [],
+    }
+    fs.mkdirSync(runDir, { recursive: true })
+    fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(legacy))
     expect(renderGallery(loadGalleryModel(runDir))).toContain(
       '<span class="badge durable">Run status: unrecorded (manifest v1)</span>',
     )

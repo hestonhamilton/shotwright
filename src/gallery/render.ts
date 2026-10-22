@@ -277,13 +277,17 @@ export function renderGallery(model: GalleryModel): string {
         </section>`
       : specs
   const only = manifest.flags.only.length === 0 ? 'None' : manifest.flags.only.join(', ')
-  const publication = [
-    !manifest.publication.gallery.ok ? 'gallery failed' : null,
-    !manifest.publication.evidence.ok ? 'evidence failed' : null,
-  ].filter(Boolean).join(', ') || 'ok'
-  const statusLine = model.sourceManifestVersion === 1
-    ? 'Run status: unrecorded (manifest v1)'
-    : `Run status: ${manifest.status} · tests: ${manifest.tests.filter(test => test.status === 'passed').length}/${manifest.tests.length} · publication: ${publication}`
+  const publication =
+    [
+      !manifest.publication.gallery.ok ? 'gallery failed' : null,
+      !manifest.publication.evidence.ok ? 'evidence failed' : null,
+    ]
+      .filter(Boolean)
+      .join(', ') || 'ok'
+  const statusLine =
+    model.sourceManifestVersion === 1
+      ? 'Run status: unrecorded (manifest v1)'
+      : `Run status: ${manifest.status} · tests: ${manifest.tests.filter((test) => test.status === 'passed').length}/${manifest.tests.length} · publication: ${publication}`
 
   return `<!doctype html>
 <html lang="en">

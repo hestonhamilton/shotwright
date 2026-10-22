@@ -54,8 +54,12 @@ export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTest
     const runDirFile = process.env.SHOTWRIGHT_RUN_DIR_FILE
     if (runDirFile) {
       const temp = `${runDirFile}.${process.pid}.tmp`
-      try { fs.writeFileSync(temp, process.env.SHOTWRIGHT_RUN_DIR); fs.renameSync(temp, runDirFile) }
-      finally { fs.rmSync(temp, { force: true }) }
+      try {
+        fs.writeFileSync(temp, process.env.SHOTWRIGHT_RUN_DIR)
+        fs.renameSync(temp, runDirFile)
+      } finally {
+        fs.rmSync(temp, { force: true })
+      }
     }
   }
   const runDir = process.env.SHOTWRIGHT_RUN_DIR
@@ -73,9 +77,15 @@ export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTest
       video: process.env.SHOTWRIGHT_VIDEO === '1' ? 'on' : 'off',
       trace: process.env.SHOTWRIGHT_TRACE === '1' ? 'on' : 'off',
     },
-    projects: opts.projects?.map(project => ({ ...project, use: { ...project.use, screenshot: 'off',
-      video: process.env.SHOTWRIGHT_VIDEO === '1' ? 'on' : 'off',
-      trace: process.env.SHOTWRIGHT_TRACE === '1' ? 'on' : 'off' } })) ?? [
+    projects: opts.projects?.map((project) => ({
+      ...project,
+      use: {
+        ...project.use,
+        screenshot: 'off',
+        video: process.env.SHOTWRIGHT_VIDEO === '1' ? 'on' : 'off',
+        trace: process.env.SHOTWRIGHT_TRACE === '1' ? 'on' : 'off',
+      },
+    })) ?? [
       {
         name: 'shots',
         use: {

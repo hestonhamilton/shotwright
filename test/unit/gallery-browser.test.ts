@@ -163,19 +163,24 @@ beforeAll(async () => {
     const name =
       index === 0 ? '<script>inert</script>' : index === 2 ? 'tall-aspect' : `shot-${index + 1}`
     const file = `shots/browser.shots.ts/shot-${index + 1}.png`
-    fs.writeFileSync(path.join(runDir, file), uniquePng(index, index === 2 ? 24 : 32, index === 2 ? 96 : 24))
-    shots.push(makeShot({
-      name,
-      spec: 'browser.shots.ts',
-      file,
-      viewport: index % 2 === 0 ? { width: 390, height: 844 } : { width: 1440, height: 960 },
-      deviceScaleFactor: 2,
-      fullPage: index % 7 !== 0,
-      capturedAt: `2026-07-29T00:00:${String(index).padStart(2, '0')}.000Z`,
-      durationMs: index,
-      video: null,
-      trace: null,
-    }))
+    fs.writeFileSync(
+      path.join(runDir, file),
+      uniquePng(index, index === 2 ? 24 : 32, index === 2 ? 96 : 24),
+    )
+    shots.push(
+      makeShot({
+        name,
+        spec: 'browser.shots.ts',
+        file,
+        viewport: index % 2 === 0 ? { width: 390, height: 844 } : { width: 1440, height: 960 },
+        deviceScaleFactor: 2,
+        fullPage: index % 7 !== 0,
+        capturedAt: `2026-07-29T00:00:${String(index).padStart(2, '0')}.000Z`,
+        durationMs: index,
+        video: null,
+        trace: null,
+      }),
+    )
   }
   const manifest: Manifest = makeManifest({
     runId: 'run',

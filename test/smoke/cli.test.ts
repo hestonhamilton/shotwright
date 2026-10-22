@@ -495,7 +495,10 @@ function expectInjectedGalleryFailurePreservesRunContract(): void {
     // A failed gallery is recorded, does not advance latest, and leaves no staging.
     expect(published.runId).toBe(runId)
     expect(published.shots.map((shot) => shot.name)).toEqual(['theme-dark'])
-    expect(published.publication.gallery).toMatchObject({ ok: false, error: expect.stringContaining(galleryFailureMarker) })
+    expect(published.publication.gallery).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(galleryFailureMarker),
+    })
     expect(fs.readlinkSync(path.join(outputDir, 'latest'))).toBe(previousLatest)
     expect(fs.existsSync(path.join(runDir, '.sidecar'))).toBe(false)
     expect(fs.existsSync(path.join(runDir, '.pw'))).toBe(false)
@@ -680,7 +683,10 @@ async function expectSyntheticGallery(): Promise<void> {
   const sourceDir = fs.mkdtempSync(path.join(root, 'local/e10-corpus-source-'))
   let running: RunningGallery | null = null
   try {
-    fs.writeFileSync(path.join(sourceDir, 'manifest.json'), JSON.stringify({ ...unfilteredRun.manifest, manifestVersion: 1 }))
+    fs.writeFileSync(
+      path.join(sourceDir, 'manifest.json'),
+      JSON.stringify({ ...unfilteredRun.manifest, manifestVersion: 1 }),
+    )
     for (const entry of unfilteredRun.manifest.shots) {
       const target = path.join(sourceDir, entry.file)
       fs.mkdirSync(path.dirname(target), { recursive: true })
@@ -692,9 +698,18 @@ async function expectSyntheticGallery(): Promise<void> {
       stdio: 'pipe',
       timeout: 30_000,
     })
-    const legacy = JSON.parse(fs.readFileSync(path.join(syntheticDir, 'manifest.json'), 'utf8')) as Manifest
-    const manifest = makeManifest({ ...legacy, manifestVersion: 2, shots: legacy.shots.map((shot) => makeShot(shot)) })
-    fs.writeFileSync(path.join(syntheticDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
+    const legacy = JSON.parse(
+      fs.readFileSync(path.join(syntheticDir, 'manifest.json'), 'utf8'),
+    ) as Manifest
+    const manifest = makeManifest({
+      ...legacy,
+      manifestVersion: 2,
+      shots: legacy.shots.map((shot) => makeShot(shot)),
+    })
+    fs.writeFileSync(
+      path.join(syntheticDir, 'manifest.json'),
+      JSON.stringify(manifest, null, 2) + '\n',
+    )
     expect(manifest.manifestVersion).toBe(2)
     expect(manifest.runId).toBe(syntheticRunId)
     expect(manifest.startedAt).toBe('2020-01-02T03:04:05.000Z')
@@ -828,13 +843,17 @@ function createConsumerApp(prefix: string, packageJson: Record<string, unknown>)
 function runPnpm(cwd: string, args: string[], timeout = 180_000): string {
   fs.mkdirSync(consumerPnpmStore, { recursive: true })
   try {
-    return execFileSync('pnpm', args[0] === 'add' ? [...args, '--store-dir', consumerPnpmStore] : args, {
-      cwd,
-      encoding: 'utf8',
-      env: consumerEnv(),
-      stdio: 'pipe',
-      timeout,
-    })
+    return execFileSync(
+      'pnpm',
+      args[0] === 'add' ? [...args, '--store-dir', consumerPnpmStore] : args,
+      {
+        cwd,
+        encoding: 'utf8',
+        env: consumerEnv(),
+        stdio: 'pipe',
+        timeout,
+      },
+    )
   } catch (error) {
     if (!(error instanceof Error)) throw error
     const childError = error as Error & { stdout?: string | Buffer; stderr?: string | Buffer }
@@ -1104,23 +1123,21 @@ describe('shotwright run against the demo app', () => {
     expectPackInventory()
   })
 
-  it(
-    'packs, installs, initializes, captures, galleries, and re-runs idempotently in a fresh vite app',
-    async () => {
-      const packed = packShotwrightPackage('shotwright-consumer-pack-')
-      const cwd = createConsumerApp('shotwright-consumer-vite-', {
-        scripts: { dev: 'vite' },
-      })
-      let running: RunningGallery | null = null
-      try {
-        runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.63.0', 'vite@~8.1.5'])
-        const initOutput = runPnpm(cwd, ['exec', 'shotwright', 'init'])
-        expect(initOutput).toContain('shotwright init: detected vite')
-        expect(initOutput).toContain('shots.config.ts')
-        expect(initOutput).toContain('shots/example.shots.ts')
-        expect(initOutput).toContain('.gitignore (+3 entries)')
-        expect(initOutput).toContain('pnpm shots:install')
-        expect(initOutput).not.toContain('Edit shots.config.ts')
+  it('packs, installs, initializes, captures, galleries, and re-runs idempotently in a fresh vite app', async () => {
+    const packed = packShotwrightPackage('shotwright-consumer-pack-')
+    const cwd = createConsumerApp('shotwright-consumer-vite-', {
+      scripts: { dev: 'vite' },
+    })
+    let running: RunningGallery | null = null
+    try {
+      runPnpm(cwd, ['add', '-D', packed.tarball, '@playwright/test@~1.63.0', 'vite@~8.1.5'])
+      const initOutput = runPnpm(cwd, ['exec', 'shotwright', 'init'])
+      expect(initOutput).toContain('shotwright init: detected vite')
+      expect(initOutput).toContain('shots.config.ts')
+      expect(initOutput).toContain('shots/example.shots.ts')
+      expect(initOutput).toContain('.gitignore (+3 entries)')
+      expect(initOutput).toContain('pnpm shots:install')
+      expect(initOutput).not.toContain('Edit shots.config.ts')
 
       runGeneratedShotsInstall(cwd)
       runPnpm(cwd, ['shots'], 240_000)

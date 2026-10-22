@@ -7,118 +7,199 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { validateManifest } from '../../src/gallery/model.js'
 import type { Manifest } from '../../src/manifest.js'
 
-const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..')
-const fixture=path.join(root,'test/fixtures/contract-consumer')
-const out=fs.mkdtempSync(path.join(os.tmpdir(),'shotwright-contract-'))
-afterAll(()=>fs.rmSync(out,{recursive:true,force:true}))
-function run(args:string[],env:Record<string,string>={}) {
-  return spawnSync(process.execPath,[path.join(root,'dist/cli.js'),'run','--config',path.join(fixture,'shots.config.ts'),'--',...args],
-    {cwd:fixture,env:{...process.env,CONTRACT_OUTPUT_DIR:out,...env},encoding:'utf8'})
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const fixture = path.join(root, 'test/fixtures/contract-consumer')
+const out = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-contract-'))
+afterAll(() => fs.rmSync(out, { recursive: true, force: true }))
+function run(args: string[], env: Record<string, string> = {}) {
+  return spawnSync(
+    process.execPath,
+    [
+      path.join(root, 'dist/cli.js'),
+      'run',
+      '--config',
+      path.join(fixture, 'shots.config.ts'),
+      '--',
+      ...args,
+    ],
+    { cwd: fixture, env: { ...process.env, CONTRACT_OUTPUT_DIR: out, ...env }, encoding: 'utf8' },
+  )
 }
-function newest():{dir:string;manifest:Manifest} {
-  const names=fs.readdirSync(out).filter(x=>x!=='latest').sort((a,b)=>fs.statSync(path.join(out,a)).birthtimeMs-fs.statSync(path.join(out,b)).birthtimeMs)
-  const dir=path.join(out,names.at(-1)!)
-  return {dir,manifest:validateManifest(JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8')),path.basename(dir))}
+function newest(): { dir: string; manifest: Manifest } {
+  const names = fs
+    .readdirSync(out)
+    .filter((x) => x !== 'latest')
+    .sort(
+      (a, b) =>
+        fs.statSync(path.join(out, a)).birthtimeMs - fs.statSync(path.join(out, b)).birthtimeMs,
+    )
+  const dir = path.join(out, names.at(-1)!)
+  return {
+    dir,
+    manifest: validateManifest(
+      JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')),
+      path.basename(dir),
+    ),
+  }
 }
-describe('real Playwright contract consumer',()=>{
-  it('writes v2 and allows the same name in two canonical specs with nested suffix layout',()=>{
-    const result=run(['--grep','same name'])
+describe('real Playwright contract consumer', () => {
+  it('writes v2 and allows the same name in two canonical specs with nested suffix layout', () => {
+    const result = run(['--grep', 'same name'])
     expect(result.status, result.stderr).toBe(0)
-    const {dir,manifest}=newest()
+    const { dir, manifest } = newest()
     expect(manifest.manifestVersion).toBe(2)
     expect(manifest.status).toBe('passed')
-    expect(manifest.shots.filter(s=>s.name==='shared').map(s=>s.spec).sort()).toEqual(['a.shots.ts','sub/b.shots.ts'])
-    expect(manifest.shots.map(s=>s.file).sort()).toEqual(['shots/a/shared.png','shots/sub/b/shared.png'])
-    expect(fs.existsSync(path.join(dir,manifest.artifacts[0]!.file))).toBe(true)
-    expect(fs.readlinkSync(path.join(out,'latest'))).toBe(path.basename(dir))
-    expect(fs.existsSync(path.join(dir,'.pw'))).toBe(false)
-    expect(fs.existsSync(path.join(dir,'.sidecar'))).toBe(false)
+    expect(
+      manifest.shots
+        .filter((s) => s.name === 'shared')
+        .map((s) => s.spec)
+        .sort(),
+    ).toEqual(['a.shots.ts', 'sub/b.shots.ts'])
+    expect(manifest.shots.map((s) => s.file).sort()).toEqual([
+      'shots/a/shared.png',
+      'shots/sub/b/shared.png',
+    ])
+    expect(fs.existsSync(path.join(dir, manifest.artifacts[0]!.file))).toBe(true)
+    expect(fs.readlinkSync(path.join(out, 'latest'))).toBe(path.basename(dir))
+    expect(fs.existsSync(path.join(dir, '.pw'))).toBe(false)
+    expect(fs.existsSync(path.join(dir, '.sidecar'))).toBe(false)
   })
-  it('rejects same-spec duplicate even when separate tests captured it',()=>{
-    const previous=fs.readlinkSync(path.join(out,'latest'))
-    const result=run(['--grep','duplicate'])
+  it('rejects same-spec duplicate even when separate tests captured it', () => {
+    const previous = fs.readlinkSync(path.join(out, 'latest'))
+    const result = run(['--grep', 'duplicate'])
     expect(result.status).not.toBe(0)
-    expect(result.stdout+result.stderr).toContain('duplicate shot name')
-    const names=fs.readdirSync(out).filter(x=>x!=='latest').sort((a,b)=>fs.statSync(path.join(out,a)).birthtimeMs-fs.statSync(path.join(out,b)).birthtimeMs)
-    expect(fs.existsSync(path.join(out,names.at(-1)!,'manifest.json'))).toBe(false)
-    expect(fs.readlinkSync(path.join(out,'latest'))).toBe(previous)
+    expect(result.stdout + result.stderr).toContain('duplicate shot name')
+    const names = fs
+      .readdirSync(out)
+      .filter((x) => x !== 'latest')
+      .sort(
+        (a, b) =>
+          fs.statSync(path.join(out, a)).birthtimeMs - fs.statSync(path.join(out, b)).birthtimeMs,
+      )
+    expect(fs.existsSync(path.join(out, names.at(-1)!, 'manifest.json'))).toBe(false)
+    expect(fs.readlinkSync(path.join(out, 'latest'))).toBe(previous)
   })
 
-  it('exits nonzero after publishing a gallery failure without moving latest',()=>{
-    const previous=fs.readlinkSync(path.join(out,'latest'))
-    const result=run(['--grep','same name'],{SHOTWRIGHT_INJECT_GALLERY_FAILURE:'1'})
+  it('exits nonzero after publishing a gallery failure without moving latest', () => {
+    const previous = fs.readlinkSync(path.join(out, 'latest'))
+    const result = run(['--grep', 'same name'], { SHOTWRIGHT_INJECT_GALLERY_FAILURE: '1' })
     expect(result.status).not.toBe(0)
-    expect(result.stdout+result.stderr).toContain('gallery publication failed')
-    const {dir,manifest}=newest()
-    expect(fs.existsSync(path.join(dir,'manifest.json'))).toBe(true)
+    expect(result.stdout + result.stderr).toContain('gallery publication failed')
+    const { dir, manifest } = newest()
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true)
     expect(manifest.status).toBe('passed')
-    expect(manifest.publication.gallery).toMatchObject({ok:false,error:expect.stringContaining('injected')})
-    expect(fs.existsSync(path.join(dir,'gallery.html'))).toBe(false)
-    expect(fs.readlinkSync(path.join(out,'latest'))).toBe(previous)
+    expect(manifest.publication.gallery).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('injected'),
+    })
+    expect(fs.existsSync(path.join(dir, 'gallery.html'))).toBe(false)
+    expect(fs.readlinkSync(path.join(out, 'latest'))).toBe(previous)
   })
 
-  it('keeps failure evidence and leaves latest at the passed run',()=>{
-    const prior=fs.readlinkSync(path.join(out,'latest'))
-    const result=run(['--grep','fails after capture'])
+  it('keeps failure evidence and leaves latest at the passed run', () => {
+    const prior = fs.readlinkSync(path.join(out, 'latest'))
+    const result = run(['--grep', 'fails after capture'])
     expect(result.status).not.toBe(0)
-    const {dir,manifest}=newest()
+    const { dir, manifest } = newest()
     expect(manifest.status).toBe('failed')
-    expect(manifest.failures[0]?.files.some(f=>f.name==='error-context' && f.contentType==='text/markdown' && fs.existsSync(path.join(dir,f.file)))).toBe(true)
-    expect(result.stderr+result.stdout).toContain('shotwright: copied error-context:')
-    expect(fs.existsSync(path.join(dir,'.pw'))).toBe(false)
-    expect(fs.existsSync(path.join(dir,'.sidecar'))).toBe(false)
-    expect(fs.readlinkSync(path.join(out,'latest'))).toBe(prior)
+    expect(
+      manifest.failures[0]?.files.some(
+        (f) =>
+          f.name === 'error-context' &&
+          f.contentType === 'text/markdown' &&
+          fs.existsSync(path.join(dir, f.file)),
+      ),
+    ).toBe(true)
+    expect(result.stderr + result.stdout).toContain('shotwright: copied error-context:')
+    expect(fs.existsSync(path.join(dir, '.pw'))).toBe(false)
+    expect(fs.existsSync(path.join(dir, '.sidecar'))).toBe(false)
+    expect(fs.readlinkSync(path.join(out, 'latest'))).toBe(prior)
   })
-  it('no-op check records checked, filtered and thrown callbacks write nothing, and fullPage bytes match',()=>{
-    const good=run(['--grep','no-op check'],{SHOTWRIGHT_ONLY:'tall'})
-    expect(good.status,good.stdout+good.stderr).toBe(0)
-    const {dir,manifest}=newest()
+  it('no-op check records checked, filtered and thrown callbacks write nothing, and fullPage bytes match', () => {
+    const good = run(['--grep', 'no-op check'], { SHOTWRIGHT_ONLY: 'tall' })
+    expect(good.status, good.stdout + good.stderr).toBe(0)
+    const { dir, manifest } = newest()
     expect(manifest.shots[0]?.checked).toBe(true)
-    expect(fs.readFileSync(path.join(dir,manifest.shots[0]!.file))).toEqual(fs.readFileSync(path.join(dir,'explicit.png')))
-    expect(manifest.artifacts.map(a=>[a.name,a.bytes]).sort()).toEqual([['path.txt',9],['utf8.txt',6]])
-    const filtered=run(['--grep','filtered callback'],{SHOTWRIGHT_ONLY:'tall'})
-    expect(filtered.status,filtered.stderr).toBe(0)
+    expect(fs.readFileSync(path.join(dir, manifest.shots[0]!.file))).toEqual(
+      fs.readFileSync(path.join(dir, 'explicit.png')),
+    )
+    expect(manifest.artifacts.map((a) => [a.name, a.bytes]).sort()).toEqual([
+      ['path.txt', 9],
+      ['utf8.txt', 6],
+    ])
+    const filtered = run(['--grep', 'filtered callback'], { SHOTWRIGHT_ONLY: 'tall' })
+    expect(filtered.status, filtered.stderr).toBe(0)
     expect(newest().manifest.shots).toEqual([])
-    const thrown=run(['--grep','thrown callback'])
+    const thrown = run(['--grep', 'thrown callback'])
     expect(thrown.status).not.toBe(0)
     expect(newest().manifest.shots).toEqual([])
   })
 
-  it('final retry omits stale shot and artifact files, while recapture owns retry-1 bytes',()=>{
-    const omitted=run(['--grep','retry omit','--retries=1'])
-    expect(omitted.status,omitted.stderr).toBe(0)
-    const first=newest()
+  it('final retry omits stale shot and artifact files, while recapture owns retry-1 bytes', () => {
+    const omitted = run(['--grep', 'retry omit', '--retries=1'])
+    expect(omitted.status, omitted.stderr).toBe(0)
+    const first = newest()
     expect(first.manifest.shots).toEqual([])
     expect(first.manifest.artifacts).toEqual([])
-    expect(fs.existsSync(path.join(first.dir,'shots/retry/retry-shot.png'))).toBe(false)
-    expect(fs.existsSync(path.join(first.dir,'data/retry/retry.txt'))).toBe(false)
-    const recaptured=run(['--grep','retry recapture','--retries=1'])
-    expect(recaptured.status,recaptured.stderr).toBe(0)
-    const second=newest()
+    expect(fs.existsSync(path.join(first.dir, 'shots/retry/retry-shot.png'))).toBe(false)
+    expect(fs.existsSync(path.join(first.dir, 'data/retry/retry.txt'))).toBe(false)
+    const recaptured = run(['--grep', 'retry recapture', '--retries=1'])
+    expect(recaptured.status, recaptured.stderr).toBe(0)
+    const second = newest()
     expect(second.manifest.shots[0]?.retry).toBe(1)
     expect(second.manifest.artifacts).toHaveLength(1)
-    expect(fs.readFileSync(path.join(second.dir,second.manifest.artifacts[0]!.file),'utf8')).toBe('new')
+    expect(fs.readFileSync(path.join(second.dir, second.manifest.artifacts[0]!.file), 'utf8')).toBe(
+      'new',
+    )
   })
 
-  it('artifact MIME, path traversal and duplicate rejection preserve the first bytes',()=>{
-    const result=run(['--grep','data validation'])
-    expect(result.status,result.stderr).toBe(0)
-    const {dir,manifest}=newest()
+  it('artifact MIME, path traversal and duplicate rejection preserve the first bytes', () => {
+    const result = run(['--grep', 'data validation'])
+    expect(result.status, result.stderr).toBe(0)
+    const { dir, manifest } = newest()
     expect(manifest.artifacts).toHaveLength(1)
-    expect(manifest.artifacts[0]).toMatchObject({name:'once.txt',contentType:'text/plain',bytes:5})
-    expect(fs.readFileSync(path.join(dir,manifest.artifacts[0]!.file),'utf8')).toBe('first')
+    expect(manifest.artifacts[0]).toMatchObject({
+      name: 'once.txt',
+      contentType: 'text/plain',
+      bytes: 5,
+    })
+    expect(fs.readFileSync(path.join(dir, manifest.artifacts[0]!.file), 'utf8')).toBe('first')
   })
 
-  it('bare runner preserves a sentinel and --list succeeds',()=>{
-    const sentinel=path.join(fixture,'test-results','sentinel.txt')
-    fs.mkdirSync(path.dirname(sentinel),{recursive:true});fs.writeFileSync(sentinel,'keep')
+  it('bare runner preserves a sentinel and --list succeeds', () => {
+    const sentinel = path.join(fixture, 'test-results', 'sentinel.txt')
+    fs.mkdirSync(path.dirname(sentinel), { recursive: true })
+    fs.writeFileSync(sentinel, 'keep')
     try {
-      const env={...process.env,CONTRACT_OUTPUT_DIR:out,SHOTWRIGHT_RUN:'0'}
-      const bare=spawnSync(process.execPath,[path.join(root,'node_modules/@playwright/test/cli.js'),'test','-c','shots.config.ts','--grep','same name'],{cwd:fixture,env,encoding:'utf8'})
+      const env = { ...process.env, CONTRACT_OUTPUT_DIR: out, SHOTWRIGHT_RUN: '0' }
+      const bare = spawnSync(
+        process.execPath,
+        [
+          path.join(root, 'node_modules/@playwright/test/cli.js'),
+          'test',
+          '-c',
+          'shots.config.ts',
+          '--grep',
+          'same name',
+        ],
+        { cwd: fixture, env, encoding: 'utf8' },
+      )
       expect(bare.status).not.toBe(0)
-      expect(fs.readFileSync(sentinel,'utf8')).toBe('keep')
-      const listed=spawnSync(process.execPath,[path.join(root,'node_modules/@playwright/test/cli.js'),'test','-c','shots.config.ts','--list'],{cwd:fixture,env,encoding:'utf8'})
-      expect(listed.status,listed.stderr).toBe(0)
-    } finally {fs.rmSync(path.join(fixture,'test-results'),{recursive:true,force:true})}
+      expect(fs.readFileSync(sentinel, 'utf8')).toBe('keep')
+      const listed = spawnSync(
+        process.execPath,
+        [
+          path.join(root, 'node_modules/@playwright/test/cli.js'),
+          'test',
+          '-c',
+          'shots.config.ts',
+          '--list',
+        ],
+        { cwd: fixture, env, encoding: 'utf8' },
+      )
+      expect(listed.status, listed.stderr).toBe(0)
+    } finally {
+      fs.rmSync(path.join(fixture, 'test-results'), { recursive: true, force: true })
+    }
   })
 })

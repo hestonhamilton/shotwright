@@ -121,26 +121,45 @@ export async function artifact(name: string, opts: ArtifactOptions): Promise<voi
   validateShotName(name)
   if (!opts || !opts.contentType || !/^[^\s/]+\/[^\s/]+$/.test(opts.contentType))
     throw new Error('shotwright: artifact contentType must be a MIME type')
-  if (('body' in opts) === ('path' in opts)) throw new Error('shotwright: artifact needs exactly one body or path')
+  if ('body' in opts === 'path' in opts)
+    throw new Error('shotwright: artifact needs exactly one body or path')
   const info = test.info()
   const spec = path.relative(info.project.testDir, info.file).split(path.sep).join('/')
   const file = `data/${storageSpec(spec)}/${name}`
   const dest = path.join(runDir, file)
-  const bytes = 'body' in opts
-    ? (typeof opts.body === 'string' ? Buffer.from(opts.body) : opts.body)
-    : fs.readFileSync(opts.path!)
+  const bytes =
+    'body' in opts
+      ? typeof opts.body === 'string'
+        ? Buffer.from(opts.body)
+        : opts.body
+      : fs.readFileSync(opts.path!)
   if (!bytes) throw new Error('shotwright: artifact body is missing')
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   const tmp = `${dest}.${crypto.randomBytes(8).toString('hex')}.tmp`
   try {
     fs.writeFileSync(tmp, bytes)
     if (fs.existsSync(dest)) {
-      const previous=readSidecars(runDir).filter(s=>s.kind==='artifact' && s.spec===spec && s.name===name)
-      if (!previous.length || previous.some(s=>s.testId!==info.testId || s.retry>=info.retry))
+      const previous = readSidecars(runDir).filter(
+        (s) => s.kind === 'artifact' && s.spec === spec && s.name === name,
+      )
+      if (
+        !previous.length ||
+        previous.some((s) => s.testId !== info.testId || s.retry >= info.retry)
+      )
         throw new Error(`shotwright: duplicate artifact name "${name}" in ${spec}`)
-      fs.renameSync(tmp,dest)
+      fs.renameSync(tmp, dest)
     } else fs.linkSync(tmp, dest)
-    writeSidecar(runDir, { kind: 'artifact', name, spec, file,
-      contentType: opts.contentType, bytes: bytes.length, testId: info.testId, retry: info.retry })
-  } finally { fs.rmSync(tmp, { force: true }) }
+    writeSidecar(runDir, {
+      kind: 'artifact',
+      name,
+      spec,
+      file,
+      contentType: opts.contentType,
+      bytes: bytes.length,
+      testId: info.testId,
+      retry: info.retry,
+    })
+  } finally {
+    fs.rmSync(tmp, { force: true })
+  }
 }

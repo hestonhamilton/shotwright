@@ -15,29 +15,53 @@ afterEach(() => {
 })
 
 describe('defineShotsConfig', () => {
-  beforeEach(() => { vi.stubEnv('SHOTWRIGHT_RUN', '1') })
+  beforeEach(() => {
+    vi.stubEnv('SHOTWRIGHT_RUN', '1')
+  })
   it('passes setup, workers, expect and project use while enforcing owned capture keys', () => {
-    const options: ShotsConfigOptions={globalSetup:'./setup.ts',workers:1,expect:{timeout:1234},
-      forbidOnly:true,globalTeardown:'./t.ts',
-      projects:[{name:'custom',use:{baseURL:'http://example.test',video:'on',trace:'on',screenshot:'on'}}]}
-    const rejectedOwnedUse: ShotsConfigOptions = {use:{
-      // @ts-expect-error trace is harness-owned
-      trace:'on',
-    }}
+    const options: ShotsConfigOptions = {
+      globalSetup: './setup.ts',
+      workers: 1,
+      expect: { timeout: 1234 },
+      forbidOnly: true,
+      globalTeardown: './t.ts',
+      projects: [
+        {
+          name: 'custom',
+          use: { baseURL: 'http://example.test', video: 'on', trace: 'on', screenshot: 'on' },
+        },
+      ],
+    }
+    const rejectedOwnedUse: ShotsConfigOptions = {
+      use: {
+        // @ts-expect-error trace is harness-owned
+        trace: 'on',
+      },
+    }
     void rejectedOwnedUse
-    const config=defineShotsConfig(options)
+    const config = defineShotsConfig(options)
     expect(config.globalSetup).toBe('./setup.ts')
     expect(config.workers).toBe(1)
     expect(config.expect?.timeout).toBe(1234)
     expect(config.forbidOnly).toBe(true)
     expect(config.globalTeardown).toBe('./t.ts')
-    expect(config.projects?.[0]?.use).toMatchObject({baseURL:'http://example.test',video:'off',trace:'off',screenshot:'off'})
+    expect(config.projects?.[0]?.use).toMatchObject({
+      baseURL: 'http://example.test',
+      video: 'off',
+      trace: 'off',
+      screenshot: 'off',
+    })
     expect(config.reporter).toBeDefined()
   })
   it('guard refuses bare config evaluation before run directory creation', () => {
-    const out=fs.mkdtempSync(path.join(os.tmpdir(),'shotwright-guard-'))
-    try {vi.stubEnv('SHOTWRIGHT_RUN','0');expect(()=>defineShotsConfig({outputDir:out})).toThrow(/shotwright run/)
-      expect(fs.readdirSync(out)).toEqual([])} finally {fs.rmSync(out,{recursive:true,force:true})}
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-guard-'))
+    try {
+      vi.stubEnv('SHOTWRIGHT_RUN', '0')
+      expect(() => defineShotsConfig({ outputDir: out })).toThrow(/shotwright run/)
+      expect(fs.readdirSync(out)).toEqual([])
+    } finally {
+      fs.rmSync(out, { recursive: true, force: true })
+    }
   })
 
   it('sets the harness invariants', () => {
@@ -56,7 +80,10 @@ describe('defineShotsConfig', () => {
 
   it('use passthrough cannot override invariants, but its own keys survive', () => {
     const config = defineShotsConfig({
-      use: { screenshot: 'on', baseURL: 'http://example.test' } as unknown as ShotsConfigOptions['use'],
+      use: {
+        screenshot: 'on',
+        baseURL: 'http://example.test',
+      } as unknown as ShotsConfigOptions['use'],
     })
     expect(config.use?.screenshot).toBe('off')
     expect(config.use?.baseURL).toBe('http://example.test')

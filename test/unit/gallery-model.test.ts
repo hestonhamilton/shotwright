@@ -40,7 +40,9 @@ function entry(overrides: Partial<ShotEntry> = {}): ShotEntry {
     durationMs: 50,
     video: null,
     trace: null,
-    testId: null, checked: false, retry: 0,
+    testId: null,
+    checked: false,
+    retry: 0,
     ...overrides,
   }
 }
@@ -54,7 +56,11 @@ function manifest(runId = 'run', shots: ShotEntry[] = [entry()]): Manifest {
     shotwrightVersion: '0.1.0',
     playwrightVersion: '1.62.0',
     flags: { only: [], video: false, trace: false },
-    status: 'passed', publication: {gallery:{ok:true}, evidence:{ok:true}}, tests:[], artifacts:[], failures:[],
+    status: 'passed',
+    publication: { gallery: { ok: true }, evidence: { ok: true } },
+    tests: [],
+    artifacts: [],
+    failures: [],
     shots,
   }
 }
@@ -96,11 +102,7 @@ describe('validateManifest', () => {
       },
       /shots\[0\]\.trace/,
     ],
-    [
-      'duplicate name',
-      manifest('run', [entry(), entry()]),
-      /duplicate shot name/,
-    ],
+    ['duplicate name', manifest('run', [entry(), entry()]), /duplicate shot name/],
   ])('rejects %s', (_label, value, message) => {
     expect(() => validateManifest(value, 'run')).toThrow(message)
   })
@@ -108,26 +110,42 @@ describe('validateManifest', () => {
 
 describe('v1 adapter and strict v2', () => {
   it('normalizes a handwritten v1 manifest and labels publication unrecorded', () => {
-    const runDir=tmpDir(), v2=manifest(path.basename(runDir))
-    const old={...v2,manifestVersion:1,shots:v2.shots.map(({testId:_id,checked:_checked,retry:_retry,...rest})=>rest)}
+    const runDir = tmpDir(),
+      v2 = manifest(path.basename(runDir))
+    const old = {
+      ...v2,
+      manifestVersion: 1,
+      shots: v2.shots.map(({ testId: _id, checked: _checked, retry: _retry, ...rest }) => rest),
+    }
     delete (old as Partial<typeof old>).status
     delete (old as Partial<typeof old>).publication
     delete (old as Partial<typeof old>).tests
     delete (old as Partial<typeof old>).artifacts
     delete (old as Partial<typeof old>).failures
-    fs.mkdirSync(path.join(runDir,'shots/home'),{recursive:true})
-    fs.writeFileSync(path.join(runDir,'shots/home/shot.png'),makePng())
-    fs.writeFileSync(path.join(runDir,'manifest.json'),JSON.stringify(old))
-    const model=loadGalleryModel(runDir)
+    fs.mkdirSync(path.join(runDir, 'shots/home'), { recursive: true })
+    fs.writeFileSync(path.join(runDir, 'shots/home/shot.png'), makePng())
+    fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(old))
+    const model = loadGalleryModel(runDir)
     expect(model.sourceManifestVersion).toBe(1)
-    expect(model.manifest).toMatchObject({status:'unknown',publication:{gallery:{ok:true},evidence:{ok:true}},tests:[],artifacts:[],failures:[]})
-    expect(model.manifest.shots[0]).toMatchObject({testId:null,checked:false,retry:0})
-    expect(fs.readFileSync(path.join(runDir,'manifest.json'),'utf8')).toBe(JSON.stringify(old))
+    expect(model.manifest).toMatchObject({
+      status: 'unknown',
+      publication: { gallery: { ok: true }, evidence: { ok: true } },
+      tests: [],
+      artifacts: [],
+      failures: [],
+    })
+    expect(model.manifest.shots[0]).toMatchObject({ testId: null, checked: false, retry: 0 })
+    expect(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8')).toBe(JSON.stringify(old))
   })
   it('rejects a v2 publication failure without an error and missing required arrays', () => {
-    const value=manifest()
-    expect(()=>validateManifest({...value,publication:{gallery:{ok:false},evidence:{ok:true}}})).toThrow(/error required/)
-    expect(()=>validateManifest({...value,tests:undefined})).toThrow(/tests must be an array/)
+    const value = manifest()
+    expect(() =>
+      validateManifest({
+        ...value,
+        publication: { gallery: { ok: false }, evidence: { ok: true } },
+      }),
+    ).toThrow(/error required/)
+    expect(() => validateManifest({ ...value, tests: undefined })).toThrow(/tests must be an array/)
   })
 })
 
