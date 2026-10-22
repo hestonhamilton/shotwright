@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import { buildCompareModel, type GalleryCompareModel } from './compare-model.js'
@@ -17,17 +18,52 @@ export interface CompatibleCompareGenerationResult extends CompareGenerationResu
   diagnostics: GalleryDiagnostic[]
   model: GalleryCompareModel
 }
-let sequence = 0
-function atomic(file: string, contents: string | Buffer): void {
-  const temp = path.join(path.dirname(file), `.compare.${process.pid}-${++sequence}.tmp`)
+function tempPath(file: string): string {
+  return path.join(path.dirname(file), `.compare.${path.basename(file)}.${process.pid}.tmp`)
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** The pixelmatch version actually loaded, read from its package.json at generation time. */
+function pixelmatchVersion(): string {
+  const require = createRequire(import.meta.url)
+  const manifest = JSON.parse(
+    fs.readFileSync(require.resolve('pixelmatch/package.json'), 'utf8'),
+  ) as { version: string }
+  return manifest.version
+}
+
+/**
+ * Stage every output to a temp path first, then rename the JSON and diff PNGs
+ * into place and the HTML last. Nothing from a previous run is removed until
+ * the new HTML is published, so a failed write or rename leaves the previous
+ * complete page in place.
+ */
+function publish(outputs: Array<{ file: string; contents: string | Buffer }>): void {
+  const staged: Array<{ file: string; temp: string }> = []
+  const discard = (): void => {
+    for (const { temp } of staged)
+      try {
+        fs.rmSync(temp, { force: true })
+      } catch {
+        /* leave it for the next run's prune */
+      }
+  }
   try {
-    fs.writeFileSync(temp, contents)
-    fs.renameSync(temp, file)
+    for (const { file, contents } of outputs) {
+      const temp = tempPath(file)
+      staged.push({ file, temp })
+      fs.writeFileSync(temp, contents)
+    }
+    for (const { file, temp } of staged) fs.renameSync(temp, file)
   } catch (error) {
-    fs.rmSync(temp, { force: true })
+    discard()
     throw error
   }
 }
+
 export function generateCompareGallery(
   aRun: string,
   bRun: string,
@@ -82,9 +118,14 @@ export function generateCompareGallery(
   const json = {
     tool: 'shotwright',
     version: packageInfo.version,
-    comparator: 'pixelmatch',
-    threshold: model.options.threshold,
-    includeAA: model.options.includeAA,
+    comparator: { name: 'pixelmatch', version: pixelmatchVersion() },
+    settings: {
+      threshold: model.options.threshold,
+      includeAA: model.options.includeAA,
+      // 'option' when the caller supplied either setting; otherwise both are defaults.
+      source:
+        options.threshold !== undefined || options.includeAA !== undefined ? 'option' : 'default',
+    },
     counts: model.counts,
     gate,
     pairs: model.pairs.map((pair, index) => ({
@@ -100,22 +141,30 @@ export function generateCompareGallery(
       diff: pair.verdict?.diffPng
         ? path.basename(diffFiles.find((entry) => entry.file.endsWith(`.diff-${index}.png`))!.file)
         : null,
-      error: pair.error,
+      error: pair.error === null ? null : { message: pair.error, detail: pair.errorDetail },
     })),
   }
-  const html = renderCompare(model, gate.failOnChange)
-  // Publish the index last; on interruption, the next run removes stale pair artifacts.
-  fs.rmSync(outputFile, { force: true })
+  const siblingBase = (runDir: string): string | undefined => {
+    const relative = path.relative(path.dirname(outputFile), runDir)
+    return path.isAbsolute(relative) ? undefined : relative.split(path.sep).join('/')
+  }
+  const html = renderCompare(model, gate.failOnChange, {
+    aBase: siblingBase(aRun),
+    bBase: siblingBase(bRun),
+  })
+  publish([
+    ...diffFiles.map((entry) => ({ file: entry.file, contents: entry.bytes })),
+    { file: jsonFile, contents: JSON.stringify(json, null, 2) + '\n' },
+    { file: outputFile, contents: html },
+  ])
+  // Only after the new HTML is in place: prune diff PNGs and temps a previous run of this stem left.
+  const keep = new Set(diffFiles.map((entry) => path.basename(entry.file)))
+  const stale = new RegExp(
+    `^(?:${escapeRegExp(stem)}\\.diff-\\d+\\.png|\\.compare\\.${escapeRegExp(stem)}\\.(?:html|compare\\.json|diff-\\d+\\.png)\\.\\d+\\.tmp)$`,
+  )
   for (const name of fs.readdirSync(compareDir))
-    if (
-      name.startsWith(`${stem}.diff-`) ||
-      name === `${stem}.compare.json` ||
-      (name.startsWith('.compare.') && name.endsWith('.tmp'))
-    )
-      fs.rmSync(path.join(compareDir, name), { force: true })
-  for (const entry of diffFiles) atomic(entry.file, entry.bytes)
-  atomic(jsonFile, JSON.stringify(json, null, 2) + '\n')
-  atomic(outputFile, html)
+    if (stale.test(name) && !keep.has(name))
+      fs.rmSync(path.join(compareDir, name), { recursive: true, force: true })
   return {
     outputFile,
     comparePath: outputFile,

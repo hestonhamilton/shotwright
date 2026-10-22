@@ -525,3 +525,61 @@ it('pins GET and HEAD trace routes for shot and failure references across effect
     }
   }
 })
+
+it('withholds trace-like data artifacts on non-loopback binds for GET and HEAD alike unless traces are included', async () => {
+  const { runDir } = writeRun()
+  const manifestPath = path.join(runDir, 'manifest.json')
+  const value = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Manifest
+  const artifact = (name: string, file: string, contentType: string) => ({
+    name,
+    spec: 'home.shots.ts',
+    file,
+    contentType,
+    bytes: 5,
+    testId: 'failed-test',
+  })
+  value.artifacts = [
+    // The disclosure case: a consumer-published Playwright trace as a data artifact.
+    artifact('browser-trace.zip', 'data/browser-trace.zip', 'application/zip'),
+    // The predicate's other arms: MIME alone, name alone, and an ordinary data file.
+    artifact('archive', 'data/archive.bin', 'application/zip'),
+    artifact('trace', 'data/capture', 'application/octet-stream'),
+    artifact('reading.json', 'data/reading.json', 'application/json'),
+  ]
+  fs.mkdirSync(path.join(runDir, 'data'))
+  for (const file of ['browser-trace.zip', 'archive.bin', 'capture', 'reading.json'])
+    fs.writeFileSync(path.join(runDir, 'data', file), 'bytes')
+  fs.writeFileSync(manifestPath, JSON.stringify(value))
+  const { createGalleryRequestHandler } = await import('../../src/gallery/server.js')
+  for (const boundAddress of ['127.0.0.1', '::1', '0.0.0.0', '::', '192.168.1.20']) {
+    for (const includeTraces of [false, true]) {
+      const httpServer = http.createServer(
+        createGalleryRequestHandler(runDir, boundAddress, includeTraces),
+      )
+      await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve))
+      const address = httpServer.address() as net.AddressInfo
+      const server: GalleryServer = {
+        server: httpServer,
+        host: '127.0.0.1',
+        port: address.port,
+        close: () =>
+          new Promise((resolve, reject) =>
+            httpServer.close((error) => (error ? reject(error) : resolve())),
+          ),
+      }
+      servers.push(server)
+      const loopback = boundAddress === '127.0.0.1' || boundAddress === '::1'
+      const expected = loopback || includeTraces ? 200 : 404
+      for (const target of ['/data/browser-trace.zip', '/data/archive.bin', '/data/capture']) {
+        const get = await request(server, target, { method: 'GET' })
+        const head = await request(server, target, { method: 'HEAD' })
+        const label = `${boundAddress} includeTraces=${includeTraces} ${target}`
+        expect(get.status, `GET ${label}`).toBe(expected)
+        expect(head.status, `HEAD ${label}`).toBe(get.status)
+        if (expected === 200) expect(get.body.toString()).toBe('bytes')
+      }
+      for (const method of ['GET', 'HEAD'])
+        expect((await request(server, '/data/reading.json', { method })).status).toBe(200)
+    }
+  }
+})

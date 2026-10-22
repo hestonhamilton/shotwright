@@ -5,7 +5,7 @@ import { PNG } from 'pngjs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildCompareModel } from '../../src/gallery/compare-model.js'
 import { loadGalleryModel } from '../../src/gallery/model.js'
-import { compareImages } from '../../src/gallery/pixels.js'
+import { compareImageFiles, compareImages } from '../../src/gallery/pixels.js'
 import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
 const roots: string[] = []
@@ -40,25 +40,60 @@ function withTextChunk(source: Buffer): Buffer {
     source.subarray(source.length - 12),
   ])
 }
+function writeShots(dir: string, rows: { spec: string; name: string; png: Buffer }[]): string[] {
+  return rows.map(({ spec, name, png: image }) => {
+    const file = `shots/${spec}/${name}.png`
+    fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true })
+    fs.writeFileSync(path.join(dir, file), image)
+    return file
+  })
+}
 function run(
   base: string,
   id: string,
   rows: { spec: string; name: string; png: Buffer }[],
-  legacy = false,
 ): string {
   const dir = path.join(base, id)
   fs.mkdirSync(dir)
-  const shots = rows.map(({ spec, name, png: image }) => {
-    const file = `shots/${spec}/${name}.png`
-    fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true })
-    fs.writeFileSync(path.join(dir, file), image)
-    return makeShot({ spec, name, file })
-  })
-  const manifest = makeManifest({ runId: id, shots })
+  const files = writeShots(dir, rows)
+  const shots = rows.map(({ spec, name }, index) => makeShot({ spec, name, file: files[index]! }))
   fs.writeFileSync(
     path.join(dir, 'manifest.json'),
-    JSON.stringify(legacy ? { ...manifest, manifestVersion: 1 } : manifest),
+    JSON.stringify(makeManifest({ runId: id, shots })),
   )
+  return dir
+}
+/** A genuine v1 manifest as 0.1 wrote it: no status, tests, artifacts, failures or publication; shots carry no testId, checked or retry. */
+function runV1(
+  base: string,
+  id: string,
+  rows: { spec: string; name: string; png: Buffer }[],
+): string {
+  const dir = path.join(base, id)
+  fs.mkdirSync(dir)
+  const files = writeShots(dir, rows)
+  const manifest = {
+    manifestVersion: 1,
+    runId: id,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    finishedAt: '2026-01-01T00:00:01.000Z',
+    shotwrightVersion: '0.1.0',
+    playwrightVersion: '1.50.0',
+    flags: { only: [], video: false, trace: false },
+    shots: rows.map(({ spec, name }, index) => ({
+      name,
+      spec,
+      file: files[index]!,
+      viewport: { width: 4, height: 4 },
+      deviceScaleFactor: 1,
+      fullPage: true,
+      capturedAt: '2026-01-01T00:00:00.500Z',
+      durationMs: 5,
+      video: null,
+      trace: null,
+    })),
+  }
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest))
   return dir
 }
 
@@ -83,12 +118,45 @@ describe('seven-state compare model', () => {
       bSize: { width: 4, height: 4 },
     })
     expect(PNG.sync.read(verdict.diffPng!).width).toBe(4)
-    expect(compareImages(a, png(0, 5), { threshold: 0.1, includeAA: false }).state).toBe(
-      'size-changed',
+    // Size change: no diff PNG, no pixel counts, and each side's dimensions as decoded (no pad or crop).
+    expect(compareImages(png(0, 4, 4), png(0, 5, 3), { threshold: 0.1, includeAA: false })).toEqual(
+      {
+        state: 'size-changed',
+        differentPixels: null,
+        totalPixels: null,
+        ratio: null,
+        aSize: { width: 4, height: 4 },
+        bSize: { width: 5, height: 3 },
+        diffPng: null,
+      },
     )
+    expect(compareImages(a, Buffer.from('broken'), { threshold: 0.1, includeAA: false })).toEqual({
+      state: 'unreadable',
+      differentPixels: null,
+      totalPixels: null,
+      ratio: null,
+      aSize: null,
+      bSize: null,
+      diffPng: null,
+      error: 'B: unreadable PNG: not a PNG file (missing PNG signature)',
+    })
     expect(
-      compareImages(a, Buffer.from('broken'), { threshold: 0.1, includeAA: false }),
-    ).toMatchObject({ state: 'unreadable', error: expect.any(String) })
+      compareImageFiles(
+        a.subarray(0, a.length - 20),
+        a,
+        { threshold: 0.1, includeAA: false },
+        {
+          a: 'shots/x/cut.png',
+          b: 'shots/x/whole.png',
+        },
+      ),
+    ).toEqual({
+      verdict: expect.objectContaining({
+        state: 'unreadable',
+        error: 'A: unreadable PNG (shots/x/cut.png): truncated PNG (data ends early)',
+      }),
+      errorDetail: 'A: There are some read requests waitng on finished stream',
+    })
   })
   it('pins composite identity across v1 and v2 runs with a shared name in two specs', () => {
     const base = root(),
@@ -96,8 +164,16 @@ describe('seven-state compare model', () => {
         { spec: 'a.shots.ts', name: 'shared', png: png(0) },
         { spec: 'b.shots.ts', name: 'shared', png: png(255) },
       ]
-    const a = run(base, 'run-a', rows, true),
+    const a = runV1(base, 'run-a', rows),
       b = run(base, 'run-b', rows)
+    const raw = JSON.parse(fs.readFileSync(path.join(a, 'manifest.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    for (const key of ['status', 'tests', 'artifacts', 'failures', 'publication'])
+      expect(raw).not.toHaveProperty(key)
+    for (const entry of raw.shots as Record<string, unknown>[])
+      for (const key of ['testId', 'checked', 'retry']) expect(entry).not.toHaveProperty(key)
     const model = buildCompareModel(loadGalleryModel(a), loadGalleryModel(b), {
       aRunDir: a,
       bRunDir: b,
@@ -127,6 +203,10 @@ describe('seven-state compare model', () => {
       bad: 'unreadable',
       new: 'added',
       old: 'removed',
+    })
+    expect(model.pairs.find((pair) => pair.name === 'bad')).toMatchObject({
+      error: 'A: unreadable PNG (shots/x/bad.png): not a PNG file (missing PNG signature)',
+      errorDetail: 'A: There are some read requests waitng on finished stream',
     })
   })
 })

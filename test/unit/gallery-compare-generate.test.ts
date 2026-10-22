@@ -2,12 +2,18 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PNG } from 'pngjs'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { generateCompareGallery } from '../../src/gallery/generate-compare.js'
 import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
 const roots: string[] = []
+const pixelmatchVersion = (
+  JSON.parse(fs.readFileSync('node_modules/pixelmatch/package.json', 'utf8')) as {
+    version: string
+  }
+).version
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true })
 })
 function fixture(): { a: string; b: string } {
@@ -42,9 +48,8 @@ it('pins compare.json numbers, default settings, diff PNG and generation result 
   expect(result.gate).toEqual({ nonParity: 1, failOnChange: false })
   expect(summary).toMatchObject({
     tool: 'shotwright',
-    comparator: 'pixelmatch',
-    threshold: 0.1,
-    includeAA: false,
+    comparator: { name: 'pixelmatch', version: pixelmatchVersion },
+    settings: { threshold: 0.1, includeAA: false, source: 'default' },
     pairs: [{ state: 'changed', totalPixels: 9, aSize: { width: 3, height: 3 } }],
   })
   expect(PNG.sync.read(fs.readFileSync(path.join(dir, summary.pairs[0].diff))).width).toBe(3)
@@ -63,6 +68,42 @@ it('pins recovery from partial prior write and atomic temp cleanup', () => {
   expect(fs.existsSync(path.join(dir, 'run-a.vs.run-b.diff-99.png'))).toBe(false)
   expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
 })
+it('keeps the previous complete HTML, JSON and diff PNG when staging the new HTML fails', () => {
+  const { a, b } = fixture(),
+    first = generateCompareGallery(a, b)
+  const dir = path.dirname(first.outputFile)
+  const names = ['run-a.vs.run-b.html', 'run-a.vs.run-b.compare.json', 'run-a.vs.run-b.diff-0.png']
+  const before = names.map((name) => fs.readFileSync(path.join(dir, name)))
+  // Make the HTML's temp target a directory so its staged write fails after the diff and JSON temps.
+  const blocker = path.join(dir, `.compare.run-a.vs.run-b.html.${process.pid}.tmp`)
+  fs.mkdirSync(blocker)
+  fs.writeFileSync(path.join(a, 'shots/one.png'), fs.readFileSync(path.join(b, 'shots/one.png')))
+  expect(() => generateCompareGallery(a, b)).toThrow(/EISDIR/)
+  expect(names.map((name) => fs.readFileSync(path.join(dir, name)))).toEqual(before)
+  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([
+    path.basename(blocker),
+  ])
+  fs.rmdirSync(blocker)
+  const recovered = generateCompareGallery(a, b)
+  expect(recovered.counts.identical).toBe(1)
+  expect(fs.existsSync(path.join(dir, 'run-a.vs.run-b.diff-0.png'))).toBe(false)
+  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
+})
+it('keeps the previous complete HTML when renaming the new HTML into place fails', () => {
+  const { a, b } = fixture(),
+    first = generateCompareGallery(a, b)
+  const before = fs.readFileSync(first.outputFile)
+  const rename = fs.renameSync
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (to === first.outputFile) throw new Error('injected rename failure')
+    rename(from, to)
+  })
+  expect(() => generateCompareGallery(a, b, { threshold: 0.5 })).toThrow('injected rename failure')
+  expect(fs.readFileSync(first.outputFile)).toEqual(before)
+  expect(
+    fs.readdirSync(path.dirname(first.outputFile)).filter((name) => name.startsWith('.compare.')),
+  ).toEqual([])
+})
 it('records caller threshold and includeAA and echoes the optional parity gate', () => {
   const { a, b } = fixture()
   const result = generateCompareGallery(a, b, {
@@ -77,8 +118,7 @@ it('records caller threshold and includeAA and echoes the optional parity gate',
     ),
   )
   expect(summary).toMatchObject({
-    threshold: 0.25,
-    includeAA: true,
+    settings: { threshold: 0.25, includeAA: true, source: 'option' },
     gate: { nonParity: 1, failOnChange: true },
   })
   expect(result.gate).toEqual({ nonParity: 1, failOnChange: true })
@@ -134,5 +174,63 @@ it('pins the artifact corpus: text and JSON line diffs, binary byte equality, an
   const different = generateCompareGallery(a, changed)
   expect(different.counts.changed).toBe(5)
   expect(different.model.pairs.filter((pair) => pair.diffText?.includes('- '))).toHaveLength(4)
+  expect(different.model.pairs.find((pair) => pair.name === 'page-10k.html')).toMatchObject({
+    state: 'changed',
+    diffFormat: 'source',
+    diffText: '- <p>reviewable HTML</p>\n+ <p>reviewable HTMLX/p>',
+  })
   expect(different.model.pairs.find((pair) => pair.name.endsWith('.xlsx'))?.diffText).toBeNull()
+})
+
+it('decides JSON parity on source bytes: a formatting-only change is changed and counts toward the gate', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-json-parity-'))
+  roots.push(root)
+  const makeRun = (id: string, source: string): string => {
+    const dir = path.join(root, id)
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'data/value.json'), source)
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify(
+        makeManifest({
+          runId: id,
+          artifacts: [
+            {
+              spec: 'data.shots.ts',
+              name: 'value.json',
+              file: 'data/value.json',
+              contentType: 'application/json',
+              bytes: Buffer.byteLength(source),
+              testId: 'test-data',
+            },
+          ],
+        }),
+      ),
+    )
+    return dir
+  }
+  const a = makeRun('compact', '{"a":1}'),
+    spaced = makeRun('spaced', '{ "a": 1 }'),
+    same = makeRun('same', '{"a":1}'),
+    valueChanged = makeRun('value-changed', '{"a":2}')
+  const formatting = generateCompareGallery(a, spaced)
+  expect(formatting.model.pairs[0]).toMatchObject({
+    state: 'changed',
+    diffFormat: 'source',
+    diffText: '- {"a":1}\n+ { "a": 1 }',
+  })
+  expect(formatting.gate.nonParity).toBe(1)
+  expect(formatting.counts.changed).toBe(1)
+  expect(generateCompareGallery(a, same).model.pairs[0]).toMatchObject({
+    state: 'identical',
+    diffText: null,
+  })
+  const semantic = generateCompareGallery(a, valueChanged)
+  expect(semantic.model.pairs[0]).toMatchObject({
+    state: 'changed',
+    diffFormat: 'pretty-json',
+    diffText: '-   "a": 1\n+   "a": 2',
+  })
+  expect(fs.readFileSync(semantic.outputFile, 'utf8')).toContain('Diff shown pretty-printed')
+  expect(fs.readFileSync(formatting.outputFile, 'utf8')).not.toContain('Diff shown pretty-printed')
 })

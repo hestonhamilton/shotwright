@@ -5,7 +5,7 @@ import { GALLERY_CSS, GALLERY_SCRIPT } from './assets.js'
 import type { ArtifactReference, GalleryModel, GalleryShot, GallerySpec } from './model.js'
 import { validateRelativePath } from './model.js'
 
-const siblingWarning = 'requires this gallery beside the run directory'
+export const siblingWarning = 'requires this gallery beside the run directory'
 
 export function escapeHtml(value: string): string {
   return value.replace(
@@ -29,7 +29,7 @@ function count(value: number, singular: string): string {
   return `${value} ${singular}${value === 1 ? '' : 's'}`
 }
 
-function siblingHref(relativePath: string): string {
+export function siblingHref(relativePath: string): string {
   return relativePath
     .split('/')
     .map((segment) =>

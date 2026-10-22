@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import type { ArtifactEntry } from '../manifest.js'
-import { compareImages } from './pixels.js'
+import { compareImageFiles } from './pixels.js'
 import {
   shotKey,
   validateRelativePath,
@@ -25,8 +25,12 @@ export interface ComparePair {
   b: GalleryShot | ArtifactEntry | null
   verdict: CompareVerdict | null
   diffText: string | null
+  /** How `diffText` is shown: source lines, or both JSON values re-serialized for display. */
+  diffFormat: 'source' | 'pretty-json' | null
   contentType: string | null
   error: string | null
+  /** Raw reader or decoder message behind `error`, for `compare.json` only. */
+  errorDetail: string | null
   order: number
 }
 
@@ -59,7 +63,16 @@ export function comparePairOrder(a: ComparePair, b: ComparePair): number {
   return rank(a.state) - rank(b.state) || a.order - b.order
 }
 
-function bytes(runDir: string | undefined, file: string, dataUri?: string): Buffer {
+class ReadFailure extends Error {
+  constructor(
+    message: string,
+    readonly detail: string,
+  ) {
+    super(message)
+  }
+}
+
+function readBytes(runDir: string | undefined, file: string, dataUri?: string): Buffer {
   if (runDir) {
     const root = fs.realpathSync(runDir)
     let target = root
@@ -75,6 +88,35 @@ function bytes(runDir: string | undefined, file: string, dataUri?: string): Buff
   throw new Error('referenced file unavailable')
 }
 
+/** Side- and path-labelled read failure; the detail carries no host path. */
+function bytes(
+  side: 'A' | 'B',
+  runDir: string | undefined,
+  file: string,
+  dataUri?: string,
+): Buffer {
+  try {
+    return readBytes(runDir, file, dataUri)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    const reason =
+      code === 'ENOENT' || code === 'ENOTDIR'
+        ? 'file not found'
+        : code === 'EACCES' || code === 'EPERM'
+          ? 'permission denied'
+          : code !== undefined
+            ? `read failed (${code})`
+            : error instanceof Error
+              ? error.message
+              : String(error)
+    const syscall = (error as NodeJS.ErrnoException).syscall
+    throw new ReadFailure(
+      `${side}: unreadable file (${file}): ${reason}`,
+      `${side}: ${code === undefined ? reason : `${code}${syscall ? ` (${syscall})` : ''}`}`,
+    )
+  }
+}
+
 function textLike(mime: string): boolean {
   return (
     mime.toLowerCase().startsWith('text/') ||
@@ -82,16 +124,43 @@ function textLike(mime: string): boolean {
   )
 }
 
-function lines(value: Buffer, mime: string): string[] {
-  const source = value.toString('utf8')
-  if (/\bjson\b|\+json\b/i.test(mime)) {
-    try {
-      return JSON.stringify(JSON.parse(source), null, 2).split('\n')
-    } catch {
-      /* compare source */
+function isJson(mime: string): boolean {
+  return /\bjson\b|\+json\b/i.test(mime)
+}
+
+function sourceLines(value: Buffer): string[] {
+  return value.toString('utf8').split('\n')
+}
+
+function prettyJsonLines(value: Buffer): string[] | null {
+  try {
+    return JSON.stringify(JSON.parse(value.toString('utf8')), null, 2).split('\n')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Parity is decided on the source bytes, never on re-serialized output: two
+ * byte-distinct JSON files are `changed` even when they parse to one value. A
+ * JSON change whose values also differ is *displayed* pretty-printed, which the
+ * page says; a formatting-only change shows the differing source lines.
+ */
+function textDiff(
+  a: Buffer,
+  b: Buffer,
+  aMime: string,
+  bMime: string,
+): { text: string; format: 'source' | 'pretty-json' } {
+  if (isJson(aMime) && isJson(bMime)) {
+    const prettyA = prettyJsonLines(a),
+      prettyB = prettyJsonLines(b)
+    if (prettyA && prettyB) {
+      const pretty = lineDiff(prettyA, prettyB)
+      if (pretty) return { text: pretty, format: 'pretty-json' }
     }
   }
-  return source.split('\n')
+  return { text: lineDiff(sourceLines(a), sourceLines(b)), format: 'source' }
 }
 
 function lineDiff(a: string[], b: string[]): string {
@@ -150,8 +219,10 @@ export function buildCompareModel(
         state: x === null ? 'added' : y === null ? 'removed' : 'unreadable',
         verdict: null,
         diffText: null,
+        diffFormat: null,
         contentType: null,
         error: null,
+        errorDetail: null,
         order: pairs.length,
       }
       if (x && y) {
@@ -159,27 +230,34 @@ export function buildCompareModel(
           if (kind === 'shot') {
             const ax = x as GalleryShot,
               by = y as GalleryShot
-            const verdict = compareImages(
-              bytes(options.aRunDir, ax.entry.file, ax.image?.dataUri),
-              bytes(options.bRunDir, by.entry.file, by.image?.dataUri),
+            const { verdict, errorDetail } = compareImageFiles(
+              bytes('A', options.aRunDir, ax.entry.file, ax.image?.dataUri),
+              bytes('B', options.bRunDir, by.entry.file, by.image?.dataUri),
               opts,
+              { a: ax.entry.file, b: by.entry.file },
             )
             pair.verdict = verdict
             pair.state = verdict.state
             pair.error = verdict.error ?? null
+            pair.errorDetail = errorDetail
           } else {
             const ax = x as ArtifactEntry,
               by = y as ArtifactEntry
-            const aBytes = bytes(options.aRunDir, ax.file),
-              bBytes = bytes(options.bRunDir, by.file)
+            const aBytes = bytes('A', options.aRunDir, ax.file),
+              bBytes = bytes('B', options.bRunDir, by.file)
             pair.contentType = by.contentType
-            if (textLike(ax.contentType) && textLike(by.contentType)) {
-              pair.diffText = lineDiff(lines(aBytes, ax.contentType), lines(bBytes, by.contentType))
-              pair.state = pair.diffText ? 'changed' : 'identical'
-            } else pair.state = aBytes.equals(bBytes) ? 'identical' : 'changed'
+            pair.state = aBytes.equals(bBytes) ? 'identical' : 'changed'
+            if (pair.state === 'changed' && textLike(ax.contentType) && textLike(by.contentType)) {
+              const diff = textDiff(aBytes, bBytes, ax.contentType, by.contentType)
+              if (diff.text) {
+                pair.diffText = diff.text
+                pair.diffFormat = diff.format
+              }
+            }
           }
         } catch (error) {
           pair.error = error instanceof Error ? error.message : String(error)
+          pair.errorDetail = error instanceof ReadFailure ? error.detail : pair.error
           pair.state = 'unreadable'
         }
       }

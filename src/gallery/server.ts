@@ -112,6 +112,38 @@ function addAllowed(
   allowlist.set(urlPath, { file, mime, size: fs.statSync(file).size })
 }
 
+interface ManifestReference {
+  file: string
+  mime: string
+  name: string
+  kind: 'screenshot' | 'video' | 'trace' | 'artifact' | 'failure'
+}
+
+const LOOPBACK_BINDS = new Set(['127.0.0.1', '::1', 'localhost'])
+
+export function isLoopbackBind(boundAddress: string): boolean {
+  return LOOPBACK_BINDS.has(boundAddress.toLowerCase())
+}
+
+/**
+ * The single trace predicate (traces can carry cookies and storage): a
+ * reference is trace-like when its MIME type is `application/zip`, or its name
+ * or file basename is `trace` or ends with `.zip`. It applies to every
+ * manifest reference, shot traces, failure files and data artifacts alike.
+ */
+export function isTraceLike(reference: { file: string; mime: string; name: string }): boolean {
+  const mime = reference.mime.split(';')[0]!.trim().toLowerCase()
+  const looksLikeTrace = (value: string): boolean => {
+    const lower = value.toLowerCase()
+    return lower === 'trace' || lower.endsWith('.zip')
+  }
+  return (
+    mime === 'application/zip' ||
+    looksLikeTrace(reference.name) ||
+    looksLikeTrace(path.posix.basename(reference.file))
+  )
+}
+
 export function buildGalleryAllowlist(
   runDir: string,
   galleryPath = path.join(runDir, 'gallery.html'),
@@ -128,46 +160,55 @@ export function buildGalleryAllowlist(
   addAllowed(allowlist, '/gallery.html', canonicalGallery, 'text/html; charset=utf-8')
 
   const manifest = readManifest(canonicalRun)
-  const tracePaths = new Set<string>([
-    ...manifest.shots.flatMap((shot) => (shot.trace === null ? [] : [shot.trace])),
-    ...manifest.failures.flatMap((failure) =>
-      failure.files
-        .filter((file) => file.contentType === 'application/zip' || /trace/i.test(file.name))
-        .map((file) => file.file),
-    ),
-  ])
-  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(options.boundAddress ?? '127.0.0.1')
-  const addReference = (relativePath: string, mime: string): void => {
-    if (tracePaths.has(relativePath) && !loopback && !options.includeTraces) return
-    const canonical = canonicalReferencedFile(canonicalRun, relativePath)
+  // Classify every manifest reference once, then apply one trace predicate to all of them.
+  const references: ManifestReference[] = []
+  for (const shot of manifest.shots) {
+    references.push({ file: shot.file, mime: 'image/png', name: shot.name, kind: 'screenshot' })
+    if (shot.video !== null)
+      references.push({ file: shot.video, mime: 'video/webm', name: 'video', kind: 'video' })
+    if (shot.trace !== null)
+      references.push({ file: shot.trace, mime: 'application/zip', name: 'trace', kind: 'trace' })
+  }
+  for (const artifact of manifest.artifacts)
+    references.push({
+      file: artifact.file,
+      mime: artifact.contentType,
+      name: artifact.name,
+      kind: 'artifact',
+    })
+  for (const failure of manifest.failures)
+    for (const file of failure.files)
+      references.push({ file: file.file, mime: file.contentType, name: file.name, kind: 'failure' })
+
+  for (const { file, kind } of references) {
+    const extension = path.posix.extname(file).toLowerCase()
+    if (
+      (kind === 'screenshot' && extension !== '.png') ||
+      (kind === 'video' && extension !== '.webm') ||
+      (kind === 'trace' && extension !== '.zip')
+    ) {
+      throw new Error(`shotwright gallery: unsupported ${kind} extension: ${file}`)
+    }
+  }
+
+  const loopback = isLoopbackBind(options.boundAddress ?? '127.0.0.1')
+  // A path any reference marks trace-like is withheld, whatever else also references it.
+  const withheld = new Set(
+    !loopback && !options.includeTraces
+      ? references.filter(isTraceLike).map((reference) => reference.file)
+      : [],
+  )
+  for (const { file, mime } of references) {
+    if (withheld.has(file)) continue
+    const canonical = canonicalReferencedFile(canonicalRun, file)
     if (canonical !== null)
       addAllowed(
         allowlist,
-        encodedUrlPath(relativePath),
+        encodedUrlPath(file),
         canonical,
         /^[\w.+-]+\/[\w.+-]+(?:; charset=utf-8)?$/i.test(mime) ? mime : 'application/octet-stream',
       )
   }
-  for (const shot of manifest.shots) {
-    const references: Array<[string, string, string]> = [[shot.file, 'screenshot', 'image/png']]
-    if (shot.video !== null) references.push([shot.video, 'video', 'video/webm'])
-    if (shot.trace !== null) references.push([shot.trace, 'trace', 'application/zip'])
-
-    for (const [relativePath, kind, mime] of references) {
-      const extension = path.posix.extname(relativePath).toLowerCase()
-      if (
-        (kind === 'screenshot' && extension !== '.png') ||
-        (kind === 'video' && extension !== '.webm') ||
-        (kind === 'trace' && extension !== '.zip')
-      ) {
-        throw new Error(`shotwright gallery: unsupported ${kind} extension: ${relativePath}`)
-      }
-      addReference(relativePath, mime)
-    }
-  }
-  for (const artifact of manifest.artifacts) addReference(artifact.file, artifact.contentType)
-  for (const failure of manifest.failures)
-    for (const file of failure.files) addReference(file.file, file.contentType)
   return allowlist
 }
 
