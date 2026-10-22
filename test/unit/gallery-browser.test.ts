@@ -418,3 +418,41 @@ describe('gallery browser behavior', () => {
     await context.close()
   })
 })
+
+it('keeps an artifact-only spec visible and its escaped preview and full-file link usable in the browser', async () => {
+  const runDir = path.join(root, 'artifact-only')
+  fs.mkdirSync(path.join(runDir, 'data'), { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'data/page.html'), '<h1>review source</h1>')
+  fs.writeFileSync(
+    path.join(runDir, 'manifest.json'),
+    JSON.stringify(
+      makeManifest({
+        runId: 'artifact-only',
+        artifacts: [
+          {
+            name: 'page.html',
+            spec: 'only-data.shots.ts',
+            file: 'data/page.html',
+            contentType: 'text/html',
+            bytes: 22,
+            testId: 'data-test',
+          },
+        ],
+      }),
+    ),
+  )
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  try {
+    await page.goto(pathToFileURL(generateGallery(runDir).galleryPath).href)
+    expect(await page.getByRole('heading', { name: 'only-data.shots.ts' }).isVisible()).toBe(true)
+    expect(await page.locator('.data-preview').textContent()).toBe('<h1>review source</h1>')
+    expect(await page.getByRole('link', { name: 'Download full file' }).getAttribute('href')).toBe(
+      'data/page.html',
+    )
+    expect(errors).toEqual([])
+  } finally {
+    await page.close()
+  }
+})

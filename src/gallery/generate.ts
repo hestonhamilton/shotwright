@@ -24,7 +24,7 @@ export function generateGallery(runDir: string, manifest?: Manifest): GalleryGen
     throw new Error('shotwright gallery: injected generator failure')
   }
   const model = manifest ? buildGalleryModel(runDir, manifest) : loadGalleryModel(runDir)
-  const html = renderGallery(model)
+  const html = renderGallery(model, runDir)
   const galleryPath = path.join(runDir, 'gallery.html')
   const tempPath = path.join(runDir, `.gallery.${process.pid}-${++generationCounter}.tmp`)
   try {

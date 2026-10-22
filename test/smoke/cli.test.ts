@@ -384,13 +384,24 @@ function expectCompareGallery(): void {
     const html = fs.readFileSync(comparePath, 'utf8')
     expect(html).toContain(unfilteredRun.manifest.runId)
     expect(html).toContain(videoRun.manifest.runId)
-    expect(html).toContain('Review artifact · no verdicts')
-    expect(html).toContain('5 name buckets')
-    expect(html).toContain('unmatched by name')
-    expect(html).toContain('renames appear unmatched')
+    expect(html).toContain('Pairing key: spec + name · threshold 0.1 · includeAA false')
+    expect(html).toMatch(/Gate: \d+ non-parity pairs? · fail-on-change off/)
+    expect(html).toContain('aria-label="Verdict counts"')
     expect(html).toContain('form-filled')
     expect(html).toContain('about-desktop')
-    expect(occurrences(html, 'data:image/png;base64,')).toBe(7)
+    // Each present side embeds its PNG once in the image; each diff embeds once.
+    const summary = JSON.parse(
+      fs.readFileSync(comparePath.replace(/\.html$/, '.compare.json'), 'utf8'),
+    ) as { pairs: Array<{ kind: string; state: string; diff: string | null }> }
+    const shotPairs = summary.pairs.filter((pair) => pair.kind === 'shot')
+    expect(shotPairs).toHaveLength(5)
+    const sides = shotPairs.reduce(
+      (total, pair) =>
+        total + (pair.state === 'added' ? 0 : 1) + (pair.state === 'removed' ? 0 : 1),
+      0,
+    )
+    const diffs = shotPairs.filter((pair) => pair.diff !== null).length
+    expect(occurrences(html, 'data:image/png;base64,')).toBe(sides + diffs)
     expect(Buffer.byteLength(html)).toBeLessThan(8_000_000)
   } finally {
     fs.rmSync(compareDir, { recursive: true, force: true })
@@ -774,6 +785,7 @@ function expectPackInventory(): void {
       'dist/gallery/generate-compare.js',
       'dist/gallery/generate.js',
       'dist/gallery/model.js',
+      'dist/gallery/pixels.js',
       'dist/gallery/render-compare.js',
       'dist/gallery/render.js',
       'dist/gallery/resolve.js',
@@ -1303,9 +1315,18 @@ describe('shotwright run against the demo app', () => {
       for (const [name, contents] of otherContents) {
         expect(fs.readFileSync(path.join(compareDir, name))).toEqual(contents)
       }
-      expect(fs.readdirSync(compareDir).sort()).toEqual(before)
+      // The generator owns the stem's HTML, its compare.json sidecar and its diff PNGs; nothing else.
+      const stem = path.basename(defaultFile, '.html')
+      const after = fs.readdirSync(compareDir).sort()
+      const stemOwned = after.filter((name) => name.startsWith(`${stem}.`))
+      expect(stemOwned).toContain(`${stem}.compare.json`)
+      expect(after.filter((name) => !name.startsWith(`${stem}.`))).toEqual(
+        before.filter((name) => name !== path.basename(defaultFile)),
+      )
     } finally {
-      fs.rmSync(defaultFile, { force: true })
+      for (const name of fs.readdirSync(compareDir))
+        if (name.startsWith(`${path.basename(defaultFile, '.html')}.`))
+          fs.rmSync(path.join(compareDir, name), { force: true })
       fs.rmSync(otherFile, { force: true })
     }
   }, 120_000)
