@@ -11,10 +11,12 @@ import {
 } from '../../src/manifest.js'
 
 function sidecar(overrides: Partial<ShotSidecar>): ShotSidecar {
+  const spec=overrides.spec ?? 'a.shots.ts'
+  const name=overrides.name ?? 'shot'
   return {
     name: 'shot',
     spec: 'a.shots.ts',
-    file: 'shots/a.shots.ts/shot.png',
+    file: overrides.file ?? `shots/${spec.slice(0,-'.shots.ts'.length)}/${name}.png`,
     viewport: { width: 1440, height: 960 },
     deviceScaleFactor: 2,
     fullPage: true,
@@ -104,24 +106,37 @@ describe('assembleManifest', () => {
     ).toThrow(/duplicate shot name "dup"/)
   })
 
+  it.each([
+    ['wrong file', sidecar({file:'data/a/wrong.txt'}), /file must equal shots\/a\/shot.png/],
+    ['missing field', (() => { const value=sidecar({}); delete (value as Partial<ShotSidecar>).checked; return value })(), /invalid checked/],
+    ['traversal spec', sidecar({spec:'../a.shots.ts'}), /invalid canonical spec/],
+  ])('rejects a sidecar with %s before trusting its path', (_label, invalid, message) => {
+    expect(() => assembleManifest(input([invalid]))).toThrow(message)
+  })
+
+  it('rejects a sidecar linked to an unknown testId', () => {
+    const value=input([sidecar({testId:'missing'})])
+    value.tests=[]
+    expect(() => assembleManifest(value)).toThrow(/unknown testId/)
+  })
+
   it('video/trace keys are always present: null without artifacts, paths with', () => {
     const artifacts = new Map([['t1', { video: 'video/t1.webm', trace: null }]])
     const shots = assembleManifest(
       input(
         [
           sidecar({ name: 'with', testId: 't1' }),
-          sidecar({ name: 'orphan', spec: 'b.shots.ts', testId: 'crashed-worker-test' }),
+          sidecar({ name: 'without-media', spec: 'b.shots.ts', testId: 'other-test' }),
         ],
         artifacts,
       ),
     ).shots
     const withArtifacts = shots.find((s) => s.name === 'with')!
-    const orphan = shots.find((s) => s.name === 'orphan')!
+    const withoutMedia = shots.find((s) => s.name === 'without-media')!
     expect(withArtifacts.video).toBe('video/t1.webm')
     expect(withArtifacts.trace).toBeNull()
-    // Orphan sidecars (crashed worker → no artifact record) still assemble.
-    expect(orphan.video).toBeNull()
-    expect(orphan.trace).toBeNull()
+    expect(withoutMedia.video).toBeNull()
+    expect(withoutMedia.trace).toBeNull()
   })
 
   it('shots from the same test share its video path', () => {

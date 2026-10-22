@@ -44,6 +44,19 @@ describe('real Playwright contract consumer',()=>{
     expect(fs.readlinkSync(path.join(out,'latest'))).toBe(previous)
   })
 
+  it('exits nonzero after publishing a gallery failure without moving latest',()=>{
+    const previous=fs.readlinkSync(path.join(out,'latest'))
+    const result=run(['--grep','same name'],{SHOTWRIGHT_INJECT_GALLERY_FAILURE:'1'})
+    expect(result.status).not.toBe(0)
+    expect(result.stdout+result.stderr).toContain('gallery publication failed')
+    const {dir,manifest}=newest()
+    expect(fs.existsSync(path.join(dir,'manifest.json'))).toBe(true)
+    expect(manifest.status).toBe('passed')
+    expect(manifest.publication.gallery).toMatchObject({ok:false,error:expect.stringContaining('injected')})
+    expect(fs.existsSync(path.join(dir,'gallery.html'))).toBe(false)
+    expect(fs.readlinkSync(path.join(out,'latest'))).toBe(previous)
+  })
+
   it('keeps failure evidence and leaves latest at the passed run',()=>{
     const prior=fs.readlinkSync(path.join(out,'latest'))
     const result=run(['--grep','fails after capture'])
@@ -58,7 +71,7 @@ describe('real Playwright contract consumer',()=>{
   })
   it('no-op check records checked, filtered and thrown callbacks write nothing, and fullPage bytes match',()=>{
     const good=run(['--grep','no-op check'],{SHOTWRIGHT_ONLY:'tall'})
-    expect(good.status,good.stderr).toBe(0)
+    expect(good.status,good.stdout+good.stderr).toBe(0)
     const {dir,manifest}=newest()
     expect(manifest.shots[0]?.checked).toBe(true)
     expect(fs.readFileSync(path.join(dir,manifest.shots[0]!.file))).toEqual(fs.readFileSync(path.join(dir,'explicit.png')))

@@ -25,7 +25,7 @@ const failureMarker = 'induced smoke failure marker'
 const stdoutMarker = 'induced smoke stdout marker'
 const stderrMarker = 'induced smoke stderr marker'
 const galleryFailureMarker = 'shotwright gallery: injected generator failure'
-const intrinsicBadge = 'Published manifest'
+const intrinsicBadge = 'Run status:'
 const syntheticRunId = 'synthetic-gallery-60'
 const corpusGenerator = path.join(root, 'test/fixtures/generate-gallery-corpus.mjs')
 const consumerPnpmStore = path.join(root, 'local/consumer-pnpm-store')
@@ -474,10 +474,17 @@ walkthrough('induced smoke failure', async ({ page }) => {
 function expectInjectedGalleryFailurePreservesRunContract(): void {
   const previousLatest = fs.readlinkSync(path.join(outputDir, 'latest'))
   const before = new Set(runDirectories())
-  invokeCli(['--only', 'theme-dark'], { SHOTWRIGHT_INJECT_GALLERY_FAILURE: '1' })
+  let failure: unknown
+  try {
+    invokeCli(['--only', 'theme-dark'], { SHOTWRIGHT_INJECT_GALLERY_FAILURE: '1' })
+  } catch (error) {
+    failure = error
+  }
 
   const failedRunIds = runDirectories().filter((entry) => !before.has(entry))
   try {
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain(galleryFailureMarker)
     expect(failedRunIds).toHaveLength(1)
     const runId = failedRunIds[0]!
     const runDir = path.join(outputDir, runId)

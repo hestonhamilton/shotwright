@@ -68,11 +68,44 @@ describe('reporter identity layout', () => {
     prefixes.set(digest.slice(0,12),'other-digest')
     expect(reporter.stem('sub/a.shots.ts','Équal title','three','project',prefixes)).toBe(`sub/a/e-qual-title-${digest}`)
   })
-  it('duplicate attachment names receive order suffixes', () => {
-    const reporter=new ShotwrightReporter() as unknown as {attachmentName:(name:string,source:string,names:Map<string,number>)=>string}
-    const names=new Map<string,number>()
-    expect(reporter.attachmentName('error-context','context.md',names)).toBe('error-context.md')
-    expect(reporter.attachmentName('error-context','context.md',names)).toBe('error-context-2.md')
+  it('copies distinct attachment bytes for colliding names and equal-title digest prefixes', async () => {
+    const run=createRunDir(tmpDir())
+    vi.stubEnv('SHOTWRIGHT_RUN_DIR',run.runDir)
+    const reporter=new ShotwrightReporter()
+    reporter.onBegin({version:'1.62.0'} as FullConfig)
+    const digests={first:'a'.repeat(12)+'b'.repeat(52),second:'a'.repeat(12)+'c'.repeat(52)}
+    ;(reporter as unknown as {digest:(id:string)=>string}).digest=id=>digests[id as keyof typeof digests]
+    const sources=['first.txt','second.txt','third.txt'].map((name,index)=>{
+      const file=path.join(run.runDir,name)
+      fs.writeFileSync(file,`source-${index}`)
+      return file
+    })
+    const test=(id:string)=>({id,title:'Same title',location:{file:'shots/home.shots.ts'},
+      parent:{project:()=>({testDir:'shots',name:'shots'})}} as never)
+    reporter.onTestEnd(test('first'),{status:'failed',retry:0,duration:1,attachments:[
+      {name:'foo-2',contentType:'text/plain',path:sources[0]},
+      {name:'foo',contentType:'text/plain',path:sources[1]},
+      {name:'foo',contentType:'text/plain',path:sources[2]},
+      {name:'report.json',contentType:'application/json',body:Buffer.from('body-one')},
+      {name:'report.json',contentType:'application/json',body:Buffer.from('body-two')},
+    ]} as never)
+    reporter.onTestEnd(test('second'),{status:'failed',retry:0,duration:1,attachments:[
+      {name:'other',contentType:'text/plain',body:Buffer.from('second-test')},
+    ]} as never)
+    await reporter.onEnd({status:'failed'} as FullResult)
+    const manifest=JSON.parse(fs.readFileSync(path.join(run.runDir,'manifest.json'),'utf8'))
+    const first=manifest.failures.find((entry:{testId:string})=>entry.testId==='first')
+    const second=manifest.failures.find((entry:{testId:string})=>entry.testId==='second')
+    expect(first.files.map((entry:{file:string})=>path.basename(entry.file))).toEqual([
+      'foo-2.txt','foo.txt','foo-3.txt','report.json','report-2.json',
+    ])
+    expect(new Set(first.files.map((entry:{file:string})=>entry.file)).size).toBe(5)
+    expect(first.files.map((entry:{file:string})=>fs.readFileSync(path.join(run.runDir,entry.file),'utf8'))).toEqual([
+      'source-0','source-1','source-2','body-one','body-two',
+    ])
+    expect(first.files[0].file).toContain(`same-title-${digests.first.slice(0,12)}/`)
+    expect(second.files[0].file).toContain(`same-title-${digests.second}/`)
+    expect(fs.readFileSync(path.join(run.runDir,second.files[0].file),'utf8')).toBe('second-test')
   })
 })
 
@@ -110,7 +143,7 @@ describe('ShotwrightReporter gallery publication', () => {
     const outputDir=tmpDir(), prior=createRunDir(outputDir), run=prepareRun(outputDir)
     updateLatestSymlink(outputDir,prior.runId)
     vi.stubEnv('SHOTWRIGHT_INJECT_GALLERY_FAILURE','1')
-    await endRun(run.runDir,'passed')
+    await expect(endRun(run.runDir,'passed')).rejects.toThrow('gallery publication failed')
     const manifest=JSON.parse(fs.readFileSync(path.join(run.runDir,'manifest.json'),'utf8'))
     expect(manifest.publication.gallery).toMatchObject({ok:false,error:expect.stringContaining('injected')})
     expect(fs.existsSync(path.join(run.runDir,'gallery.html'))).toBe(false)
@@ -125,11 +158,22 @@ describe('ShotwrightReporter gallery publication', () => {
     reporter.onBegin({version:'1.62.0'} as FullConfig)
     reporter.onTestEnd({id:'test-id',title:'fails',location:{file:'shots/home.shots.ts'},parent:{project:()=>({testDir:'shots',name:'shots'})}} as never,
       {status:'failed',retry:0,duration:1,attachments:[{name:'error-context',contentType:'text/markdown',path:'missing-context.md'}]} as never)
-    await reporter.onEnd({status:'failed'} as FullResult)
+    await expect(reporter.onEnd({status:'failed'} as FullResult)).rejects.toThrow('evidence publication failed')
     const manifest=JSON.parse(fs.readFileSync(path.join(run.runDir,'manifest.json'),'utf8'))
     expect(manifest.publication.evidence).toMatchObject({ok:false,error:expect.stringContaining('error-context')})
     expect(manifest.failures[0].files).toEqual([])
     expect(fs.readlinkSync(path.join(outputDir,'latest'))).toBe(prior.runId)
+  })
+
+  it('leaves a malformed sidecar run incomplete and cleans staging', async () => {
+    const outputDir=tmpDir(), run=prepareRun(outputDir)
+    writeSidecar(run.runDir,{kind:'shot',name:'wrong',spec:'home.shots.ts',file:'data/home/wrong.txt',
+      viewport:null,deviceScaleFactor:null,fullPage:true,capturedAt:'2026-07-29T00:00:00.000Z',
+      durationMs:0,testId:'test-id',checked:false,retry:0})
+    await expect(endRun(run.runDir,'passed')).rejects.toThrow(/invalid sidecar.*file must equal/)
+    expect(fs.existsSync(path.join(run.runDir,'manifest.json'))).toBe(false)
+    expect(fs.existsSync(path.join(run.runDir,'.sidecar'))).toBe(false)
+    expect(fs.existsSync(path.join(outputDir,'latest'))).toBe(false)
   })
 
   it('late onExit cleanup error logs without changing manifest gallery or latest', async () => {
@@ -171,7 +215,7 @@ describe('ShotwrightReporter gallery publication', () => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined)
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
-    await endRun(run.runDir, 'passed')
+    await expect(endRun(run.runDir, 'passed')).rejects.toThrow('gallery publication failed')
 
     expect(fs.existsSync(path.join(run.runDir, 'manifest.json'))).toBe(true)
     expect(fs.existsSync(path.join(run.runDir, 'gallery.html'))).toBe(false)

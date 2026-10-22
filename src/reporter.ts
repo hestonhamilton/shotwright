@@ -45,7 +45,7 @@ export default class ShotwrightReporter implements Reporter {
         const media = {video:null as string|null,trace:null as string|null}
         const failed = attempt.status !== 'passed' && attempt.status !== 'skipped'
         const failure: FailureEntry = {testId:id,files:[]}
-        const names = new Map<string,number>()
+        const names = new Set<string>()
         for (const attachment of attempt.attachments) {
           const category = attachment.name === 'video' ? 'video' : attachment.name === 'trace' ? 'trace' : 'failure'
           if (category === 'failure' && !failed) continue
@@ -100,6 +100,13 @@ export default class ShotwrightReporter implements Reporter {
     console.log(`shotwright: ${manifest.shots.length} shot(s) → ${runDir}`)
     if (galleryError) console.error(galleryError)
     if (evidenceErrors.length) console.error(evidenceErrors.join('\n'))
+    if (!manifest.publication.gallery.ok || !manifest.publication.evidence.ok) {
+      const failures = [
+        !manifest.publication.gallery.ok ? `gallery publication failed: ${manifest.publication.gallery.error}` : null,
+        !manifest.publication.evidence.ok ? `evidence publication failed: ${manifest.publication.evidence.error}` : null,
+      ].filter(Boolean)
+      throw new Error(`shotwright: ${failures.join('; ')}`)
+    }
   }
   async onExit(): Promise<void> {
     const runDir=process.env.SHOTWRIGHT_RUN_DIR
@@ -107,19 +114,25 @@ export default class ShotwrightReporter implements Reporter {
     catch(error) { console.error(`shotwright: staging cleanup failed: ${error instanceof Error?error.message:String(error)}`) }
   }
   private stem(spec:string,title:string,id:string,project:string,prefixes:Map<string,string>):string {
-    const digest=crypto.createHash('sha256').update(id).update('\0').update(project).digest('hex')
+    const digest=this.digest(id,project)
     let short=digest.slice(0,12)
     if (prefixes.has(short) && prefixes.get(short)!==digest) short=digest
     prefixes.set(short,digest)
     const slug=title.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,48)||'test'
     return `${storageSpec(spec)}/${slug}-${short}`
   }
-  private attachmentName(name:string,source:string|undefined,names:Map<string,number>):string {
-    const ext=path.extname(source ?? '').toLowerCase().replace(/[^.a-z0-9]/g,'')
-    const slug=name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,48)||'attachment'
-    const base=`${slug}${ext}`
-    const count=(names.get(base)??0)+1; names.set(base,count)
-    return count===1?base:`${slug}-${count}${ext}`
+  private digest(id:string,project:string):string {
+    return crypto.createHash('sha256').update(id).update('\0').update(project).digest('hex')
+  }
+  private attachmentName(name:string,source:string|undefined,names:Set<string>):string {
+    const extension=path.extname(source ?? name)
+    const ext=/^\.[a-z0-9]+$/i.test(extension) ? extension.toLowerCase() : ''
+    const stem=source ? name : name.slice(0,name.length-ext.length)
+    const slug=stem.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,48)||'attachment'
+    let basename=`${slug}${ext}`
+    for(let suffix=2;names.has(basename);suffix++) basename=`${slug}-${suffix}${ext}`
+    names.add(basename)
+    return basename
   }
   printsToStdio():boolean { return false }
 }

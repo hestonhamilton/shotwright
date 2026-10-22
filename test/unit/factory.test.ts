@@ -18,11 +18,19 @@ describe('defineShotsConfig', () => {
   beforeEach(() => { vi.stubEnv('SHOTWRIGHT_RUN', '1') })
   it('passes setup, workers, expect and project use while enforcing owned capture keys', () => {
     const options: ShotsConfigOptions={globalSetup:'./setup.ts',workers:1,expect:{timeout:1234},
+      forbidOnly:true,globalTeardown:'./t.ts',
       projects:[{name:'custom',use:{baseURL:'http://example.test',video:'on',trace:'on',screenshot:'on'}}]}
+    const rejectedOwnedUse: ShotsConfigOptions = {use:{
+      // @ts-expect-error trace is harness-owned
+      trace:'on',
+    }}
+    void rejectedOwnedUse
     const config=defineShotsConfig(options)
     expect(config.globalSetup).toBe('./setup.ts')
     expect(config.workers).toBe(1)
     expect(config.expect?.timeout).toBe(1234)
+    expect(config.forbidOnly).toBe(true)
+    expect(config.globalTeardown).toBe('./t.ts')
     expect(config.projects?.[0]?.use).toMatchObject({baseURL:'http://example.test',video:'off',trace:'off',screenshot:'off'})
     expect(config.reporter).toBeDefined()
   })

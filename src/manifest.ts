@@ -54,7 +54,10 @@ export function readSidecars(runDir: string): Sidecar[] {
   const dir = path.join(runDir, SIDECAR_DIR)
   if (!fs.existsSync(dir)) return []
   return fs.readdirSync(dir).filter(f => f.endsWith('.json'))
-    .map(f => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Sidecar)
+    .map(f => {
+      try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Sidecar }
+      catch (error) { throw new Error(`shotwright: invalid sidecar ${f}: invalid JSON`, { cause: error }) }
+    })
 }
 export interface AssembleInput {
   runId: string; startedAt: string; finishedAt: string; shotwrightVersion: string
@@ -62,9 +65,59 @@ export interface AssembleInput {
   publication: Manifest['publication']; tests: TestEntry[]; failures: FailureEntry[]
   sidecars: Sidecar[]; artifacts: TestArtifacts; runDir: string
 }
+function validateSidecar(value: unknown, index: number, final: Map<string, number>): Sidecar {
+  const invalid = (reason: string): never => { throw new Error(`shotwright: invalid sidecar[${index}]: ${reason}`) }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid('expected an object')
+  const sidecar = value as Record<string, unknown>
+  if (sidecar.kind !== 'shot' && sidecar.kind !== 'artifact') invalid('unknown kind')
+  if (typeof sidecar.name !== 'string' || !sidecar.name || sidecar.name === '.' || sidecar.name === '..' || /[/\\\0]/.test(sidecar.name))
+    invalid('invalid name')
+  if (typeof sidecar.spec !== 'string' || !sidecar.spec.endsWith('.shots.ts') ||
+      sidecar.spec.startsWith('/') || /^[a-z]:/i.test(sidecar.spec) || sidecar.spec.includes('\\') ||
+      sidecar.spec.slice(0, -'.shots.ts'.length).split('/').some(part => !part || part === '.' || part === '..'))
+    invalid('invalid canonical spec')
+  if (typeof sidecar.testId !== 'string' || !sidecar.testId || !final.has(sidecar.testId)) invalid('unknown testId')
+  if (typeof sidecar.retry !== 'number' || !Number.isInteger(sidecar.retry) || sidecar.retry < 0) invalid('invalid retry')
+  const storageSpec = (sidecar.spec as string).slice(0, -'.shots.ts'.length)
+  const expected = sidecar.kind === 'shot'
+    ? `shots/${storageSpec}/${sidecar.name}.png`
+    : `data/${storageSpec}/${sidecar.name}`
+  if (sidecar.file !== expected) invalid(`file must equal ${expected}`)
+  if (sidecar.kind === 'shot') {
+    const viewport = sidecar.viewport
+    if (viewport !== null && (typeof viewport !== 'object' || Array.isArray(viewport) ||
+      typeof (viewport as Viewport).width !== 'number' || !Number.isInteger((viewport as Viewport).width) || (viewport as Viewport).width < 1 ||
+      typeof (viewport as Viewport).height !== 'number' || !Number.isInteger((viewport as Viewport).height) || (viewport as Viewport).height < 1))
+      invalid('invalid viewport')
+    if (sidecar.deviceScaleFactor !== null && (typeof sidecar.deviceScaleFactor !== 'number' ||
+      !Number.isFinite(sidecar.deviceScaleFactor) || sidecar.deviceScaleFactor <= 0)) invalid('invalid deviceScaleFactor')
+    if (typeof sidecar.fullPage !== 'boolean') invalid('invalid fullPage')
+    if (typeof sidecar.capturedAt !== 'string') invalid('invalid capturedAt')
+    if (typeof sidecar.durationMs !== 'number' || !Number.isFinite(sidecar.durationMs) || sidecar.durationMs < 0) invalid('invalid durationMs')
+    if (typeof sidecar.checked !== 'boolean') invalid('invalid checked')
+  } else {
+    if (typeof sidecar.contentType !== 'string' || !sidecar.contentType) invalid('invalid contentType')
+    if (typeof sidecar.bytes !== 'number' || !Number.isInteger(sidecar.bytes) || sidecar.bytes < 0) invalid('invalid bytes')
+  }
+  return sidecar as Sidecar
+}
+
+function removeStaleCapture(runDir: string, file: string): void {
+  let parent = runDir
+  for (const segment of file.split('/').slice(0, -1)) {
+    parent = path.join(parent, segment)
+    try { if (fs.lstatSync(parent).isSymbolicLink()) throw new Error(`shotwright: stale capture path has a symlink: ${file}`) }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+  }
+  fs.rmSync(path.join(runDir, file), { force: true })
+}
 export function assembleManifest(input: AssembleInput): Manifest {
   const final = new Map(input.tests.map(t => [t.id, t.retry]))
-  const selected = input.sidecars.filter(s => final.get(s.testId) === s.retry)
+  const sidecars = input.sidecars.map((s, i) => validateSidecar(s, i, final))
+  const selected = sidecars.filter(s => final.get(s.testId) === s.retry)
   const seenShots = new Set<string>(), seenArtifacts = new Set<string>()
   const shots: ShotEntry[] = [], artifacts: ArtifactEntry[] = []
   for (const s of selected) {
@@ -82,10 +135,7 @@ export function assembleManifest(input: AssembleInput): Manifest {
     }
   }
   const retained = new Set(selected.map(s => s.file))
-  for (const s of input.sidecars) if (!retained.has(s.file)) {
-    const target = path.resolve(input.runDir, s.file)
-    if (target.startsWith(`${path.resolve(input.runDir)}${path.sep}`)) fs.rmSync(target, { force: true })
-  }
+  for (const s of sidecars) if (!retained.has(s.file)) removeStaleCapture(input.runDir, s.file)
   shots.sort((a,b) => a.spec.localeCompare(b.spec) || a.capturedAt.localeCompare(b.capturedAt) || a.name.localeCompare(b.name))
   artifacts.sort((a,b) => a.spec.localeCompare(b.spec) || a.name.localeCompare(b.name) || a.testId.localeCompare(b.testId))
   return { manifestVersion: 2, runId: input.runId, startedAt: input.startedAt,
