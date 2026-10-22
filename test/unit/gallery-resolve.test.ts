@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { resolveCompareRuns, resolveGalleryRun, validateRunId } from '../../src/gallery/resolve.js'
+import { makeManifest } from '../fixtures/manifest.js'
 
 const tmpDirs: string[] = []
 
@@ -19,6 +20,13 @@ afterEach(() => {
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })
+
+function addManifest(runDir: string): void {
+  fs.writeFileSync(
+    path.join(runDir, 'manifest.json'),
+    JSON.stringify(makeManifest({ runId: path.basename(runDir) })),
+  )
+}
 
 describe('validateRunId', () => {
   it('accepts the generated run-id shape', () => {
@@ -43,6 +51,24 @@ describe('validateRunId', () => {
 })
 
 describe('resolveGalleryRun', () => {
+  it('--last selects newest manifest run while latest stays on last passed', () => {
+    const output = tmpDir()
+    const passed = '2026-07-29T10-00-00_aaaa'
+    const failed = '2026-07-29T11-00-00_bbbb'
+    const incomplete = '2026-07-29T12-00-00_cccc'
+    for (const id of [passed, failed, incomplete]) fs.mkdirSync(path.join(output, id))
+    addManifest(path.join(output, passed))
+    addManifest(path.join(output, failed))
+    fs.utimesSync(path.join(output, passed), new Date(3_000), new Date(3_000))
+    fs.utimesSync(path.join(output, failed), new Date(2_000), new Date(2_000))
+    fs.utimesSync(path.join(output, incomplete), new Date(4_000), new Date(4_000))
+    fs.symlinkSync(passed, path.join(output, 'latest'))
+    expect(resolveGalleryRun(output, '--last')).toMatchObject({
+      runId: failed,
+      selectedViaLast: true,
+    })
+    expect(resolveGalleryRun(output, null).runId).toBe(passed)
+  })
   it('resolves an explicit immediate child canonically', () => {
     const output = tmpDir()
     fs.mkdirSync(path.join(output, 'run_abcd'))
@@ -94,10 +120,28 @@ describe('resolveGalleryRun', () => {
 })
 
 describe('resolveCompareRuns', () => {
+  it('accepts external paths, requires manifests, rejects symlink paths and canonical duplicates', () => {
+    const root = tmpDir()
+    const output = path.join(root, 'output')
+    const external = path.join(root, 'downloaded')
+    fs.mkdirSync(output)
+    fs.mkdirSync(external)
+    fs.mkdirSync(path.join(output, 'local'))
+    addManifest(path.join(output, 'local'))
+    addManifest(external)
+    expect(resolveCompareRuns(output, 'local', external).b.runDir).toBe(fs.realpathSync(external))
+    expect(() => resolveCompareRuns(output, external, external)).toThrow(/same run/)
+    fs.symlinkSync(external, path.join(root, 'alias'))
+    expect(() => resolveCompareRuns(output, 'local', path.join(root, 'alias'))).toThrow(/symlink/)
+    fs.unlinkSync(path.join(external, 'manifest.json'))
+    expect(() => resolveCompareRuns(output, 'local', external)).toThrow(/no manifest/)
+  })
   it('resolves two explicit run ids through the gallery resolver', () => {
     const output = tmpDir()
     fs.mkdirSync(path.join(output, 'run-a'))
     fs.mkdirSync(path.join(output, 'run-b'))
+    addManifest(path.join(output, 'run-a'))
+    addManifest(path.join(output, 'run-b'))
 
     expect(resolveCompareRuns(output, 'run-a', 'run-b')).toEqual({
       outputDir: fs.realpathSync(output),
@@ -123,6 +167,8 @@ describe('resolveCompareRuns', () => {
     const output = tmpDir()
     fs.mkdirSync(path.join(output, 'run-a'))
     fs.mkdirSync(path.join(output, 'run-b'))
+    addManifest(path.join(output, 'run-a'))
+    addManifest(path.join(output, 'run-b'))
     fs.symlinkSync('run-a', path.join(output, 'latest'))
 
     const result = resolveCompareRuns(output, aSelector, bSelector)
@@ -139,6 +185,7 @@ describe('resolveCompareRuns', () => {
   ])('rejects identical canonical runs selected via %s', (_label, aSelector, bSelector) => {
     const output = tmpDir()
     fs.mkdirSync(path.join(output, 'run-a'))
+    addManifest(path.join(output, 'run-a'))
     fs.symlinkSync('run-a', path.join(output, 'latest'))
 
     expect(() => resolveCompareRuns(output, aSelector, bSelector)).toThrow(

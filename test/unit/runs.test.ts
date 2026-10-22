@@ -8,8 +8,10 @@ import type { Manifest } from '../../src/manifest.js'
 import { makeManifest } from '../fixtures/manifest.js'
 import {
   createRunDir,
+  formatPublication,
   generateRunId,
   isCompleteRun,
+  listRuns,
   publishManifest,
   updateLatestSymlink,
   SIDECAR_DIR,
@@ -90,5 +92,80 @@ describe('updateLatestSymlink', () => {
     updateLatestSymlink(out, b.runId)
     expect(fs.readlinkSync(path.join(out, 'latest'))).toBe(b.runId)
     expect(fs.realpathSync(path.join(out, 'latest'))).toBe(fs.realpathSync(b.runDir))
+  })
+})
+
+describe('listRuns', () => {
+  it('lists manifestless and malformed directories as incomplete with unknown count and time', () => {
+    const output = tmpDir()
+    fs.mkdirSync(path.join(output, 'run-empty'))
+    fs.mkdirSync(path.join(output, 'run-malformed'))
+    fs.writeFileSync(path.join(output, 'run-malformed', 'manifest.json'), '{broken')
+    fs.mkdirSync(path.join(output, 'compare'))
+    fs.mkdirSync(path.join(output, '.hidden'))
+    fs.symlinkSync('run-empty', path.join(output, 'latest'))
+    const rows = listRuns(output)
+    expect(rows.map((row) => row.runId).sort()).toEqual(['run-empty', 'run-malformed'])
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        status: 'incomplete',
+        shotCount: null,
+        startedAt: null,
+        publication: null,
+      })
+      expect(formatPublication(row)).toBe('-')
+    }
+  })
+
+  it('reads v2 status/count, adapts v1 to unknown, and sorts newest first', () => {
+    const output = tmpDir()
+    const oldId = '2026-07-29T10-00-00_aaaa'
+    const newId = '2026-07-29T11-00-00_bbbb'
+    const oldDir = path.join(output, oldId)
+    const newDir = path.join(output, newId)
+    fs.mkdirSync(oldDir)
+    fs.mkdirSync(newDir)
+    const legacy = { ...fakeManifest(oldId), manifestVersion: 1 }
+    delete (legacy as Partial<typeof legacy>).status
+    delete (legacy as Partial<typeof legacy>).publication
+    delete (legacy as Partial<typeof legacy>).tests
+    delete (legacy as Partial<typeof legacy>).artifacts
+    delete (legacy as Partial<typeof legacy>).failures
+    fs.writeFileSync(path.join(oldDir, 'manifest.json'), JSON.stringify(legacy))
+    fs.writeFileSync(
+      path.join(newDir, 'manifest.json'),
+      JSON.stringify({ ...fakeManifest(newId), status: 'failed' }),
+    )
+    // The earlier invocation publishes after the newer invocation.
+    fs.utimesSync(oldDir, new Date(3_000), new Date(3_000))
+    fs.utimesSync(newDir, new Date(2_000), new Date(2_000))
+    expect(
+      listRuns(output).map(({ runId, status, shotCount }) => ({ runId, status, shotCount })),
+    ).toEqual([
+      { runId: newId, status: 'failed', shotCount: 0 },
+      { runId: oldId, status: 'unknown', shotCount: 0 },
+    ])
+    expect(listRuns(output).map(formatPublication)).toEqual(['ok', 'unrecorded'])
+  })
+
+  it('keeps passed runner status but exposes failed gallery publication', () => {
+    const output = tmpDir()
+    const runId = '2026-07-29T12-00-00_abcd'
+    const runDir = path.join(output, runId)
+    fs.mkdirSync(runDir)
+    fs.writeFileSync(
+      path.join(runDir, 'manifest.json'),
+      JSON.stringify({
+        ...fakeManifest(runId),
+        status: 'passed',
+        publication: { gallery: { ok: false, error: 'render failed' }, evidence: { ok: true } },
+      }),
+    )
+    const [row] = listRuns(output)
+    expect(row).toMatchObject({
+      status: 'passed',
+      publication: { gallery: { ok: false, error: 'render failed' }, evidence: { ok: true } },
+    })
+    expect(formatPublication(row!)).toBe('gallery failed')
   })
 })
