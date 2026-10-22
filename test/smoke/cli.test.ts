@@ -832,6 +832,7 @@ function packShotwrightPackage(prefix: string): PackedPackage {
 
 function createConsumerApp(prefix: string, packageJson: Record<string, unknown>): string {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  fs.mkdirSync(path.join(cwd, '.git'))
   fs.writeFileSync(
     path.join(cwd, 'package.json'),
     JSON.stringify(

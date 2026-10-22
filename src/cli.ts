@@ -65,7 +65,7 @@ const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--run
 const GALLERY_USAGE = `Usage: shotwright gallery [run-id|--last] [--config <path>] [--host <host>] [--port <port>] [--lan]`
 const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>]`
 const RUNS_USAGE = `Usage: shotwright runs [--config <path>] [--json]`
-const INIT_USAGE = `Usage: shotwright init [--dry-run]`
+const INIT_USAGE = `Usage: shotwright init [--dry-run] [--package-manager npm|pnpm|yarn]`
 const GLOBAL_USAGE = `Usage: shotwright --help | --version`
 const USAGE = `${RUN_USAGE}\n${RUNS_USAGE}\n${GALLERY_USAGE}\n${COMPARE_USAGE}\n${INIT_USAGE}\n${GLOBAL_USAGE}`
 
@@ -657,7 +657,7 @@ async function compare(argv: string[]): Promise<number> {
 
 async function init(argv: string[]): Promise<number> {
   const args = parseInitArgs(argv)
-  const plan = planInit(process.cwd(), readTemplate)
+  const plan = planInit(process.cwd(), readTemplate, args.packageManager)
   if (!args.dryRun && plan.notices.length > 0) {
     console.log(plan.notices.join('\n'))
   }
