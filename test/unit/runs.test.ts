@@ -8,6 +8,7 @@ import type { Manifest } from '../../src/manifest.js'
 import { makeManifest } from '../fixtures/manifest.js'
 import {
   createRunDir,
+  formatPublication,
   generateRunId,
   isCompleteRun,
   listRuns,
@@ -106,17 +107,25 @@ describe('listRuns', () => {
     const rows = listRuns(output)
     expect(rows.map((row) => row.runId).sort()).toEqual(['run-empty', 'run-malformed'])
     for (const row of rows) {
-      expect(row).toMatchObject({ status: 'incomplete', shotCount: null, startedAt: null })
+      expect(row).toMatchObject({
+        status: 'incomplete',
+        shotCount: null,
+        startedAt: null,
+        publication: null,
+      })
+      expect(formatPublication(row)).toBe('-')
     }
   })
 
   it('reads v2 status/count, adapts v1 to unknown, and sorts newest first', () => {
     const output = tmpDir()
-    const oldDir = path.join(output, 'old')
-    const newDir = path.join(output, 'new')
+    const oldId = '2026-07-29T10-00-00_aaaa'
+    const newId = '2026-07-29T11-00-00_bbbb'
+    const oldDir = path.join(output, oldId)
+    const newDir = path.join(output, newId)
     fs.mkdirSync(oldDir)
     fs.mkdirSync(newDir)
-    const legacy = { ...fakeManifest('old'), manifestVersion: 1 }
+    const legacy = { ...fakeManifest(oldId), manifestVersion: 1 }
     delete (legacy as Partial<typeof legacy>).status
     delete (legacy as Partial<typeof legacy>).publication
     delete (legacy as Partial<typeof legacy>).tests
@@ -125,15 +134,38 @@ describe('listRuns', () => {
     fs.writeFileSync(path.join(oldDir, 'manifest.json'), JSON.stringify(legacy))
     fs.writeFileSync(
       path.join(newDir, 'manifest.json'),
-      JSON.stringify({ ...fakeManifest('new'), status: 'failed' }),
+      JSON.stringify({ ...fakeManifest(newId), status: 'failed' }),
     )
-    fs.utimesSync(oldDir, new Date(1_000), new Date(1_000))
+    // The earlier invocation publishes after the newer invocation.
+    fs.utimesSync(oldDir, new Date(3_000), new Date(3_000))
     fs.utimesSync(newDir, new Date(2_000), new Date(2_000))
     expect(
       listRuns(output).map(({ runId, status, shotCount }) => ({ runId, status, shotCount })),
     ).toEqual([
-      { runId: 'new', status: 'failed', shotCount: 0 },
-      { runId: 'old', status: 'unknown', shotCount: 0 },
+      { runId: newId, status: 'failed', shotCount: 0 },
+      { runId: oldId, status: 'unknown', shotCount: 0 },
     ])
+    expect(listRuns(output).map(formatPublication)).toEqual(['ok', 'unrecorded'])
+  })
+
+  it('keeps passed runner status but exposes failed gallery publication', () => {
+    const output = tmpDir()
+    const runId = '2026-07-29T12-00-00_abcd'
+    const runDir = path.join(output, runId)
+    fs.mkdirSync(runDir)
+    fs.writeFileSync(
+      path.join(runDir, 'manifest.json'),
+      JSON.stringify({
+        ...fakeManifest(runId),
+        status: 'passed',
+        publication: { gallery: { ok: false, error: 'render failed' }, evidence: { ok: true } },
+      }),
+    )
+    const [row] = listRuns(output)
+    expect(row).toMatchObject({
+      status: 'passed',
+      publication: { gallery: { ok: false, error: 'render failed' }, evidence: { ok: true } },
+    })
+    expect(formatPublication(row!)).toBe('gallery failed')
   })
 })

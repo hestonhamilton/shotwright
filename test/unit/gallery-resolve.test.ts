@@ -53,18 +53,21 @@ describe('validateRunId', () => {
 describe('resolveGalleryRun', () => {
   it('--last selects newest manifest run while latest stays on last passed', () => {
     const output = tmpDir()
-    for (const id of ['passed', 'failed', 'incomplete']) fs.mkdirSync(path.join(output, id))
-    addManifest(path.join(output, 'passed'))
-    addManifest(path.join(output, 'failed'))
-    fs.utimesSync(path.join(output, 'passed'), new Date(1_000), new Date(1_000))
-    fs.utimesSync(path.join(output, 'failed'), new Date(2_000), new Date(2_000))
-    fs.utimesSync(path.join(output, 'incomplete'), new Date(3_000), new Date(3_000))
-    fs.symlinkSync('passed', path.join(output, 'latest'))
+    const passed = '2026-07-29T10-00-00_aaaa'
+    const failed = '2026-07-29T11-00-00_bbbb'
+    const incomplete = '2026-07-29T12-00-00_cccc'
+    for (const id of [passed, failed, incomplete]) fs.mkdirSync(path.join(output, id))
+    addManifest(path.join(output, passed))
+    addManifest(path.join(output, failed))
+    fs.utimesSync(path.join(output, passed), new Date(3_000), new Date(3_000))
+    fs.utimesSync(path.join(output, failed), new Date(2_000), new Date(2_000))
+    fs.utimesSync(path.join(output, incomplete), new Date(4_000), new Date(4_000))
+    fs.symlinkSync(passed, path.join(output, 'latest'))
     expect(resolveGalleryRun(output, '--last')).toMatchObject({
-      runId: 'failed',
+      runId: failed,
       selectedViaLast: true,
     })
-    expect(resolveGalleryRun(output, null).runId).toBe('passed')
+    expect(resolveGalleryRun(output, null).runId).toBe(passed)
   })
   it('resolves an explicit immediate child canonically', () => {
     const output = tmpDir()

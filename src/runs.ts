@@ -18,6 +18,24 @@ export interface RunListing {
   status: RunnerStatus | 'incomplete'
   shotCount: number | null
   startedAt: string | null
+  publication: Manifest['publication'] | null
+}
+
+function runTimestamp(runId: string): number | null {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})_[0-9a-f]{4}$/.exec(runId)
+  if (!match) return null
+  const value = Date.parse(`${match[1]}T${match[2]}:${match[3]}:${match[4]}Z`)
+  return Number.isNaN(value) ? null : value
+}
+
+export function formatPublication(row: RunListing): string {
+  if (row.status === 'incomplete') return '-'
+  if (row.publication === null) return 'unrecorded'
+  const failures = [
+    !row.publication.gallery.ok ? 'gallery failed' : null,
+    !row.publication.evidence.ok ? 'evidence failed' : null,
+  ].filter((value): value is string => value !== null)
+  return failures.length ? failures.join(', ') : 'ok'
 }
 
 /** Discover directories, including runs interrupted before manifest publication. */
@@ -26,17 +44,16 @@ export function listRuns(outputDir: string): RunListing[] {
   const rows = fs.readdirSync(outputDir, { withFileTypes: true }).flatMap((entry) => {
     if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'compare') return []
     const runDir = path.join(outputDir, entry.name)
-    const modified = fs.statSync(runDir).mtimeMs
     let row: RunListing = {
       runId: entry.name,
       runDir,
       status: 'incomplete',
       shotCount: null,
       startedAt: null,
+      publication: null,
     }
     try {
-      if (fs.lstatSync(path.join(runDir, 'manifest.json')).isSymbolicLink())
-        return [{ row, modified }]
+      if (fs.lstatSync(path.join(runDir, 'manifest.json')).isSymbolicLink()) return [row]
       const raw = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8')) as unknown
       const manifest = validateManifest(raw, entry.name)
       row = {
@@ -44,14 +61,22 @@ export function listRuns(outputDir: string): RunListing[] {
         status: manifest.status,
         shotCount: manifest.shots.length,
         startedAt: manifest.startedAt,
+        publication:
+          (raw as { manifestVersion: number }).manifestVersion === 1 ? null : manifest.publication,
       }
     } catch {
       // A missing or malformed manifest has no trustworthy outcome or count.
     }
-    return [{ row, modified }]
+    return [row]
   })
-  rows.sort((a, b) => b.modified - a.modified || b.row.runId.localeCompare(a.row.runId))
-  return rows.map(({ row }) => row)
+  rows.sort((a, b) => {
+    const aTime = runTimestamp(a.runId)
+    const bTime = runTimestamp(b.runId)
+    return aTime !== null && bTime !== null && aTime !== bTime
+      ? bTime - aTime
+      : b.runId.localeCompare(a.runId)
+  })
+  return rows
 }
 
 /** `<UTC YYYY-MM-DDTHH-mm-ss>_<4 hex>`, e.g. `2026-07-29T14-02-11_a1b2`. */

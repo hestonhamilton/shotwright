@@ -8,7 +8,6 @@
 // config factory at eval time; the reporter prints the run summary.
 
 import { spawn } from 'node:child_process'
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import net from 'node:net'
@@ -34,7 +33,7 @@ import {
 } from './init.js'
 import { readTemplate } from './templates.js'
 import { shotwrightVersion } from './version.js'
-import { listRuns } from './runs.js'
+import { formatPublication, listRuns } from './runs.js'
 
 export interface RunArgs {
   only: string | null
@@ -60,12 +59,11 @@ export interface CompareArgs {
   b: string
   config: string
   last: boolean
-  output: string | null
 }
 
-const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--run-dir-file <path>] [--config <path>] [-- <playwright test args>]`
+const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--run-dir-file <path>] [--config <path>] [-- <playwright test args>]. The run-dir-file must be unique per invocation.`
 const GALLERY_USAGE = `Usage: shotwright gallery [run-id|--last] [--config <path>] [--host <host>] [--port <port>] [--lan]`
-const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file>]`
+const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>]`
 const RUNS_USAGE = `Usage: shotwright runs [--config <path>] [--json]`
 const INIT_USAGE = `Usage: shotwright init [--dry-run]`
 const GLOBAL_USAGE = `Usage: shotwright --help | --version`
@@ -261,7 +259,6 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
   let config = 'shots.config.ts'
   let sawConfig = false
   let last = false
-  let output: string | null = null
 
   for (let i = 0; i < argv.length; i++) {
     const argument = argv[i]!
@@ -269,9 +266,6 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
       if (sawConfig) throw new Error('duplicate argument: --config')
       sawConfig = true
       config = requireValue(argv, ++i, argument)
-    } else if (argument === '--output') {
-      if (output !== null) throw new Error('duplicate argument: --output')
-      output = requireValue(argv, ++i, argument)
     } else if (argument === '--last') {
       if (last) throw new Error('duplicate argument: --last')
       last = true
@@ -293,7 +287,6 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
     b: selectors[1]!,
     config,
     last,
-    output,
   }
 }
 
@@ -337,27 +330,55 @@ export interface ConfigProbeDependencies {
     cli: string,
     args: string[],
     options: { cwd: string; env: NodeJS.ProcessEnv },
-  ) => Promise<number | { code: number; stdout: string; stderr: string }>
+  ) => Promise<number | ProbeResult>
   tempRoot?: string
+}
+
+const PROBE_CAPTURE_LIMIT = 1024 * 1024
+
+interface ProbeResult {
+  code: number
+  stdout: string
+  stderr: string
+  stdoutTruncated?: boolean
+  stderrTruncated?: boolean
 }
 
 function invokeProbe(
   cli: string,
   args: string[],
   options: { cwd: string; env: NodeJS.ProcessEnv },
-): Promise<{ code: number; stdout: string; stderr: string }> {
+): Promise<ProbeResult> {
   const child = spawn(process.execPath, [cli, ...args], {
     cwd: options.cwd,
     env: options.env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  let stdout = ''
-  let stderr = ''
-  child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
-  child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
+  let stdout = Buffer.alloc(0)
+  let stderr = Buffer.alloc(0)
+  let stdoutTruncated = false
+  let stderrTruncated = false
+  child.stdout.on('data', (chunk: Buffer) => {
+    const combined = Buffer.concat([stdout, chunk])
+    stdoutTruncated ||= combined.length > PROBE_CAPTURE_LIMIT
+    stdout = combined.subarray(-PROBE_CAPTURE_LIMIT)
+  })
+  child.stderr.on('data', (chunk: Buffer) => {
+    const combined = Buffer.concat([stderr, chunk])
+    stderrTruncated ||= combined.length > PROBE_CAPTURE_LIMIT
+    stderr = combined.subarray(-PROBE_CAPTURE_LIMIT)
+  })
   return new Promise((resolve, reject) => {
     child.once('error', reject)
-    child.once('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
+    child.once('close', (code) =>
+      resolve({
+        code: code ?? 1,
+        stdout: stdout.toString('utf8'),
+        stderr: stderr.toString('utf8'),
+        stdoutTruncated,
+        stderrTruncated,
+      }),
+    )
   })
 }
 
@@ -386,6 +407,8 @@ export async function probeOutputDir(
     const probe = typeof result === 'number' ? { code: result, stdout: '', stderr: '' } : result
     if (probe.code !== 0) {
       console.error(`shotwright: config probe output for ${config}:`)
+      if (probe.stdoutTruncated) console.error('shotwright: probe stdout truncated to last 1 MiB')
+      if (probe.stderrTruncated) console.error('shotwright: probe stderr truncated to last 1 MiB')
       if (probe.stdout) process.stdout.write(probe.stdout)
       if (probe.stderr) process.stderr.write(probe.stderr)
       throw new Error(
@@ -441,6 +464,16 @@ async function run(argv: string[]): Promise<number> {
   }
   const callerFile = args.runDirFile ?? process.env.SHOTWRIGHT_RUN_DIR_FILE
   if (callerFile) {
+    const parent = path.dirname(path.resolve(callerFile))
+    try {
+      if (!fs.statSync(parent).isDirectory()) {
+        console.error('shotwright: --run-dir-file parent must be a directory')
+        return 2
+      }
+    } catch {
+      console.error('shotwright: --run-dir-file parent directory does not exist or is unreadable')
+      return 2
+    }
     try {
       const stat = fs.lstatSync(callerFile)
       if (!stat.isFile() || stat.isSymbolicLink()) {
@@ -482,17 +515,24 @@ async function run(argv: string[]): Promise<number> {
     })
     if (fs.existsSync(privateFile)) {
       const runDir = fs.readFileSync(privateFile, 'utf8')
+      let copyFailed = false
       if (callerFile) {
         const target = path.resolve(callerFile)
         const temp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.tmp`)
         try {
           fs.writeFileSync(temp, runDir, { flag: 'wx' })
           fs.renameSync(temp, target)
+        } catch (error) {
+          copyFailed = true
+          console.error(
+            `shotwright: --run-dir-file copy failed: ${error instanceof Error ? error.message : String(error)}`,
+          )
         } finally {
           fs.rmSync(temp, { force: true })
         }
       }
       console.log(`run-dir: ${runDir}`)
+      if (copyFailed) return code === 0 ? 1 : code
     }
     return code
   } finally {
@@ -555,10 +595,6 @@ function formatLastSelection(runId: string, outputDir: string): string {
   return `selected ${runId} (--last: newest run with a manifest; latest = last passed run is ${latest})`
 }
 
-function digestRunPath(runDir: string): string {
-  return crypto.createHash('sha256').update(runDir).digest('hex').slice(0, 10)
-}
-
 async function runs(argv: string[]): Promise<number> {
   let config = 'shots.config.ts'
   let json = false
@@ -577,9 +613,11 @@ async function runs(argv: string[]): Promise<number> {
   const rows = listRuns(await probeOutputDir(config))
   if (json) console.log(JSON.stringify(rows, null, 2))
   else {
-    console.log('id\tstarted\tstatus\tshots')
+    console.log('id\tstarted\tstatus\tpublication\tshots')
     for (const row of rows) {
-      console.log(`${row.runId}\t${row.startedAt ?? '-'}\t${row.status}\t${row.shotCount ?? '-'}`)
+      console.log(
+        `${row.runId}\t${row.startedAt ?? '-'}\t${row.status}\t${formatPublication(row)}\t${row.shotCount ?? '-'}`,
+      )
     }
   }
   return 0
@@ -596,37 +634,17 @@ async function compare(argv: string[]): Promise<number> {
 
   const outputDir = await probeOutputDir(args.config)
   const selected = resolveCompareRuns(outputDir, args.a, args.b)
-  const generated = generateCompareGallery(selected.outputDir, selected.a.runDir, selected.b.runDir)
-  let comparePath = generated.comparePath
-  if (args.output !== null || selected.a.runId === selected.b.runId) {
-    const destination =
-      args.output === null
-        ? path.join(
-            selected.outputDir,
-            'compare',
-            `${selected.a.runId}-${digestRunPath(selected.a.runDir)}.vs.${selected.b.runId}-${digestRunPath(selected.b.runDir)}.html`,
-          )
-        : path.resolve(args.output)
-    fs.mkdirSync(path.dirname(destination), { recursive: true })
-    if (destination !== generated.comparePath) {
-      const temp = path.join(
-        path.dirname(destination),
-        `.${path.basename(destination)}.${process.pid}.tmp`,
-      )
-      try {
-        fs.copyFileSync(generated.comparePath, temp)
-        fs.renameSync(temp, destination)
-        fs.rmSync(generated.comparePath)
-      } finally {
-        fs.rmSync(temp, { force: true })
-      }
-    }
-    comparePath = destination
+  if (selected.a.runId === selected.b.runId) {
+    console.error(
+      `shotwright compare: run paths ${selected.a.runDir} and ${selected.b.runDir} have the same basename; a distinct output path is not supported yet`,
+    )
+    return 2
   }
+  const generated = generateCompareGallery(selected.outputDir, selected.a.runDir, selected.b.runDir)
 
   console.log(formatCompareSelection('A', selected.a))
   console.log(formatCompareSelection('B', selected.b))
-  console.log(`shotwright compare: wrote ${comparePath}`)
+  console.log(`shotwright compare: wrote ${generated.comparePath}`)
   if (generated.diagnostics.length > 0) {
     console.error(
       generated.diagnostics

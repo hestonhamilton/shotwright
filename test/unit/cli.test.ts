@@ -217,12 +217,11 @@ describe('parseGalleryArgs', () => {
 })
 
 describe('parseCompareArgs', () => {
-  it('accepts --last and --output', () => {
-    expect(parseCompareArgs(['--last', 'run-b', '--output', 'compare.html'])).toMatchObject({
+  it('accepts --last', () => {
+    expect(parseCompareArgs(['--last', 'run-b'])).toMatchObject({
       a: '--last',
       b: 'run-b',
       last: true,
-      output: 'compare.html',
     })
     expect(parseCompareArgs(['run-a', '--last'])).toMatchObject({
       a: 'run-a',
@@ -235,7 +234,6 @@ describe('parseCompareArgs', () => {
       b: 'run-b',
       config: 'shots.config.ts',
       last: false,
-      output: null,
     })
     expect(parseCompareArgs(['latest', 'run-b'])).toMatchObject({ a: 'latest', b: 'run-b' })
   })
@@ -246,7 +244,6 @@ describe('parseCompareArgs', () => {
       b: 'run-b',
       config: 'custom.ts',
       last: false,
-      output: null,
     })
   })
 
@@ -261,15 +258,59 @@ describe('parseCompareArgs', () => {
     expect(() => parseCompareArgs(argv)).toThrow()
   })
 
-  it.each([['--host', '127.0.0.1'], ['--port', '4173'], ['--lan'], ['--open'], ['--']])(
-    'does not admit gallery, passthrough, or output flag %s',
-    (...flag) => {
-      expect(() => parseCompareArgs(['run-a', 'run-b', ...flag])).toThrow(/unknown argument/)
-    },
-  )
+  it.each([
+    ['--host', '127.0.0.1'],
+    ['--port', '4173'],
+    ['--lan'],
+    ['--open'],
+    ['--'],
+    ['--output', 'compare.html'],
+  ])('does not admit gallery, passthrough, or output flag %s', (...flag) => {
+    expect(() => parseCompareArgs(['run-a', 'run-b', ...flag])).toThrow(/unknown argument/)
+  })
 })
 
 describe('probeOutputDir', () => {
+  it('keeps only the last MiB of each failed probe stream and reports truncation', async () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-probe-large-'))
+    const script = path.join(scratch, 'large-probe.cjs')
+    fs.writeFileSync(
+      script,
+      "process.stdout.write('a'.repeat(1_048_580)); process.stderr.write('b'.repeat(1_048_581)); process.exitCode = 1\n",
+    )
+    const originalError = console.error
+    const originalStdout = process.stdout.write
+    const originalStderr = process.stderr.write
+    const messages: string[] = []
+    let stdout = ''
+    let stderr = ''
+    console.error = (...parts: unknown[]) => messages.push(parts.join(' '))
+    process.stdout.write = ((chunk: string) => {
+      stdout += chunk
+      return true
+    }) as typeof process.stdout.write
+    process.stderr.write = ((chunk: string) => {
+      stderr += chunk
+      return true
+    }) as typeof process.stderr.write
+    try {
+      await expect(
+        probeOutputDir('large.ts', scratch, { playwrightCli: script, tempRoot: scratch }),
+      ).rejects.toThrow(/config probe failed/)
+      expect(stdout).toHaveLength(1_048_576)
+      expect(stderr).toHaveLength(1_048_576)
+      expect(stdout).toMatch(/^a+$/)
+      expect(stderr).toMatch(/^b+$/)
+      expect(messages).toContain('shotwright: probe stdout truncated to last 1 MiB')
+      expect(messages).toContain('shotwright: probe stderr truncated to last 1 MiB')
+    } finally {
+      console.error = originalError
+      process.stdout.write = originalStdout
+      process.stderr.write = originalStderr
+      fs.rmSync(scratch, { recursive: true, force: true })
+    }
+  })
+
   it('suppresses the E4 two-line probe listing on success and replays stdout and stderr on failure', async () => {
     const noise = fs.readFileSync(
       path.join(repoRoot, 'test/fixtures/cli-runs/probe-noise.txt'),
