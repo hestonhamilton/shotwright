@@ -3,9 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
+  compare,
   formatCompareGate,
   formatGalleryExposureNotice,
   formatGallerySelection,
@@ -22,6 +23,7 @@ import {
   resolvePlaywrightCli,
   runPathDigests,
 } from '../../src/cli.js'
+import { makeManifest } from '../fixtures/manifest.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -604,11 +606,27 @@ describe('compare output validation', () => {
       expect(resolveCompareOutput(path.join(root, 'new/nested/Review.HTML'), [runA, runB])).toBe(
         path.join(root, 'new/nested/Review.HTML'),
       )
-      expect(fs.existsSync(path.join(root, 'new'))).toBe(false)
+      expect(fs.realpathSync(path.join(root, 'new/nested'))).toBe(path.join(root, 'new/nested'))
       fs.writeFileSync(path.join(root, 'existing.html'), 'old page')
       expect(resolveCompareOutput(path.join(root, 'existing.html'), [runA, runB])).toBe(
         path.join(root, 'existing.html'),
       )
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('returns a path through the real parent after creating missing directories', () => {
+    const { root, runA, runB } = scratch()
+    try {
+      const alias = path.join(root, 'alias')
+      const actual = path.join(root, 'actual')
+      fs.mkdirSync(actual)
+      fs.symlinkSync(actual, alias)
+      expect(resolveCompareOutput(path.join(alias, 'new', 'review.html'), [runA, runB])).toBe(
+        path.join(actual, 'new', 'review.html'),
+      )
+      expect(fs.realpathSync(path.join(actual, 'new'))).toBe(path.join(actual, 'new'))
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
@@ -674,16 +692,85 @@ describe('compare output validation', () => {
 })
 
 describe('same-basename compare stems', () => {
-  it('gives two same-basename run paths distinct six-hex digests of their absolute paths', () => {
+  it('gives two same-basename run paths distinct ten-hex digests of their absolute paths', () => {
     const digests = runPathDigests(
       '/runs/one/2026-07-29T00-00-00_abcd',
       '/runs/two/2026-07-29T00-00-00_abcd',
     )
-    expect(digests.a).toMatch(/^[0-9a-f]{6}$/)
-    expect(digests.b).toMatch(/^[0-9a-f]{6}$/)
+    expect(digests.a).toMatch(/^[0-9a-f]{10}$/)
+    expect(digests.b).toMatch(/^[0-9a-f]{10}$/)
     expect(digests.a).not.toBe(digests.b)
     // Deterministic: the same path always yields the same digest.
     expect(runPathDigests('/runs/one/2026-07-29T00-00-00_abcd', '/x').a).toBe(digests.a)
+  })
+})
+
+it('keeps README gallery and compare command lines aligned with CLI help', () => {
+  const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8')
+  const gallery = helpFor(['help', 'gallery'])!.match(
+    /^Usage: shotwright gallery (.+?)\. Traces/m,
+  )![1]
+  const compareUsage = helpFor(['help', 'compare'])!.match(
+    /^Usage: shotwright compare (.+?)\. Exits/m,
+  )![1]
+  expect(readme).toContain(`shotwright gallery  ${gallery}`)
+  expect(readme).toContain(`shotwright compare  ${compareUsage}`)
+})
+
+describe('default compare page ownership', () => {
+  function runs(): { root: string; a: string; b: string; config: string } {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-cli-compare-')))
+    const a = path.join(root, 'run-a')
+    const b = path.join(root, 'run-b')
+    for (const [dir, runId] of [
+      [a, 'run-a'],
+      [b, 'run-b'],
+    ] as const) {
+      fs.mkdirSync(dir)
+      fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(makeManifest({ runId })))
+    }
+    const config = path.join(root, 'shots.config.ts')
+    fs.writeFileSync(config, '')
+    return { root, a, b, config }
+  }
+
+  it('refuses a default compare directory symlinked into a run with exit 2', async () => {
+    const { root, a, b, config } = runs()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      fs.symlinkSync(a, path.join(root, 'compare'))
+      expect(await compare(['run-a', 'run-b', '--config', config], async () => root)).toBe(2)
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('--output must not be inside a compared run directory'),
+      )
+      expect(fs.existsSync(path.join(a, 'run-a.vs.run-b.html'))).toBe(false)
+      expect(b).toBe(path.join(root, 'run-b'))
+    } finally {
+      error.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a page whose sidecar records a different run pair with exit 2', async () => {
+    const { root, a, b, config } = runs()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const compareDir = path.join(root, 'compare')
+      fs.mkdirSync(compareDir)
+      const page = path.join(compareDir, 'run-a.vs.run-b.html')
+      fs.writeFileSync(page, 'existing page')
+      fs.writeFileSync(
+        path.join(compareDir, 'run-a.vs.run-b.compare.json'),
+        JSON.stringify({ runs: { a: { runId: 'other', pathDigest: '0'.repeat(64) } } }),
+      )
+      expect(await compare(['run-a', 'run-b', '--config', config], async () => root)).toBe(2)
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(a))
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(b))
+      expect(fs.readFileSync(page, 'utf8')).toBe('existing page')
+    } finally {
+      error.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

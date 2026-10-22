@@ -333,7 +333,7 @@ function isInside(parent: string, child: string): boolean {
 
 /**
  * Validate an explicit `compare --output` page and return its absolute path,
- * with the nearest existing ancestor canonicalized so a symlinked parent cannot
+ * with its created parent canonicalized so a symlinked parent cannot
  * smuggle the page into a run. The page must end in `.html`, contain no control
  * characters, have an existing or creatable directory, not lie inside either
  * compared run directory, and be a regular file (not a symlink) or absent. Its
@@ -366,7 +366,16 @@ export function resolveCompareOutput(file: string, runDirs: readonly string[]): 
   }
   if (!stat.isDirectory())
     throw new Error(`--output directory cannot be created: ${path.dirname(target)}`)
-  const canonical = path.join(fs.realpathSync(ancestor), ...missing, path.basename(target))
+  const parent = path.join(fs.realpathSync(ancestor), ...missing)
+  try {
+    fs.mkdirSync(parent, { recursive: true })
+  } catch (error) {
+    throw new Error(`--output directory cannot be created: ${path.dirname(target)}`, {
+      cause: error,
+    })
+  }
+  // A directory swapped after validation can still redirect a later write.
+  const canonical = path.join(fs.realpathSync(parent), path.basename(target))
   for (const runDir of runDirs) {
     if (isInside(runDir, canonical))
       throw new Error(`--output must not be inside a compared run directory: ${runDir}`)
@@ -379,13 +388,13 @@ export function resolveCompareOutput(file: string, runDirs: readonly string[]): 
 
 /**
  * Short digests that tell two same-basename run paths apart in a default
- * compare stem: the first six hex characters of each absolute path's SHA-256,
+ * compare stem: the first ten hex characters of each absolute path's SHA-256,
  * lengthened only in the unlikely case the two prefixes collide.
  */
 export function runPathDigests(aRunDir: string, bRunDir: string): { a: string; b: string } {
   const a = createHash('sha256').update(aRunDir).digest('hex')
   const b = createHash('sha256').update(bRunDir).digest('hex')
-  let length = 6
+  let length = 10
   while (length < a.length && a.slice(0, length) === b.slice(0, length)) length += 2
   return { a: a.slice(0, length), b: b.slice(0, length) }
 }
@@ -748,7 +757,10 @@ async function runs(argv: string[]): Promise<number> {
   return 0
 }
 
-async function compare(argv: string[]): Promise<number> {
+export async function compare(
+  argv: string[],
+  outputDirProbe: (config: string) => Promise<string> = probeOutputDir,
+): Promise<number> {
   const args = parseCompareArgs(argv)
   if (!fs.existsSync(args.config)) {
     console.error(
@@ -757,7 +769,7 @@ async function compare(argv: string[]): Promise<number> {
     return 1
   }
 
-  const outputDir = await probeOutputDir(args.config)
+  const outputDir = await outputDirProbe(args.config)
   const selected = resolveCompareRuns(outputDir, args.a, args.b)
   const runDirs = [selected.a.runDir, selected.b.runDir]
   // Same-basename runs (two downloaded copies, say) would share the default
@@ -775,20 +787,42 @@ async function compare(argv: string[]): Promise<number> {
         ? `${selected.a.runId}.vs.${selected.b.runId}.html`
         : `${selected.a.runId}-${digests.a}.vs.${selected.b.runId}-${digests.b}.html`,
     )
-    const containing = runDirs.find((runDir) => isInside(runDir, outputFile))
-    if (containing !== undefined) {
-      console.error(
-        `shotwright compare: the default compare page would land inside run ${containing}; pass --output`,
+  }
+  try {
+    outputFile = resolveCompareOutput(args.output ?? outputFile!, runDirs)
+    if (args.output === null && fs.existsSync(outputFile)) {
+      const sidecar = path.join(
+        path.dirname(outputFile),
+        `${path.basename(outputFile, path.extname(outputFile))}.compare.json`,
       )
-      return 2
+      // ADR 0009: the default stem is generator-owned, so a page without a readable
+      // sidecar is ours to overwrite. Only a sidecar that records a different pair
+      // marks the page as another comparison's output.
+      let runs: unknown = null
+      try {
+        runs = (JSON.parse(fs.readFileSync(sidecar, 'utf8')) as { runs?: unknown }).runs ?? null
+      } catch {
+        runs = null
+      }
+      const expected = {
+        a: {
+          runId: selected.a.runId,
+          pathDigest: createHash('sha256').update(selected.a.runDir).digest('hex'),
+        },
+        b: {
+          runId: selected.b.runId,
+          pathDigest: createHash('sha256').update(selected.b.runDir).digest('hex'),
+        },
+      }
+      if (runs !== null && JSON.stringify(runs) !== JSON.stringify(expected)) {
+        throw new Error(
+          `default page ${outputFile} is not owned by runs ${selected.a.runDir} and ${selected.b.runDir}; sidecar ${sidecar} records a different pair`,
+        )
+      }
     }
-  } else {
-    try {
-      outputFile = resolveCompareOutput(args.output, runDirs)
-    } catch (error) {
-      console.error(`shotwright compare: ${error instanceof Error ? error.message : String(error)}`)
-      return 2
-    }
+  } catch (error) {
+    console.error(`shotwright compare: ${error instanceof Error ? error.message : String(error)}`)
+    return 2
   }
   const generated = generateCompareGallery(selected.a.runDir, selected.b.runDir, {
     outputFile,

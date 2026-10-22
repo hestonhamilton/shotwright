@@ -1266,7 +1266,7 @@ describe('shotwright run against the demo app', () => {
       fs.mkdirSync(compareDir, { recursive: true })
       fs.writeFileSync(plainFile, 'existing comparison')
       const digest = (runDir: string): string =>
-        createHash('sha256').update(fs.realpathSync(runDir)).digest('hex').slice(0, 6)
+        createHash('sha256').update(fs.realpathSync(runDir)).digest('hex').slice(0, 10)
       const [aDigest, bDigest] = [digest(unfilteredRun.runDir), digest(external)]
       digestStem = `${runId}-${aDigest}.vs.${runId}-${bDigest}`
       const result = spawnSync(

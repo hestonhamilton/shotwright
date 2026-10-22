@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { PNG } from 'pngjs'
@@ -52,6 +53,11 @@ it('pins compare.json numbers, default settings, diff PNG and generation result 
     settings: { threshold: 0.1, includeAA: false, source: 'default' },
     pairs: [{ state: 'changed', totalPixels: 9, aSize: { width: 3, height: 3 } }],
   })
+  expect(summary.runs).toEqual({
+    a: { runId: 'run-a', pathDigest: createHash('sha256').update(a).digest('hex') },
+    b: { runId: 'run-b', pathDigest: createHash('sha256').update(b).digest('hex') },
+  })
+  expect(fs.readFileSync(path.join(dir, 'run-a.vs.run-b.compare.json'), 'utf8')).not.toContain(a)
   expect(PNG.sync.read(fs.readFileSync(path.join(dir, summary.pairs[0].diff))).width).toBe(3)
 })
 it('pins recovery from partial prior write and atomic temp cleanup', () => {
@@ -68,26 +74,61 @@ it('pins recovery from partial prior write and atomic temp cleanup', () => {
   expect(fs.existsSync(path.join(dir, 'run-a.vs.run-b.diff-99.png'))).toBe(false)
   expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
 })
+it('prunes only regular files owned by the stem', () => {
+  const { a, b } = fixture()
+  const first = generateCompareGallery(a, b)
+  const dir = path.dirname(first.outputFile)
+  const directory = path.join(dir, 'run-a.vs.run-b.diff-9.png')
+  const symlink = path.join(dir, `.compare.run-a.vs.run-b.html.${process.pid}.tmp`)
+  const target = path.join(dir, 'other-file')
+  fs.mkdirSync(directory)
+  fs.writeFileSync(path.join(directory, 'keep'), 'nested')
+  fs.writeFileSync(target, 'target')
+  fs.symlinkSync(target, symlink)
+  generateCompareGallery(a, b)
+  expect(fs.readFileSync(path.join(directory, 'keep'), 'utf8')).toBe('nested')
+  expect(fs.lstatSync(symlink).isSymbolicLink()).toBe(true)
+  expect(fs.readFileSync(target, 'utf8')).toBe('target')
+})
 it('keeps the previous complete HTML, JSON and diff PNG when staging the new HTML fails', () => {
   const { a, b } = fixture(),
     first = generateCompareGallery(a, b)
   const dir = path.dirname(first.outputFile)
   const names = ['run-a.vs.run-b.html', 'run-a.vs.run-b.compare.json', 'run-a.vs.run-b.diff-0.png']
   const before = names.map((name) => fs.readFileSync(path.join(dir, name)))
-  // Make the HTML's temp target a directory so its staged write fails after the diff and JSON temps.
-  const blocker = path.join(dir, `.compare.run-a.vs.run-b.html.${process.pid}.tmp`)
-  fs.mkdirSync(blocker)
+  const write = fs.writeFileSync
+  vi.spyOn(fs, 'writeFileSync').mockImplementation((file, contents, options) => {
+    if (String(file).includes('.compare.run-a.vs.run-b.html.'))
+      throw new Error('injected staging failure')
+    write(file, contents, options)
+  })
   fs.writeFileSync(path.join(a, 'shots/one.png'), fs.readFileSync(path.join(b, 'shots/one.png')))
-  expect(() => generateCompareGallery(a, b)).toThrow(/EISDIR/)
+  expect(() => generateCompareGallery(a, b)).toThrow('injected staging failure')
   expect(names.map((name) => fs.readFileSync(path.join(dir, name)))).toEqual(before)
-  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([
-    path.basename(blocker),
-  ])
-  fs.rmdirSync(blocker)
+  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
+  vi.restoreAllMocks()
   const recovered = generateCompareGallery(a, b)
   expect(recovered.counts.identical).toBe(1)
   expect(fs.existsSync(path.join(dir, 'run-a.vs.run-b.diff-0.png'))).toBe(false)
   expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
+})
+it('does not follow or remove a planted symlink at a temp path', () => {
+  const { a, b } = fixture()
+  const first = generateCompareGallery(a, b)
+  const target = path.join(path.dirname(first.outputFile), 'protected')
+  fs.writeFileSync(target, 'unchanged')
+  const write = fs.writeFileSync
+  let planted = ''
+  vi.spyOn(fs, 'writeFileSync').mockImplementation((file, contents, options) => {
+    if (!planted && String(file).includes('.compare.run-a.vs.run-b.diff-0.png.')) {
+      planted = String(file)
+      fs.symlinkSync(target, planted)
+    }
+    write(file, contents, options)
+  })
+  expect(() => generateCompareGallery(a, b)).toThrow(/EEXIST/)
+  expect(fs.readFileSync(target, 'utf8')).toBe('unchanged')
+  expect(fs.lstatSync(planted).isSymbolicLink()).toBe(true)
 })
 it('keeps the previous complete HTML when renaming the new HTML into place fails', () => {
   const { a, b } = fixture(),
@@ -251,4 +292,13 @@ it('writes the compare.json sidecar and diff PNGs beside an explicit outputFile'
   expect(summary.pairs[0]).toMatchObject({ state: 'changed', diff: 'parity.diff-0.png' })
   // Nothing lands in the default compare directory when the page is placed elsewhere.
   expect(fs.existsSync(path.join(path.dirname(a), 'compare'))).toBe(false)
+})
+
+it('keeps the legacy relative outputFile return while writing to its absolute path', () => {
+  const { a, b } = fixture()
+  const relative = path.relative(process.cwd(), path.dirname(a))
+  const result = generateCompareGallery(relative, a, b)
+  expect(result.outputFile).toBe(path.join(relative, 'compare', 'run-a.vs.run-b.html'))
+  expect(fs.existsSync(path.resolve(result.outputFile))).toBe(true)
+  expect(result.comparePath).toBe(path.resolve(result.outputFile))
 })
