@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -14,6 +15,8 @@ import {
   mutatePackageJsonScripts,
   parseInitArgs,
   planInit,
+  detectPackageManager,
+  findGitRoot,
   resolveSkillDestination,
   type InitAction,
   type InitResult,
@@ -438,6 +441,86 @@ describe('planInit', () => {
   })
 })
 
+describe('nested Git root and package manager pins', () => {
+  it('writes workflow and skill to the containing Git root while config and scripts stay in package', () => {
+    const root = tempDir()
+    const pkg = path.join(root, 'apps', 'web')
+    fs.mkdirSync(pkg, { recursive: true })
+    fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ name: 'web', packageManager: 'npm@11.0.0' }))
+    fs.writeFileSync(path.join(pkg, 'package-lock.json'), '{}')
+    expect(findGitRoot(pkg)).toBe(root)
+    applyInitPlan(planInit(pkg, readTemplate))
+    expect(fs.existsSync(path.join(pkg, 'shots.config.ts'))).toBe(true)
+    expect(fs.existsSync(path.join(pkg, 'shots', 'example.shots.ts'))).toBe(true)
+    expect(fs.existsSync(path.join(root, '.claude', 'skills', 'shots-harness', 'SKILL.md'))).toBe(true)
+    const caller = fs.readFileSync(path.join(root, '.github/workflows/shotwright.yml'), 'utf8')
+    expect(caller).toContain('working-directory: "apps/web"')
+    expect(caller).toContain('package-manager: npm')
+    const skill = fs.readFileSync(path.join(root, '.claude/skills/shots-harness/SKILL.md'), 'utf8')
+    expect(skill).toContain('npm run shots -- --only home')
+    expect(skill).toContain('npm run shots:gallery -- --lan')
+    expect(formatInitResult(applyInitPlan(planInit(pkg, readTemplate)))).not.toContain('pnpm shots')
+    expect(fs.existsSync(path.join(pkg, '.github'))).toBe(false)
+    expect(formatInitResult(applyInitPlan(planInit(pkg, readTemplate)))).toContain('already set up')
+  })
+
+  it('detects explicit choice, package-local metadata, npm/pnpm/yarn lockfiles, then user agent', () => {
+    const root = tempDir()
+    for (const [manager, lock] of [['npm', 'package-lock.json'], ['pnpm', 'pnpm-lock.yaml'], ['yarn', 'yarn.lock']] as const) {
+      const dir = path.join(root, manager)
+      fs.mkdirSync(dir)
+      fs.writeFileSync(path.join(dir, lock), '')
+      expect(detectPackageManager(dir, {})).toBe(manager)
+      expect(detectPackageManager(dir, { packageManager: `${manager}@1.0.0` })).toBe(manager)
+      expect(detectPackageManager(dir, {}, manager)).toBe(manager)
+    }
+    const prior = process.env.npm_config_user_agent
+    process.env.npm_config_user_agent = 'yarn/4.0.0 npm/? node/?'
+    expect(detectPackageManager(root, {})).toBe('yarn')
+    if (prior === undefined) delete process.env.npm_config_user_agent
+    else process.env.npm_config_user_agent = prior
+    expect(parseInitArgs(['--package-manager', 'npm']).packageManager).toBe('npm')
+    delete process.env.npm_config_user_agent
+    expect(() => detectPackageManager(root, {})).toThrow(/no package manager found/)
+    if (prior !== undefined) process.env.npm_config_user_agent = prior
+  })
+
+  it('rejects ambiguous lockfiles and conflicting metadata before planning writes', () => {
+    const root = tempDir()
+    fs.writeFileSync(path.join(root, 'package.json'), '{}')
+    fs.writeFileSync(path.join(root, 'package-lock.json'), '')
+    fs.writeFileSync(path.join(root, 'yarn.lock'), '')
+    expect(() => planInit(root, readTemplate)).toThrow(/ambiguous package-manager lockfiles/)
+    fs.rmSync(path.join(root, 'yarn.lock'))
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.0.0' }))
+    expect(() => planInit(root, readTemplate)).toThrow(/conflicts with lockfile/)
+    expect(fs.existsSync(path.join(root, 'shots.config.ts'))).toBe(false)
+  })
+
+  it('rejects a skill symlink outside the Git root', () => {
+    const root = tempDir()
+    const outside = tempDir()
+    fs.writeFileSync(path.join(root, 'package.json'), '{}')
+    fs.mkdirSync(path.join(root, '.claude'))
+    fs.symlinkSync(outside, path.join(root, '.claude', 'skills'))
+    expect(() => planInit(root, readTemplate)).toThrow(/outside the containing Git root/)
+    expect(fs.readdirSync(outside)).toEqual(['.git'])
+  })
+
+  it('preserves an existing root workflow in a nested package', () => {
+    const root = tempDir()
+    const pkg = path.join(root, 'app')
+    fs.mkdirSync(pkg)
+    fs.writeFileSync(path.join(pkg, 'package.json'), '{}')
+    const workflow = path.join(root, '.github/workflows/shotwright.yml')
+    fs.mkdirSync(path.dirname(workflow), { recursive: true })
+    fs.writeFileSync(workflow, 'custom workflow')
+    const result = applyInitPlan(planInit(pkg, readTemplate))
+    expect(fs.readFileSync(workflow, 'utf8')).toBe('custom workflow')
+    expect(result.plan.leftAlone.map((item) => item.path)).toContain('.github/workflows/shotwright.yml')
+  })
+})
+
 describe('mutatePackageJsonScripts', () => {
   // Every subcommand the skill and README tell an agent to run must have a
   // script, and every script must name a subcommand the CLI actually parses.
@@ -488,11 +571,11 @@ describe('mutatePackageJsonScripts', () => {
     const malformed = tempDir()
     fs.writeFileSync(path.join(malformed, 'package.json'), '{"name":')
     expect(() => planInit(malformed, readTemplate)).toThrow(/could not parse package\.json/)
-    expect(fs.readdirSync(malformed)).toEqual(['package.json'])
+    expect(fs.readdirSync(malformed)).toEqual(['.git', 'package.json'])
 
     const missing = tempDir()
     expect(() => planInit(missing, readTemplate)).toThrow(/package\.json not found/)
-    expect(fs.readdirSync(missing)).toEqual([])
+    expect(fs.readdirSync(missing)).toEqual(['.git'])
   })
 })
 
@@ -512,6 +595,8 @@ describe('applyInitPlan', () => {
     ]
     const plan: InitPlan = {
       cwd: tempDir(),
+      root: tempDir(),
+      manager: 'pnpm',
       vite: false,
       actions,
       leftAlone: [],
@@ -560,6 +645,7 @@ function partialUpdateFixture(options: { vite: boolean }): string {
 function tempDir(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-init-test-'))
   tempRoots.push(root)
+  fs.mkdirSync(path.join(root, '.git'))
   return root
 }
 
@@ -649,3 +735,61 @@ function fencedCommands(markdown: string): string[] {
   }
   return commands
 }
+
+const workflowRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const workflow = fs.readFileSync(path.join(workflowRoot, '.github/workflows/shotwright.yml'), 'utf8')
+const template = fs.readFileSync(path.join(workflowRoot, 'templates/github/shotwright.yml'), 'utf8')
+
+describe('consumer workflow contract', () => {
+  it('exposes exactly the six G10 inputs in addition to mode and config-path', () => {
+    const block = workflow.split('    inputs:\n')[1]!.split('\n    secrets:')[0]!
+    const names = [...block.matchAll(/^ {6}([\w-]+):$/gm)].map((match) => match[1])
+    expect(names).toEqual(['mode', 'config-path', 'runs-on', 'working-directory', 'package-manager', 'playwright-args', 'traces', 'retention-days'])
+  })
+  it('decodes runs-on labels and sets package working-directory', () => {
+    expect(workflow).toContain('runs-on: ${{ fromJSON(inputs.runs-on) }}')
+    expect(workflow).toContain('working-directory: ${{ inputs.working-directory }}')
+  })
+  it('uploads the invocation after failure with strict path handling and retention', () => {
+    expect(workflow).toContain('if: ${{ !cancelled() && steps.resolve.outputs.run-dir != \'\' }}')
+    expect(workflow).toContain('if-no-files-found: error')
+    expect(workflow).toContain('retention-days: ${{ inputs.retention-days }}')
+    expect(workflow).toContain('SHOTWRIGHT_RUN_DIR_FILE: ${{ runner.temp }}')
+    expect(workflow).toContain('run_dir="$(cat "$SHOTWRIGHT_RUN_DIR_FILE")"')
+    expect(workflow).not.toContain('readlink shots-output/latest')
+  })
+  it('defaults traces off and passes the opt-in to the run flag', () => {
+    expect(workflow).toMatch(/ {6}traces:\n(?:.|\n)*? {8}default: false/)
+    expect(workflow).toContain('if [ "$RECORD_TRACES" = true ]; then trace_args=(--trace); fi')
+  })
+  it('parses playwright-args as a JSON array and rejects publication overrides without shell evaluation', () => {
+    expect(workflow).toContain('JSON.parse(process.env.PLAYWRIGHT_ARGS_JSON)')
+    expect(workflow).toContain('Array.isArray(args)')
+    expect(workflow).toContain('--trace|--reporter|--output')
+    expect(workflow).toContain('mapfile -d \'\' -t args < "$args_file"')
+    expect(workflow).not.toContain('eval ')
+  })
+  it('uses the same invocation file in GitHub and forge self lanes', () => {
+    const selfLane = fs.readFileSync(path.join(workflowRoot, 'scripts/ci/shots.sh'), 'utf8')
+    const forge = fs.readFileSync(path.join(workflowRoot, '.forgejo/workflows/ci.yml'), 'utf8')
+    expect(workflow).toContain('scripts/ci/shots.sh "$SHOTWRIGHT_CONFIG_PATH"')
+    expect(forge).toContain('scripts/ci/shots.sh demo/shots.config.ts')
+    expect(selfLane).toContain('run_dir="$(cat "$SHOTWRIGHT_RUN_DIR_FILE")"')
+    expect(selfLane).not.toContain('readlink shots-output/latest')
+  })
+
+  it('maps declared caller secrets to the capture step', () => {
+    for (const name of ['SHOTWRIGHT_BASE_URL', 'SHOTWRIGHT_USERNAME', 'SHOTWRIGHT_PASSWORD']) {
+      expect(workflow).toContain(`      ${name}:`)
+      expect(workflow).toContain(`          ${name}: \${{ secrets.${name} }}`)
+    }
+    expect(template).toContain('secrets: inherit')
+  })
+
+  it('generates a release-pinned caller with working-directory', () => {
+    const version = JSON.parse(fs.readFileSync(path.join(workflowRoot, 'package.json'), 'utf8')).version as string
+    expect(template).toContain(`shotwright.yml@v${version}`)
+    expect(template).toContain('working-directory: .')
+    expect(template).toContain('package-manager: pnpm')
+  })
+})

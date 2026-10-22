@@ -4,6 +4,7 @@ import path from 'node:path'
 
 export interface InitArgs {
   dryRun: boolean
+  packageManager?: PackageManager
 }
 
 export interface SkillDestination {
@@ -13,6 +14,8 @@ export interface SkillDestination {
 
 export interface InitPlan {
   cwd: string
+  root: string
+  manager: PackageManager
   vite: boolean
   actions: InitAction[]
   leftAlone: InitReportLine[]
@@ -60,6 +63,7 @@ export type InitOutcome =
   | { kind: 'nothing-changed'; exitCode: 0 }
 
 type InitNextSteps = 'vite' | 'placeholder'
+type PackageManager = 'npm' | 'pnpm' | 'yarn'
 
 export interface DesiredScripts {
   shots: string
@@ -68,7 +72,7 @@ export interface DesiredScripts {
   'shots:install': string
 }
 
-const INIT_USAGE = 'Usage: shotwright init [--dry-run]'
+const INIT_USAGE = 'Usage: shotwright init [--dry-run] [--package-manager npm|pnpm|yarn]'
 const desiredScripts: DesiredScripts = {
   shots: 'shotwright run',
   'shots:gallery': 'shotwright gallery',
@@ -93,9 +97,14 @@ const placeholderWebServerBlock = `  // Point these at the command and URL that 
 
 export function parseInitArgs(argv: string[]): InitArgs {
   const args: InitArgs = { dryRun: false }
-  for (const argument of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const argument = argv[i]!
     if (argument === '--dry-run') {
       args.dryRun = true
+    } else if (argument === '--package-manager') {
+      const value = argv[++i]
+      if (value !== 'npm' && value !== 'pnpm' && value !== 'yarn') throw new Error(`invalid package manager: ${value ?? '(missing)'}\n${INIT_USAGE}`)
+      args.packageManager = value
     } else {
       throw new Error(`unknown argument: ${argument}\n${INIT_USAGE}`)
     }
@@ -162,7 +171,34 @@ export function resolveSkillDestination(cwd: string): SkillDestination {
   return { displayPath: relativePath(cwd, skillPath), symlinkNotice: null }
 }
 
-export function planInit(cwd: string, loadTemplate: (rel: string) => string): InitPlan {
+export function findGitRoot(cwd: string): string {
+  let current = fs.realpathSync(cwd)
+  while (true) {
+    if (fs.existsSync(path.join(current, '.git'))) return current
+    const parent = path.dirname(current)
+    if (parent === current) return fs.realpathSync(cwd)
+    current = parent
+  }
+}
+
+export function detectPackageManager(cwd: string, pkg: unknown, explicit?: PackageManager): PackageManager {
+  const locks: Record<PackageManager, string> = { npm: 'package-lock.json', pnpm: 'pnpm-lock.yaml', yarn: 'yarn.lock' }
+  const found = (Object.keys(locks) as PackageManager[]).filter((key) => fs.existsSync(path.join(cwd, locks[key])))
+  const declaration = isObject(pkg) && typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@')[0] : ''
+  if (declaration && declaration !== 'npm' && declaration !== 'pnpm' && declaration !== 'yarn') {
+    throw new Error(`shotwright init: unsupported packageManager ${declaration}`)
+  }
+  if (found.length > 1 && !explicit) throw new Error('shotwright init: ambiguous package-manager lockfiles; pass --package-manager')
+  if (declaration && found.length === 1 && declaration !== found[0] && !explicit) {
+    throw new Error('shotwright init: packageManager conflicts with lockfile; pass --package-manager')
+  }
+  const agent = process.env.npm_config_user_agent?.split('/')[0]
+  const inferred = explicit || (declaration as PackageManager) || found[0] || ((agent === 'npm' || agent === 'pnpm' || agent === 'yarn') ? agent : null)
+  if (!inferred) throw new Error('shotwright init: no package manager found; pass --package-manager')
+  return inferred
+}
+
+export function planInit(cwd: string, loadTemplate: (rel: string) => string, explicitManager?: PackageManager): InitPlan {
   const packagePath = path.join(cwd, 'package.json')
   let packageRaw: string
   try {
@@ -183,17 +219,22 @@ export function planInit(cwd: string, loadTemplate: (rel: string) => string): In
     throw new Error(`shotwright init: could not parse package.json: ${message}`, { cause: error })
   }
 
+  const root = findGitRoot(cwd)
+  const manager = detectPackageManager(cwd, packageJson, explicitManager)
   const vite = detectVite(packageJson)
   const config = loadTemplate('init/shots.config.ts').replace(
     '  // {{webServerBlock}}',
-    vite ? viteWebServerBlock : placeholderWebServerBlock,
+    (vite ? viteWebServerBlock : placeholderWebServerBlock).replace('pnpm exec vite', `${managerExec(manager)} vite`),
   )
   const example = loadTemplate('init/shots/example.shots.ts')
-  const ciWorkflow = loadTemplate('github/shotwright.yml')
+  const workingDirectory = path.relative(root, cwd).split(path.sep).join('/') || '.'
+  const ciWorkflow = loadTemplate('github/shotwright.yml').replace('working-directory: .', `working-directory: ${workingDirectory === '.' ? '.' : JSON.stringify(workingDirectory)}`).replace('package-manager: pnpm', `package-manager: ${manager}`)
   const gitignoreSnippet = loadTemplate('init/gitignore.snippet')
-  const skill = loadTemplate('skills/shots-harness/SKILL.md')
+  const skill = renderSkill(loadTemplate('skills/shots-harness/SKILL.md'), manager)
   const plan: InitPlan = {
     cwd,
+    root,
+    manager,
     vite,
     actions: [],
     leftAlone: [],
@@ -202,9 +243,10 @@ export function planInit(cwd: string, loadTemplate: (rel: string) => string): In
     conflicts: packageMutation.conflicts,
     notices: [],
   }
+  assertContained(root, cwd)
   planManagedFile(plan, 'shots.config.ts', config)
   planManagedFile(plan, 'shots/example.shots.ts', example)
-  planManagedFile(plan, '.github/workflows/shotwright.yml', ciWorkflow)
+  planManagedFile(plan, '.github/workflows/shotwright.yml', ciWorkflow, root)
   planPackageJson(plan, packageRaw, packageMutation)
   planGitignore(plan, gitignoreSnippet)
   planSkill(plan, skill)
@@ -269,7 +311,7 @@ export function formatInitResult(
   lines.push(formatHeadline(outcome))
   if (!options.omitNotices) appendNotices(lines, plan.notices)
   appendActionNotices(lines, result.dryRun ? plan.actions : result.written)
-  appendConflicts(lines, plan.conflicts)
+  appendConflicts(lines, plan.conflicts, plan.manager)
 
   if (result.dryRun) {
     appendActionSection(
@@ -299,12 +341,13 @@ export function formatInitResult(
 
   appendNeedsReview(lines, plan.needsReview, result.dryRun)
   appendUpToDate(lines, plan.upToDate)
-  appendNextSteps(lines, outcome)
+  appendNextSteps(lines, outcome, plan.manager)
   return trimTrailingBlank(lines).join('\n')
 }
 
-function planManagedFile(plan: InitPlan, rel: string, contents: string): void {
-  const absolute = path.join(plan.cwd, rel)
+function planManagedFile(plan: InitPlan, rel: string, contents: string, base = plan.cwd): void {
+  const absolute = path.join(base, rel)
+  assertContained(plan.root, absolute)
   const existing = readOptional(absolute)
   if (existing === null) {
     plan.actions.push({
@@ -375,10 +418,11 @@ function planGitignore(plan: InitPlan, snippet: string): void {
 }
 
 function planSkill(plan: InitPlan, contents: string): void {
-  const destination = resolveSkillDestination(plan.cwd)
+  const destination = resolveSkillDestination(plan.root)
+  assertContained(plan.root, path.join(plan.root, '.claude/skills/shots-harness/SKILL.md'))
   if (destination.symlinkNotice) plan.notices.push(destination.symlinkNotice)
   const rel = '.claude/skills/shots-harness/SKILL.md'
-  const absolute = path.join(plan.cwd, rel)
+  const absolute = path.join(plan.root, rel)
   const existing = readOptional(absolute)
   if (existing === null) {
     plan.actions.push({
@@ -391,7 +435,7 @@ function planSkill(plan: InitPlan, contents: string): void {
     plan.upToDate.push(rel)
   } else {
     const newRel = rel + '.new'
-    const newAbsolute = path.join(plan.cwd, newRel)
+    const newAbsolute = path.join(plan.root, newRel)
     const newExisting = readOptional(newAbsolute)
     if (newExisting === contents) {
       plan.needsReview.push({
@@ -453,9 +497,7 @@ function formatInitFailure(
   const failedIndex = result.plan.actions.indexOf(result.failedAction!)
   appendActionSection(lines, 'Not written', result.plan.actions.slice(failedIndex))
   lines.push('')
-  lines.push(
-    'Fix the error and re-run `pnpm exec shotwright init` — it will skip what already exists.',
-  )
+  lines.push(`Fix the error and re-run \`${managerExec(result.plan.manager)} shotwright init\` — it will skip what already exists.`)
   return trimTrailingBlank(lines).join('\n')
 }
 
@@ -486,7 +528,7 @@ function appendUpToDate(lines: string[], entries: string[]): void {
   lines.push(`  ${entries.join(', ')}`)
 }
 
-function appendConflicts(lines: string[], conflicts: ScriptConflict[]): void {
+function appendConflicts(lines: string[], conflicts: ScriptConflict[], manager: PackageManager): void {
   if (conflicts.length === 0) return
   for (const conflict of conflicts) {
     lines.push('')
@@ -494,24 +536,24 @@ function appendConflicts(lines: string[], conflicts: ScriptConflict[]): void {
     lines.push(`      "${conflict.name}": "${conflict.actual}"`)
     lines.push('  shotwright did not change it.')
     lines.push('')
-    lines.push('  Rename your existing script, or run captures with `pnpm exec shotwright run`.')
+    lines.push(`  Rename your existing script, or run captures with \`${managerExec(manager)} shotwright run\`.`)
   }
 }
 
-function appendNextSteps(lines: string[], outcome: InitOutcome): void {
+function appendNextSteps(lines: string[], outcome: InitOutcome, manager: PackageManager): void {
   const nextSteps = initOutcomeNextSteps(outcome)
   if (nextSteps === null) return
   lines.push('')
   lines.push('Next steps')
   if (nextSteps === 'vite') {
-    lines.push('  1. pnpm shots:install     # download the browser (one time)')
-    lines.push('  2. pnpm shots')
-    lines.push('  3. pnpm shots:gallery')
+    lines.push(`  1. ${managerRun(manager, 'shots:install')}     # download the browser (one time)`)
+    lines.push(`  2. ${managerRun(manager, 'shots')}`)
+    lines.push(`  3. ${managerRun(manager, 'shots:gallery')}`)
   } else {
     lines.push('  1. Edit shots.config.ts - uncomment and set webServer for your app')
-    lines.push('  2. pnpm shots:install     # download the browser (one time)')
-    lines.push('  3. pnpm shots')
-    lines.push('  4. pnpm shots:gallery')
+    lines.push(`  2. ${managerRun(manager, 'shots:install')}     # download the browser (one time)`)
+    lines.push(`  3. ${managerRun(manager, 'shots')}`)
+    lines.push(`  4. ${managerRun(manager, 'shots:gallery')}`)
   }
 }
 
@@ -621,4 +663,35 @@ function assertNever(value: never): never {
 function trimTrailingBlank(lines: string[]): string[] {
   while (lines.at(-1) === '') lines.pop()
   return lines
+}
+
+function managerExec(manager: PackageManager): string {
+  return manager === 'npm' ? 'npm exec --' : manager === 'pnpm' ? 'pnpm exec' : 'yarn'
+}
+
+function managerRun(manager: PackageManager, script: string): string {
+  return manager === 'npm' ? `npm run ${script}` : `${manager} ${script}`
+}
+
+function renderSkill(template: string, manager: PackageManager): string {
+  if (manager === 'pnpm') return template
+  if (manager === 'yarn') return template.replaceAll('pnpm exec ', 'yarn ').replaceAll('pnpm shots', 'yarn shots')
+  return template
+    .replaceAll('pnpm exec ', 'npm exec -- ')
+    .replaceAll('pnpm shots --only', 'npm run shots -- --only')
+    .replaceAll('pnpm shots --video', 'npm run shots -- --video')
+    .replaceAll('pnpm shots:gallery --lan', 'npm run shots:gallery -- --lan')
+    .replaceAll('pnpm shots:compare latest', 'npm run shots:compare -- latest')
+    .replaceAll('pnpm shots:compare <', 'npm run shots:compare -- <')
+    .replaceAll('pnpm shots', 'npm run shots')
+}
+
+function assertContained(root: string, target: string): void {
+  let ancestor = target
+  while (!fs.existsSync(ancestor)) ancestor = path.dirname(ancestor)
+  const resolved = fs.realpathSync(ancestor)
+  const relative = path.relative(fs.realpathSync(root), resolved)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('shotwright init: destination resolves outside the containing Git root')
+  }
 }
