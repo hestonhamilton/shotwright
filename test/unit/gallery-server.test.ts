@@ -453,3 +453,75 @@ describe('signal cleanup', () => {
     expect(emitter.listenerCount('SIGTERM')).toBe(0)
   })
 })
+
+it('pins GET and HEAD trace routes for shot and failure references across effective bind addresses and override', async () => {
+  const { runDir } = writeRun()
+  const manifestPath = path.join(runDir, 'manifest.json')
+  const value = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Manifest
+  value.failures = [
+    {
+      testId: 'failed-test',
+      files: [
+        {
+          name: 'browser-trace',
+          contentType: 'application/octet-stream',
+          file: 'failures/browser.zip',
+        },
+        { name: 'recording', contentType: 'application/zip', file: 'failures/recording.zip' },
+        { name: 'error-context', contentType: 'text/markdown', file: 'failures/context.md' },
+      ],
+    },
+  ]
+  value.artifacts = [
+    {
+      name: 'data.json',
+      spec: 'home.shots.ts',
+      file: 'data/data.json',
+      contentType: 'application/json',
+      bytes: 2,
+      testId: 'failed-test',
+    },
+  ]
+  fs.mkdirSync(path.join(runDir, 'failures'))
+  fs.mkdirSync(path.join(runDir, 'data'))
+  fs.writeFileSync(path.join(runDir, 'failures/browser.zip'), 'trace')
+  fs.writeFileSync(path.join(runDir, 'failures/recording.zip'), 'trace')
+  fs.writeFileSync(path.join(runDir, 'failures/context.md'), 'context')
+  fs.writeFileSync(path.join(runDir, 'data/data.json'), '{}')
+  fs.writeFileSync(manifestPath, JSON.stringify(value))
+  const { createGalleryRequestHandler } = await import('../../src/gallery/server.js')
+  for (const boundAddress of ['127.0.0.1', '::1', 'localhost', '0.0.0.0', '::', '192.168.1.20']) {
+    for (const includeTraces of [false, true]) {
+      const httpServer = http.createServer(
+        createGalleryRequestHandler(runDir, boundAddress, includeTraces),
+      )
+      await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve))
+      const address = httpServer.address() as net.AddressInfo
+      const server: GalleryServer = {
+        server: httpServer,
+        host: '127.0.0.1',
+        port: address.port,
+        close: () =>
+          new Promise((resolve, reject) =>
+            httpServer.close((error) => (error ? reject(error) : resolve())),
+          ),
+      }
+      servers.push(server)
+      const allowed = ['127.0.0.1', '::1', 'localhost'].includes(boundAddress) || includeTraces
+      for (const method of ['GET', 'HEAD']) {
+        for (const target of [
+          '/trace/shared.zip',
+          '/failures/browser.zip',
+          '/failures/recording.zip',
+        ]) {
+          expect(
+            (await request(server, target, { method })).status,
+            `${boundAddress} ${includeTraces} ${method} ${target}`,
+          ).toBe(allowed ? 200 : 404)
+        }
+        for (const target of ['/failures/context.md', '/data/data.json'])
+          expect((await request(server, target, { method })).status).toBe(200)
+      }
+    }
+  }
+})

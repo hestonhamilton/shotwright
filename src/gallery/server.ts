@@ -70,8 +70,17 @@ function canonicalReferencedFile(canonicalRun: string, relativePath: string): st
   const segments = validateRelativePath(relativePath)
   let canonical: string
   try {
+    let current = canonicalRun
+    for (const segment of segments) {
+      current = path.join(current, segment)
+      if (fs.lstatSync(current).isSymbolicLink())
+        throw new Error(
+          `shotwright gallery: referenced file escapes the run via symlink: ${relativePath}`,
+        )
+    }
     canonical = fs.realpathSync(path.join(canonicalRun, ...segments))
   } catch (error) {
+    if (error instanceof Error && error.message.includes('via symlink')) throw error
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT' || code === 'ENOTDIR') return null
     throw new Error(`shotwright gallery: referenced file is unreadable: ${relativePath}`, {
@@ -106,6 +115,7 @@ function addAllowed(
 export function buildGalleryAllowlist(
   runDir: string,
   galleryPath = path.join(runDir, 'gallery.html'),
+  options: { boundAddress?: string; includeTraces?: boolean } = {},
 ): Map<string, AllowedFile> {
   const canonicalRun = fs.realpathSync(runDir)
   const canonicalGallery = fs.realpathSync(galleryPath)
@@ -118,6 +128,26 @@ export function buildGalleryAllowlist(
   addAllowed(allowlist, '/gallery.html', canonicalGallery, 'text/html; charset=utf-8')
 
   const manifest = readManifest(canonicalRun)
+  const tracePaths = new Set<string>([
+    ...manifest.shots.flatMap((shot) => (shot.trace === null ? [] : [shot.trace])),
+    ...manifest.failures.flatMap((failure) =>
+      failure.files
+        .filter((file) => file.contentType === 'application/zip' || /trace/i.test(file.name))
+        .map((file) => file.file),
+    ),
+  ])
+  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(options.boundAddress ?? '127.0.0.1')
+  const addReference = (relativePath: string, mime: string): void => {
+    if (tracePaths.has(relativePath) && !loopback && !options.includeTraces) return
+    const canonical = canonicalReferencedFile(canonicalRun, relativePath)
+    if (canonical !== null)
+      addAllowed(
+        allowlist,
+        encodedUrlPath(relativePath),
+        canonical,
+        /^[\w.+-]+\/[\w.+-]+(?:; charset=utf-8)?$/i.test(mime) ? mime : 'application/octet-stream',
+      )
+  }
   for (const shot of manifest.shots) {
     const references: Array<[string, string, string]> = [[shot.file, 'screenshot', 'image/png']]
     if (shot.video !== null) references.push([shot.video, 'video', 'video/webm'])
@@ -132,12 +162,12 @@ export function buildGalleryAllowlist(
       ) {
         throw new Error(`shotwright gallery: unsupported ${kind} extension: ${relativePath}`)
       }
-      const canonical = canonicalReferencedFile(canonicalRun, relativePath)
-      if (canonical !== null) {
-        addAllowed(allowlist, encodedUrlPath(relativePath), canonical, mime)
-      }
+      addReference(relativePath, mime)
     }
   }
+  for (const artifact of manifest.artifacts) addReference(artifact.file, artifact.contentType)
+  for (const failure of manifest.failures)
+    for (const file of failure.files) addReference(file.file, file.contentType)
   return allowlist
 }
 
@@ -291,15 +321,34 @@ function handler(allowlist: Map<string, AllowedFile>, boundAddress: () => string
   }
 }
 
+export function createGalleryRequestHandler(
+  runDir: string,
+  boundAddress: string,
+  includeTraces = false,
+): (request: IncomingMessage, response: ServerResponse) => void {
+  return handler(
+    buildGalleryAllowlist(runDir, path.join(runDir, 'gallery.html'), {
+      boundAddress,
+      includeTraces,
+    }),
+    () => boundAddress,
+  )
+}
+
 export async function startGalleryServer(
   runDir: string,
   host = '127.0.0.1',
   port = 0,
+  options: { includeTraces?: boolean } = {},
 ): Promise<GalleryServer> {
-  const allowlist = buildGalleryAllowlist(runDir)
-  const server: Server = http.createServer(
-    handler(allowlist, () => (server.address() as AddressInfo).address),
-  )
+  let serve: (request: IncomingMessage, response: ServerResponse) => void = (
+    _request,
+    response,
+  ) => {
+    response.writeHead(503)
+    response.end()
+  }
+  const server: Server = http.createServer((request, response) => serve(request, response))
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error): void => reject(error)
     server.once('error', onError)
@@ -309,6 +358,12 @@ export async function startGalleryServer(
     })
   })
   const address = server.address() as AddressInfo
+  try {
+    serve = createGalleryRequestHandler(runDir, address.address, options.includeTraces)
+  } catch (error) {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    throw error
+  }
   return {
     server,
     host: address.address,

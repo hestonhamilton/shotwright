@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import fs from 'node:fs'
+import path from 'node:path'
 import { GALLERY_CSS, GALLERY_SCRIPT } from './assets.js'
 import type { ArtifactReference, GalleryModel, GalleryShot, GallerySpec } from './model.js'
+import { validateRelativePath } from './model.js'
 
 const siblingWarning = 'requires this gallery beside the run directory'
 
@@ -102,7 +105,12 @@ function viewportFilters(model: GalleryModel): {
   }
 }
 
-function renderCard(shot: GalleryShot, index: number, viewportKey: string): string {
+function renderCard(
+  shot: GalleryShot,
+  index: number,
+  viewportKey: string,
+  testStatus: string,
+): string {
   const entry = shot.entry
   const tags = `${viewportKey}${entry.fullPage ? '' : ' cropped'}`
   const search = `${entry.name} ${entry.spec}`.toLowerCase()
@@ -135,7 +143,7 @@ function renderCard(shot: GalleryShot, index: number, viewportKey: string): stri
   return `<article class="card${image === null ? ' broken-reference' : ''}" data-search="${escapeHtml(search)}" data-tags="${tags}">
           ${media}
           <div class="card-body">
-            <div class="card-title"><h3>${escapeHtml(entry.name)}</h3><span class="kind">${kind}</span></div>
+            <div class="card-title"><h3>${escapeHtml(entry.name)}</h3><span class="kind">${kind}</span><span class="badge test-status-${escapeHtml(testStatus)}">test: ${escapeHtml(testStatus)}</span>${entry.checked ? '<span class="badge">checked</span>' : ''}</div>
             <div class="meta"><span>${escapeHtml(viewportLabel(shot))}</span><span>${escapeHtml(deviceScaleFactorLabel(shot))}</span><span>${number(entry.durationMs)} ms</span>${derived}</div>
             ${actions}
             <details>
@@ -223,9 +231,11 @@ function renderSpec(
   specIndex: number,
   startIndex: number,
   keyFor: (shot: GalleryShot) => string,
+  testStatus: (shot: GalleryShot) => string,
+  dataArtifacts: string,
 ): string {
   const cards = spec.shots
-    .map((shot, index) => renderCard(shot, startIndex + index, keyFor(shot)))
+    .map((shot, index) => renderCard(shot, startIndex + index, keyFor(shot), testStatus(shot)))
     .join('\n')
   const groups = artifactGroups(spec)
   const artifacts = groups.map(renderArtifactGroup).join('\n')
@@ -240,10 +250,91 @@ function renderSpec(
         <p>Exact manifest paths are shown once per shared video/trace pair.</p>
         ${artifacts}
       </aside>
+      ${dataArtifacts}
     </section>`
 }
 
-export function renderGallery(model: GalleryModel): string {
+const PREVIEW_CAP = 256 * 1024
+
+function safeFile(runDir: string, file: string): string {
+  const segments = validateRelativePath(file)
+  const root = fs.realpathSync(runDir)
+  let candidate = root
+  for (const segment of segments) {
+    candidate = path.join(candidate, segment)
+    if (fs.lstatSync(candidate).isSymbolicLink()) throw new Error('symlink reference')
+  }
+  if (!fs.statSync(candidate).isFile()) throw new Error('not a file')
+  return candidate
+}
+
+function renderDataArtifacts(
+  model: GalleryModel,
+  runDir: string | undefined,
+  spec: string,
+): string {
+  const artifacts = model.manifest.artifacts.filter((entry) => entry.spec === spec)
+  if (artifacts.length === 0) return ''
+  const cards = artifacts
+    .map((entry) => {
+      const href = escapeHtml(siblingHref(entry.file))
+      let preview = ''
+      const isText =
+        entry.contentType.toLowerCase().startsWith('text/') ||
+        /(?:\/|\+)json(?:;|$)/i.test(entry.contentType)
+      if (isText && runDir) {
+        try {
+          const file = safeFile(runDir, entry.file)
+          const fd = fs.openSync(file, 'r')
+          const buffer = Buffer.alloc(PREVIEW_CAP + 1)
+          let read: number
+          try {
+            read = fs.readSync(fd, buffer, 0, buffer.length, 0)
+          } finally {
+            fs.closeSync(fd)
+          }
+          let body = buffer.subarray(0, Math.min(read, PREVIEW_CAP)).toString('utf8')
+          if (/(?:\/|\+)json(?:;|$)/i.test(entry.contentType) && read <= PREVIEW_CAP) {
+            try {
+              body = JSON.stringify(JSON.parse(body), null, 2)
+            } catch {
+              /* show source */
+            }
+          }
+          const bodyBytes = Buffer.from(body)
+          const truncated = read > PREVIEW_CAP || bodyBytes.length > PREVIEW_CAP
+          if (bodyBytes.length > PREVIEW_CAP)
+            body = bodyBytes.subarray(0, PREVIEW_CAP).toString('utf8')
+          preview = `<pre class="data-preview">${escapeHtml(body)}</pre>${truncated ? '<p>Preview truncated at 256 KiB. Download the full file.</p>' : ''}`
+        } catch {
+          preview = '<p>Preview unavailable.</p>'
+        }
+      }
+      return `<article class="artifact-group"><h4>${escapeHtml(entry.name)}</h4><p>${escapeHtml(entry.contentType)} · ${number(entry.bytes)} bytes</p>${preview}<a class="action" href="${href}" download>Download full file</a></article>`
+    })
+    .join('\n')
+  return `<section class="artifacts" aria-label="Data artifacts for ${escapeHtml(spec)}"><h3>Data artifacts</h3>${cards}</section>`
+}
+
+function renderFailures(model: GalleryModel): string {
+  if (model.manifest.failures.length === 0) return ''
+  const tests = new Map(model.manifest.tests.map((test) => [test.id, test]))
+  const rows = model.manifest.failures
+    .map((failure) => {
+      const test = tests.get(failure.testId)
+      const files = failure.files
+        .map(
+          (file) =>
+            `<li><a href="${escapeHtml(siblingHref(file.file))}" download>${escapeHtml(file.name)}</a> · ${escapeHtml(file.contentType)}</li>`,
+        )
+        .join('')
+      return `<article class="artifact-group"><h3>${escapeHtml(test?.title ?? failure.testId)} · ${escapeHtml(test?.status ?? 'failed')}</h3>${test?.error ? `<p>${escapeHtml(test.error.message)}</p>` : ''}<ul>${files || '<li>No copied files</li>'}</ul></article>`
+    })
+    .join('\n')
+  return `<section class="artifacts" aria-label="Failure evidence"><h2>Failure evidence</h2>${rows}</section>`
+}
+
+export function renderGallery(model: GalleryModel, runDir?: string): string {
   const { manifest } = model
   const shotCount = manifest.shots.length
   const hasArtifacts = manifest.shots.some((shot) => shot.video !== null || shot.trace !== null)
@@ -262,12 +353,31 @@ export function renderGallery(model: GalleryModel): string {
         ]),
   ].join('\n')
   let shotIndex = 0
+  const statusById = new Map(manifest.tests.map((test) => [test.id, test.status]))
+  const testStatus = (shot: GalleryShot): string =>
+    model.sourceManifestVersion === 1
+      ? 'unrecorded'
+      : (statusById.get(shot.entry.testId ?? '') ?? 'unknown')
   const specs = model.specs
     .map((spec, specIndex) => {
-      const rendered = renderSpec(spec, specIndex, shotIndex, keyFor)
+      const rendered = renderSpec(
+        spec,
+        specIndex,
+        shotIndex,
+        keyFor,
+        testStatus,
+        renderDataArtifacts(model, runDir, spec.name),
+      )
       shotIndex += spec.shots.length
       return rendered
     })
+    .join('\n')
+  const artifactOnlySpecs = [...new Set(manifest.artifacts.map((entry) => entry.spec))]
+    .filter((spec) => !model.specs.some((existing) => existing.name === spec))
+    .map(
+      (spec) =>
+        `<section class="spec"><h2>${escapeHtml(spec)}</h2>${renderDataArtifacts(model, runDir, spec)}</section>`,
+    )
     .join('\n')
   const content =
     shotCount === 0
@@ -286,7 +396,7 @@ export function renderGallery(model: GalleryModel): string {
       .join(', ') || 'ok'
   const statusLine =
     model.sourceManifestVersion === 1
-      ? 'Run status: unrecorded (manifest v1)'
+      ? 'Run status: unrecorded (manifest v1) · publication: unrecorded'
       : `Run status: ${manifest.status} · tests: ${manifest.tests.filter((test) => test.status === 'passed').length}/${manifest.tests.length} · publication: ${publication}`
 
   return `<!doctype html>
@@ -296,7 +406,12 @@ export function renderGallery(model: GalleryModel): string {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Shotwright gallery — ${escapeHtml(manifest.runId)}</title>
-  <style>${GALLERY_CSS}</style>
+  <style>${GALLERY_CSS}
+  .badge.durable.bad-status,.badge.test-status-failed,.badge.test-status-timedOut,.badge.test-status-interrupted{color:var(--bad);border-color:currentColor}
+  .badge.test-status-passed{color:var(--good);border-color:currentColor}
+  .data-preview{max-height:28rem;overflow:auto;padding:12px;border:1px solid #8999ad;border-radius:8px;background:#f2f5f9;color:#18202b;white-space:pre-wrap;overflow-wrap:anywhere}
+  .artifact-group{overflow-wrap:anywhere}
+  </style>
 </head>
 <body>
   <a class="skip" href="#main">Skip to gallery</a>
@@ -305,7 +420,7 @@ export function renderGallery(model: GalleryModel): string {
       <p class="eyebrow">Gallery · spec workbench</p>
       <h1>${escapeHtml(manifest.runId)}</h1>
       <div class="status">
-        <span class="badge durable">${escapeHtml(statusLine)}</span>
+        <span class="badge durable${manifest.status === 'failed' || manifest.status === 'timedout' || manifest.status === 'interrupted' ? ' bad-status' : ''}">${escapeHtml(statusLine)}</span>
         <span class="badge">${count(shotCount, 'shot')}</span>
         <span class="badge">${count(model.specs.length, 'spec')}</span>
         <span class="badge">${hasArtifacts ? 'Sibling artifacts grouped by identical manifest path' : 'Video and trace absent in this run'}</span>
@@ -327,8 +442,8 @@ export function renderGallery(model: GalleryModel): string {
       <div class="keyboard"><kbd>/</kbd> search · <kbd>Esc</kbd> clear · <kbd>Tab</kbd> actions. Every touch target is at least 44 px high.</div>
     </section>
     <noscript><p class="artifact-warning"><strong>JavaScript is off.</strong> Screenshot metadata and original download links remain available; overview loading, filters, and 1:1 inspection require JavaScript.</p></noscript>
-    <div id="gallery-content">${content}</div>
-    <footer role="contentinfo">Original PNGs are embedded once as download links. Sibling video and trace links ${siblingWarning}.</footer>
+    <div id="gallery-content">${content}${artifactOnlySpecs}${renderFailures(model)}</div>
+    <footer role="contentinfo">Original PNGs are embedded once as download links. Sibling video and trace links require this gallery beside the run directory.</footer>
   </main>
   <dialog id="inspection-dialog" aria-labelledby="inspection-title">
     <div class="dialog-head"><h2 id="inspection-title">1:1 inspection</h2><form method="dialog"><button class="action" type="submit" data-close>Close</button></form></div>
