@@ -1,9 +1,10 @@
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { parseCompareArgs, parseGalleryArgs, parseRunArgs } from '../../src/cli.js'
 import {
@@ -435,9 +436,8 @@ describe('planInit', () => {
     const result = applyInitPlan(planInit(cwd, readTemplate))
     const output = formatInitResult(result)
     expect(output.indexOf('Note: .claude/skills')).toBeLessThan(output.indexOf('Created'))
-    expect(fs.existsSync(path.join(cwd, '.agents', 'skills', 'shots-harness', 'SKILL.md'))).toBe(
-      true,
-    )
+    expect(output).toContain('the skill will be written to .agents/skills/shots-harness/SKILL.md')
+    expect(fs.existsSync(path.join(cwd, '.agents', 'skills', 'shots-harness', 'SKILL.md'))).toBe(true)
   })
 })
 
@@ -462,6 +462,75 @@ describe('nested Git root and package manager pins', () => {
     expect(formatInitResult(applyInitPlan(planInit(pkg, readTemplate)))).not.toContain('pnpm shots')
     expect(fs.existsSync(path.join(pkg, '.github'))).toBe(false)
     expect(formatInitResult(applyInitPlan(planInit(pkg, readTemplate)))).toContain('already set up')
+  })
+
+  it('uses the innermost Git root for a nested repository', () => {
+    const outer = tempDir()
+    const inner = path.join(outer, 'embedded')
+    const pkg = path.join(inner, 'apps', 'web')
+    fs.mkdirSync(path.join(inner, '.git'), { recursive: true })
+    fs.mkdirSync(pkg, { recursive: true })
+    fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.25.0' }))
+    fs.writeFileSync(path.join(pkg, 'pnpm-lock.yaml'), '')
+
+    expect(findGitRoot(pkg)).toBe(inner)
+    const plan = planInit(pkg, readTemplate)
+    expect(plan.root).toBe(inner)
+    applyInitPlan(plan)
+    expect(fs.existsSync(path.join(outer, '.github'))).toBe(false)
+    const caller = fs.readFileSync(path.join(inner, '.github/workflows/shotwright.yml'), 'utf8')
+    expect(caller).toContain('working-directory: "apps/web"')
+  })
+
+  it('renders a symlinked package cwd using its canonical path inside the Git root', () => {
+    const root = tempDir()
+    const pkg = path.join(root, 'packages', 'web')
+    const alias = path.join(root, 'web-link')
+    fs.mkdirSync(pkg, { recursive: true })
+    fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ packageManager: 'npm@11.0.0' }))
+    fs.writeFileSync(path.join(pkg, 'package-lock.json'), '{}')
+    fs.symlinkSync('packages/web', alias)
+
+    const plan = planInit(alias, readTemplate)
+    expect(plan.root).toBe(root)
+    applyInitPlan(plan)
+    const caller = fs.readFileSync(path.join(root, '.github/workflows/shotwright.yml'), 'utf8')
+    expect(caller).toContain('working-directory: "packages/web"')
+    expect(fs.existsSync(path.join(pkg, 'shots.config.ts'))).toBe(true)
+    expect(fs.existsSync(path.join(pkg, '.github'))).toBe(false)
+  })
+
+  it('refuses a package with no containing Git root before scaffolding', () => {
+    const cwd = tempDir()
+    fs.rmSync(path.join(cwd, '.git'), { recursive: true })
+    fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ packageManager: 'npm@11.0.0' }))
+
+    const actualExistsSync = fs.existsSync.bind(fs)
+    const existsSync = vi.spyOn(fs, 'existsSync').mockImplementation((candidate) =>
+      path.basename(String(candidate)) === '.git' ? false : actualExistsSync(candidate))
+    try {
+      expect(() => findGitRoot(cwd)).toThrow(/no containing Git root found/)
+      expect(() => planInit(cwd, readTemplate)).toThrow(/no containing Git root found/)
+    } finally {
+      existsSync.mockRestore()
+    }
+    expect(fs.readdirSync(cwd)).toEqual(['package.json'])
+  })
+
+  it('honors an explicit manager over packageManager metadata and reports the override', () => {
+    const cwd = tempDir()
+    fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.25.0' }))
+    fs.writeFileSync(path.join(cwd, 'package-lock.json'), '{}')
+    expect(parseInitArgs(['--package-manager', 'npm']).packageManager).toBe('npm')
+
+    const plan = planInit(cwd, readTemplate, 'npm')
+    expect(plan.manager).toBe('npm')
+    expect(plan.notices).toContain('Note: --package-manager npm overrides package.json packageManager pnpm.')
+    const output = formatInitResult(applyInitPlan(plan))
+    expect(output).toContain('Note: --package-manager npm overrides package.json packageManager pnpm.')
+    const caller = fs.readFileSync(path.join(cwd, '.github/workflows/shotwright.yml'), 'utf8')
+    expect(caller).toContain('package-manager: npm')
+    expect(detectPackageManager(cwd, { packageManager: 'bun@1.0.0' }, 'npm')).toBe('npm')
   })
 
   it('detects explicit choice, package-local metadata, npm/pnpm/yarn lockfiles, then user agent', () => {
@@ -740,6 +809,18 @@ const workflowRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const workflow = fs.readFileSync(path.join(workflowRoot, '.github/workflows/shotwright.yml'), 'utf8')
 const template = fs.readFileSync(path.join(workflowRoot, 'templates/github/shotwright.yml'), 'utf8')
 
+function runWorkflowArgsEncoder(args: string[]): { status: number | null; stderr: string; outputFile: string } {
+  const script = workflow.match(/^\s*ARGS_FILE="\$args_file" node --input-type=module <<'NODE'\r?\n([\s\S]*?)^\s*NODE$/m)?.[1]
+  if (!script) throw new Error('playwright-args Node script not found in workflow')
+  const outputFile = path.join(tempDir(), 'args.nul')
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8',
+    env: { ...process.env, ARGS_FILE: outputFile, PLAYWRIGHT_ARGS_JSON: JSON.stringify(args) },
+  })
+  if (result.error) throw result.error
+  return { status: result.status, stderr: result.stderr, outputFile }
+}
+
 describe('consumer workflow contract', () => {
   it('exposes exactly the six G10 inputs in addition to mode and config-path', () => {
     const block = workflow.split('    inputs:\n')[1]!.split('\n    secrets:')[0]!
@@ -768,6 +849,29 @@ describe('consumer workflow contract', () => {
     expect(workflow).toContain('--trace|--reporter|--output')
     expect(workflow).toContain('mapfile -d \'\' -t args < "$args_file"')
     expect(workflow).not.toContain('eval ')
+  })
+  it.each([
+    ['embedded NUL', ['--trace\u0000on'], 0],
+    ['newline', ['--grep', 'x\ny'], 1],
+    ['DEL', ['\u007f'], 0],
+  ])('rejects %s in playwright-args before NUL serialization', (_case, args, index) => {
+    const result = runWorkflowArgsEncoder(args as string[])
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('::error::playwright-args[' + index + '] contains a control character')
+    expect(fs.existsSync(result.outputFile)).toBe(false)
+  })
+  it('rejects a direct trace override in playwright-args at runtime', () => {
+    const result = runWorkflowArgsEncoder(['--trace'])
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('playwright-args cannot override trace, reporter or output')
+    expect(fs.existsSync(result.outputFile)).toBe(false)
+  })
+  it('round-trips three safe playwright-args through the runtime NUL file', () => {
+    const result = runWorkflowArgsEncoder(['--workers=1', '--grep', 'x y'])
+    expect(result.status).toBe(0)
+    const bytes = fs.readFileSync(result.outputFile)
+    expect(bytes).toEqual(Buffer.from('--workers=1\0--grep\0x y\0'))
+    expect(bytes.toString('utf8').split('\0')).toEqual(['--workers=1', '--grep', 'x y', ''])
   })
   it('uses the same invocation file in GitHub and forge self lanes', () => {
     const selfLane = fs.readFileSync(path.join(workflowRoot, 'scripts/ci/shots.sh'), 'utf8')

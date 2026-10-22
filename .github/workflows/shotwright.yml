@@ -150,6 +150,11 @@ jobs:
           import fs from 'node:fs'
           const args = JSON.parse(process.env.PLAYWRIGHT_ARGS_JSON)
           if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) throw new Error('playwright-args must be a JSON array of strings')
+          const controlIndex = args.findIndex((arg) => /[\u0000-\u001f\u007f]/.test(arg))
+          if (controlIndex !== -1) {
+            console.error('::error::playwright-args[' + controlIndex + '] contains a control character')
+            process.exit(1)
+          }
           if (args.some((arg) => /^(--trace|--reporter|--output)(=|$)/.test(arg))) throw new Error('playwright-args cannot override trace, reporter or output')
           fs.writeFileSync(process.env.ARGS_FILE, Buffer.concat(args.map((arg) => Buffer.from(`${arg}\0`))))
           NODE

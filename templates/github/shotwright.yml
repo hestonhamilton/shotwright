@@ -9,8 +9,11 @@ permissions:
 
 jobs:
   shotwright:
-    # Keep this release tag aligned with the installed shotwright npm version.
-    # The version command updates this pin when shotwright is released.
+    # Pin to the release tag matching the installed shotwright npm version.
+    # A branch such as @main could change your CI on every upstream push.
+    # A workflow ref pins only that file; actions it calls could still move.
+    # Shotwright SHA-pins those actions, making this release pin meaningful.
+    # Update the tag when you upgrade the package.
     uses: hestonhamilton/shotwright/.github/workflows/shotwright.yml@v0.1.1
     with:
       mode: consumer
@@ -22,4 +25,6 @@ jobs:
     # Caller env does not cross a reusable-workflow boundary. Map the named
     # SHOTWRIGHT_BASE_URL / USERNAME / PASSWORD secrets explicitly, or use
     # secrets: inherit when the repository trust boundary permits it.
+    # Uploaded runs include screenshots, videos, failure context, data artifacts, and optional traces;
+    # they can expose anything authenticated flows displayed or fetched. Set retention-days accordingly.
     # secrets: inherit

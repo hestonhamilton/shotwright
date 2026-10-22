@@ -176,24 +176,27 @@ export function findGitRoot(cwd: string): string {
   while (true) {
     if (fs.existsSync(path.join(current, '.git'))) return current
     const parent = path.dirname(current)
-    if (parent === current) return fs.realpathSync(cwd)
+    if (parent === current) {
+      throw new Error('shotwright init: no containing Git root found; run init inside a Git repository')
+    }
     current = parent
   }
 }
 
 export function detectPackageManager(cwd: string, pkg: unknown, explicit?: PackageManager): PackageManager {
+  if (explicit) return explicit
   const locks: Record<PackageManager, string> = { npm: 'package-lock.json', pnpm: 'pnpm-lock.yaml', yarn: 'yarn.lock' }
   const found = (Object.keys(locks) as PackageManager[]).filter((key) => fs.existsSync(path.join(cwd, locks[key])))
   const declaration = isObject(pkg) && typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@')[0] : ''
   if (declaration && declaration !== 'npm' && declaration !== 'pnpm' && declaration !== 'yarn') {
     throw new Error(`shotwright init: unsupported packageManager ${declaration}`)
   }
-  if (found.length > 1 && !explicit) throw new Error('shotwright init: ambiguous package-manager lockfiles; pass --package-manager')
-  if (declaration && found.length === 1 && declaration !== found[0] && !explicit) {
+  if (found.length > 1) throw new Error('shotwright init: ambiguous package-manager lockfiles; pass --package-manager')
+  if (declaration && found.length === 1 && declaration !== found[0]) {
     throw new Error('shotwright init: packageManager conflicts with lockfile; pass --package-manager')
   }
   const agent = process.env.npm_config_user_agent?.split('/')[0]
-  const inferred = explicit || (declaration as PackageManager) || found[0] || ((agent === 'npm' || agent === 'pnpm' || agent === 'yarn') ? agent : null)
+  const inferred = (declaration as PackageManager) || found[0] || ((agent === 'npm' || agent === 'pnpm' || agent === 'yarn') ? agent : null)
   if (!inferred) throw new Error('shotwright init: no package manager found; pass --package-manager')
   return inferred
 }
@@ -227,7 +230,7 @@ export function planInit(cwd: string, loadTemplate: (rel: string) => string, exp
     (vite ? viteWebServerBlock : placeholderWebServerBlock).replace('pnpm exec vite', `${managerExec(manager)} vite`),
   )
   const example = loadTemplate('init/shots/example.shots.ts')
-  const workingDirectory = path.relative(root, cwd).split(path.sep).join('/') || '.'
+  const workingDirectory = path.relative(root, fs.realpathSync(cwd)).split(path.sep).join('/') || '.'
   const ciWorkflow = loadTemplate('github/shotwright.yml').replace('working-directory: .', `working-directory: ${workingDirectory === '.' ? '.' : JSON.stringify(workingDirectory)}`).replace('package-manager: pnpm', `package-manager: ${manager}`)
   const gitignoreSnippet = loadTemplate('init/gitignore.snippet')
   const skill = renderSkill(loadTemplate('skills/shots-harness/SKILL.md'), manager)
@@ -242,6 +245,12 @@ export function planInit(cwd: string, loadTemplate: (rel: string) => string, exp
     upToDate: [],
     conflicts: packageMutation.conflicts,
     notices: [],
+  }
+  const declaredManager = isObject(packageJson) && typeof packageJson.packageManager === 'string'
+    ? packageJson.packageManager.split('@')[0]
+    : ''
+  if (explicitManager && declaredManager && explicitManager !== declaredManager) {
+    plan.notices.push('Note: --package-manager ' + explicitManager + ' overrides package.json packageManager ' + declaredManager + '.')
   }
   assertContained(root, cwd)
   planManagedFile(plan, 'shots.config.ts', config)
