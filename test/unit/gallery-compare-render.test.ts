@@ -72,15 +72,31 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     expect(page).toBe(html)
     const summary = JSON.parse(
       fs.readFileSync(generated.outputFile.replace(/\.html$/, '.compare.json'), 'utf8'),
-    ) as { runs: { a: { pathDigest: string }; b: { pathDigest: string } } }
+    ) as {
+      version: string
+      comparator: { name: string; version: string }
+      runs: { a: { pathDigest: string }; b: { pathDigest: string } }
+    }
     summary.runs.a.pathDigest = 'PATH'
     summary.runs.b.pathDigest = 'PATH'
+    // The sidecar records the package and comparator versions; pin them by
+    // shape, not by value, so a release bump cannot change the hash below.
+    const packageVersion = (
+      JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+        version: string
+      }
+    ).version
+    expect(summary.version).toBe(packageVersion)
+    expect(summary.comparator.name).toBe('pixelmatch')
+    expect(summary.comparator.version).toMatch(/^\d+\.\d+\.\d+$/)
+    summary.version = 'VERSION'
+    summary.comparator.version = 'VERSION'
     const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
     expect(sha256(page)).toMatchInlineSnapshot(
       `"d049def9f8ca558ff43dba9495ef192083b805210b538a53214130cab5ff40a2"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
-      `"65aa1130e5ef88f8665144ea79b0ee4a7fce7d16a55a993a4bb6213621a71984"`,
+      `"6977f0d3893c0abd52dc14d870d1db22b6ae26a1b24c46dee475b0096f2892d3"`,
     )
     for (const state of [
       'identical',
