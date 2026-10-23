@@ -4,6 +4,7 @@ import path from 'node:path'
 import { listRuns } from '../runs.js'
 
 export interface ResolvedGalleryRun {
+  /** Canonical output root; external comparisons without one use run A's parent. */
   outputDir: string
   runDir: string
   runId: string
@@ -13,6 +14,8 @@ export interface ResolvedGalleryRun {
 
 export interface ResolvedCompareRuns {
   outputDir: string
+  /** Only the configured output root owns default compare stems under ADR 0009. */
+  outputRoot: 'configured' | 'beside-a'
   a: ResolvedGalleryRun
   b: ResolvedGalleryRun
 }
@@ -110,14 +113,15 @@ function resolveCompareSelector(outputDir: string, selector: string): ResolvedGa
   if (!path.isAbsolute(selector) && !selector.includes('/') && !selector.includes('\\')) {
     return resolveGalleryRun(outputDir, selector)
   }
-  const canonicalOutput = realDirectory(outputDir, 'output directory')
   const candidate = path.resolve(selector)
   if (containsSymlink(candidate)) {
     throw new Error('shotwright compare: run path contains a symlink')
   }
   const runDir = realDirectory(candidate, `run "${selector}"`)
   return {
-    outputDir: canonicalOutput,
+    // A path-selected run is independent of the configured output directory.
+    // Its parent is a usable fallback for a default comparison page.
+    outputDir: path.dirname(runDir),
     runDir,
     runId: path.basename(runDir),
     selectedViaLatest: false,
@@ -142,5 +146,15 @@ export function resolveCompareRuns(
   if (a.runDir === b.runDir) {
     throw new Error(`shotwright compare: A and B resolve to the same run: ${a.runId}`)
   }
-  return { outputDir: a.outputDir, a, b }
+  // Run-id selectors already required and canonicalized this directory above.
+  // With two paths, preserve the configured default when it exists; otherwise
+  // put the default compare/ directory beside run A.
+  const output = fs.lstatSync(outputDir, { throwIfNoEntry: false })
+  const canonicalOutput = output ? realDirectory(outputDir, 'output directory') : a.outputDir
+  return {
+    outputDir: canonicalOutput,
+    outputRoot: output ? 'configured' : 'beside-a',
+    a: { ...a, outputDir: canonicalOutput },
+    b: { ...b, outputDir: canonicalOutput },
+  }
 }

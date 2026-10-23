@@ -90,11 +90,13 @@ An interrupted publication can leave a manifestless `incomplete` directory.
 incomplete directories. `shotwright gallery --last` opens the newest run with
 a manifest, including a failed run. `latest` still means the last passed and
 fully published run. Compare accepts IDs, `latest`, `--last`, or external run
-directory paths, which is useful for downloaded CI artifacts:
-
-The configured output directory must exist even when both runs are external
-paths and `--output` names the HTML file. This is tracked for a fix in
-shotwright-746.28.11.
+directory paths, which is useful for downloaded CI artifacts. Two path selectors
+work without a configured output directory, including with `--output`. Without
+`--output`, the page defaults to the configured `compare/` directory when it
+exists, or a `compare/` directory beside run A otherwise. In the beside-run-A
+case, an existing default page without a sidecar for the same run pair is
+refused; use `--output` to choose a different file. Run IDs and `latest` still
+require the configured output directory.
 
 ```sh
 shotwright compare ./before/run-a ./after/run-b --output ./review/parity.html

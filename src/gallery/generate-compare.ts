@@ -16,6 +16,12 @@ import { renderCompareHeader, renderComparePairChunks } from './render-compare.j
 
 export interface CompareGenerationOptions {
   outputFile?: string
+  /** Publish every file only if absent; used for a first page beside run A. */
+  exclusiveCreate?: boolean
+  /** Existing stem files may be pruned only when a prior sidecar owns this pair. */
+  pruneStale?: boolean
+  /** Temp files have no sidecar ownership proof in the beside-run-A fallback. */
+  pruneTemps?: boolean
   threshold?: number
   includeAA?: boolean
   failOnChange?: boolean
@@ -92,6 +98,7 @@ export function generateCompareGallery(
   const compareDir = path.dirname(outputFile)
   fs.mkdirSync(compareDir, { recursive: true })
   const staged: Staged[] = []
+  const created: string[] = []
   let bodyTemp: string | undefined
   const stage = (file: string, contents: string | Buffer): string => {
     const temp = tempPath(file)
@@ -242,14 +249,23 @@ export function generateCompareGallery(
     fs.rmSync(bodyTemp)
     bodyTemp = undefined
     stage(jsonFile, JSON.stringify(buildJson(), null, 2) + '\n')
-    for (const { file, temp } of staged) fs.renameSync(temp, file)
+    if (options.exclusiveCreate) {
+      for (const { file, temp } of staged) {
+        fs.linkSync(temp, file)
+        created.push(file)
+      }
+      for (const { temp } of staged) fs.unlinkSync(temp)
+    } else {
+      for (const { file, temp } of staged) fs.renameSync(temp, file)
+    }
     // Only after the new HTML is in place: prune diff PNGs and temps a previous run of this stem left.
     const keep = new Set(diffFiles.map((entry) => path.basename(entry.file)))
     const stale = new RegExp(
       `^(?:${escapeRegExp(stem)}\\.diff-\\d+\\.png|\\.compare\\.(?:${escapeRegExp(htmlName)}|${escapeRegExp(stem)}\\.(?:compare\\.json|diff-\\d+\\.png))\\.\\d+(?:\\.[0-9a-f]{32})?\\.tmp)$`,
     )
-    for (const name of fs.readdirSync(compareDir)) {
+    for (const name of options.pruneStale === false ? [] : fs.readdirSync(compareDir)) {
       if (!stale.test(name) || keep.has(name)) continue
+      if (options.pruneTemps === false && name.startsWith('.compare.')) continue
       const candidate = path.join(compareDir, name)
       const stat = fs.lstatSync(candidate)
       if (!stat.isFile()) continue
@@ -265,6 +281,7 @@ export function generateCompareGallery(
       model,
     }
   } catch (error) {
+    for (const file of created) fs.rmSync(file, { force: true })
     if (bodyTemp) fs.rmSync(bodyTemp, { force: true })
     for (const { temp } of staged) {
       try {
