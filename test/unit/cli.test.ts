@@ -734,6 +734,135 @@ describe('default compare page ownership', () => {
     return { root, a, b, config }
   }
 
+  it('publishes a new default page beside run A when configured output is missing', async () => {
+    const { root, a, b, config } = runs()
+    const page = path.join(root, 'compare', 'run-a.vs.run-b.html')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      expect(
+        await compare([a, b, '--config', config], async () => path.join(root, 'missing')),
+      ).toBe(0)
+      expect(fs.existsSync(page)).toBe(true)
+      expect(fs.existsSync(path.join(root, 'compare', 'run-a.vs.run-b.compare.json'))).toBe(true)
+    } finally {
+      log.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses an unowned default page beside run A without changing its bytes', async () => {
+    const { root, a, b, config } = runs()
+    const dir = path.join(root, 'compare')
+    const page = path.join(dir, 'run-a.vs.run-b.html')
+    fs.mkdirSync(dir)
+    const original = Buffer.from('unrelated page\0bytes')
+    fs.writeFileSync(page, original)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(
+        await compare([a, b, '--config', config], async () => path.join(root, 'missing')),
+      ).toBe(2)
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(page))
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('--output'))
+      expect(fs.readFileSync(page)).toEqual(original)
+    } finally {
+      error.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses unowned diff files beside run A before creating a default page', async () => {
+    const { root, a, b, config } = runs()
+    const dir = path.join(root, 'compare')
+    const diff = path.join(dir, 'run-a.vs.run-b.diff-0.png')
+    fs.mkdirSync(dir)
+    fs.writeFileSync(diff, 'unrelated diff')
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(
+        await compare([a, b, '--config', config], async () => path.join(root, 'missing')),
+      ).toBe(2)
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('--output'))
+      expect(fs.readFileSync(diff, 'utf8')).toBe('unrelated diff')
+      expect(fs.existsSync(path.join(dir, 'run-a.vs.run-b.html'))).toBe(false)
+    } finally {
+      error.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('overwrites a fallback default page with a same-pair sidecar and prunes its old diffs', async () => {
+    const { root, a, b, config } = runs()
+    const output = path.join(root, 'missing')
+    const dir = path.join(root, 'compare')
+    const page = path.join(dir, 'run-a.vs.run-b.html')
+    const stale = path.join(dir, 'run-a.vs.run-b.diff-99.png')
+    const foreignTemp = path.join(
+      dir,
+      `.compare.run-a.vs.run-b.html.${process.pid}.${'a'.repeat(32)}.tmp`,
+    )
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      expect(await compare([a, b, '--config', config], async () => output)).toBe(0)
+      fs.writeFileSync(page, 'old page')
+      fs.writeFileSync(stale, 'old diff')
+      fs.writeFileSync(foreignTemp, 'foreign temp')
+      fs.utimesSync(foreignTemp, new Date(0), new Date(0))
+      expect(await compare([a, b, '--config', config], async () => output)).toBe(0)
+      expect(fs.readFileSync(page, 'utf8')).not.toBe('old page')
+      expect(fs.existsSync(stale)).toBe(false)
+      expect(fs.readFileSync(foreignTemp, 'utf8')).toBe('foreign temp')
+    } finally {
+      log.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a fallback page when its same-ID sidecar records different run paths', async () => {
+    const { root, a, b, config } = runs()
+    const dir = path.join(root, 'compare')
+    const page = path.join(dir, 'run-a.vs.run-b.html')
+    const stale = path.join(dir, 'run-a.vs.run-b.diff-99.png')
+    const otherB = path.join(root, 'other', 'run-b')
+    fs.mkdirSync(otherB, { recursive: true })
+    fs.writeFileSync(
+      path.join(otherB, 'manifest.json'),
+      JSON.stringify(makeManifest({ runId: 'run-b' })),
+    )
+    const output = path.join(root, 'missing')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(await compare([a, b, '--config', config], async () => output)).toBe(0)
+      fs.writeFileSync(page, 'unrelated page')
+      fs.writeFileSync(stale, 'unrelated diff')
+      expect(await compare([a, otherB, '--config', config], async () => output)).toBe(2)
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('--output'))
+      expect(fs.readFileSync(page, 'utf8')).toBe('unrelated page')
+      expect(fs.readFileSync(stale, 'utf8')).toBe('unrelated diff')
+    } finally {
+      log.mockRestore()
+      error.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps ADR 0009 overwrite behavior in the configured output directory', async () => {
+    const { root, config } = runs()
+    const dir = path.join(root, 'compare')
+    const page = path.join(dir, 'run-a.vs.run-b.html')
+    fs.mkdirSync(dir)
+    fs.writeFileSync(page, 'old page')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      expect(await compare(['run-a', 'run-b', '--config', config], async () => root)).toBe(0)
+      expect(fs.readFileSync(page, 'utf8')).not.toBe('old page')
+    } finally {
+      log.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('refuses a default compare directory symlinked into a run with exit 2', async () => {
     const { root, a, b, config } = runs()
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})

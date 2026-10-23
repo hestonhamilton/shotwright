@@ -1255,6 +1255,39 @@ describe('shotwright run against the demo app', () => {
     }
   })
 
+  it('compares two external paths with --output and no configured output directory', () => {
+    const local = path.join(root, 'local')
+    fs.mkdirSync(local, { recursive: true })
+    const scratch = fs.mkdtempSync(path.join(local, 'compare-paths-'))
+    const runId = unfilteredRun.manifest.runId
+    const a = path.join(scratch, 'before', runId)
+    const b = path.join(scratch, 'after', runId)
+    const missingOutput = path.join(scratch, 'missing-output')
+    const page = path.join(scratch, 'review', 'parity.html')
+    const config = path.join(scratch, 'shots.config.ts')
+    try {
+      fs.cpSync(unfilteredRun.runDir, a, { recursive: true })
+      fs.cpSync(unfilteredRun.runDir, b, { recursive: true })
+      fs.writeFileSync(
+        config,
+        `import { defineShotsConfig } from '../../dist/index.js'\nexport default defineShotsConfig({ outputDir: ${JSON.stringify(missingOutput)} })\n`,
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        ['dist/cli.js', 'compare', a, b, '--config', config, '--output', page],
+        { cwd: root, encoding: 'utf8', timeout: 60_000 },
+      )
+      expect(result.status).toBe(0)
+      expect(result.stderr).toBe('')
+      expect(fs.existsSync(page)).toBe(true)
+      expect(fs.existsSync(path.join(scratch, 'review', 'parity.compare.json'))).toBe(true)
+      expect(fs.existsSync(missingOutput)).toBe(false)
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true })
+    }
+  }, 120_000)
+
   it('compares same-basename runs under per-path digest stems without touching the plain stem', () => {
     const runId = unfilteredRun.manifest.runId
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-external-'))
