@@ -46,6 +46,7 @@ the other by hand.**
 | Lint (on edit) | `eslint --fix` (extensions: `ts tsx js mjs cjs`); formatter is Prettier (`pnpm run format`, checked by `pnpm run lint`) |
 | Verification | `pnpm run typecheck && pnpm run lint && pnpm run test` (as tooling lands; see design doc) |
 | Enforcement | `strict` (off-convention branches and AI-attributed commits are blocked) |
+| Prose-question guard | `on` — block a turn ending in an open prose question (`warn` advises; `off` disables) |
 | Beads | `on` — shared Dolt sql-server, prefix `shotwright` |
 | Knowledge | `HANDOFF.md` only (session-ephemeral, gitignored, ≤100 lines) |
 
@@ -81,6 +82,7 @@ auto-discovers the workspace from any worktree — run `bd <subcommand>` with no
 - **No AI attribution on commits or PRs** (no `Co-Authored-By`, no "Generated
   with Claude Code"). A hook blocks it; do not work around it.
 - Confirm before `git push`, PR merge, `bd close`, or any destructive git op.
+- Open questions and authorization asks go through AskUserQuestion, never prose; the Stop hook blocks a turn that ends in a prose question.
 - **CI runs on GitHub, and on the self-hosted forge as a standby second opinion
   (`shotwright-746.14`, ADR 0008).** One `git push` reaches both remotes —
   `origin` carries two push URLs. What each lane runs is defined once in
