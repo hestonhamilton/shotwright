@@ -142,8 +142,11 @@ command yourself (`pnpm run typecheck && pnpm run lint && pnpm run test`),
 commit, take the next slice.
 
 CLAUDE.md's gates still bind: confirm before `git push`, PR merge, `bd close`,
-or any destructive git op — batch those asks so one answer covers a wave. An
-unviewed gallery or compare change does not ship: render it and look.
+or any destructive git op — batch those asks so one answer covers a wave, and
+**raise them with `AskUserQuestion`, never in prose**: a question in a recap
+scrolls out of the transcript and is effectively never asked (owner rule,
+2026-10-22; the Stop hook `prose-question-guard.sh` blocks a turn that ends in
+one). An unviewed gallery or compare change does not ship: render it and look.
 
 Stop and `AskUserQuestion` (2–4 options, with a recommendation) only for a
 genuine fork: a foundational component or dependency choice, an unresolved plan
