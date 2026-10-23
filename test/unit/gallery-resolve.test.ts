@@ -120,6 +120,45 @@ describe('resolveGalleryRun', () => {
 })
 
 describe('resolveCompareRuns', () => {
+  it('resolves two external paths without a configured output directory', () => {
+    const root = tmpDir()
+    const output = path.join(root, 'missing-output')
+    const a = path.join(root, 'download-a', 'run-a')
+    const b = path.join(root, 'download-b', 'run-b')
+    fs.mkdirSync(a, { recursive: true })
+    fs.mkdirSync(b, { recursive: true })
+    addManifest(a)
+    addManifest(b)
+
+    const selected = resolveCompareRuns(output, a, b)
+    const besideA = fs.realpathSync(path.dirname(a))
+    expect(selected.outputDir).toBe(besideA)
+    expect(selected.outputRoot).toBe('beside-a')
+    expect(selected.a).toMatchObject({ outputDir: besideA, runDir: fs.realpathSync(a) })
+    expect(selected.b).toMatchObject({ outputDir: besideA, runDir: fs.realpathSync(b) })
+    expect(fs.existsSync(output)).toBe(false)
+  })
+
+  it('requires the configured output directory for one path and one run id', () => {
+    const root = tmpDir()
+    const a = path.join(root, 'downloaded')
+    fs.mkdirSync(a)
+    addManifest(a)
+    expect(() => resolveCompareRuns(path.join(root, 'missing-output'), a, 'run-b')).toThrow(
+      /output directory is missing/,
+    )
+  })
+
+  it('requires the configured output directory for one path and latest', () => {
+    const root = tmpDir()
+    const a = path.join(root, 'downloaded')
+    fs.mkdirSync(a)
+    addManifest(a)
+    expect(() => resolveCompareRuns(path.join(root, 'missing-output'), a, 'latest')).toThrow(
+      /output directory is missing/,
+    )
+  })
+
   it('accepts external paths, requires manifests, rejects symlink paths and canonical duplicates', () => {
     const root = tmpDir()
     const output = path.join(root, 'output')
@@ -129,7 +168,11 @@ describe('resolveCompareRuns', () => {
     fs.mkdirSync(path.join(output, 'local'))
     addManifest(path.join(output, 'local'))
     addManifest(external)
-    expect(resolveCompareRuns(output, 'local', external).b.runDir).toBe(fs.realpathSync(external))
+    const selected = resolveCompareRuns(output, 'local', external)
+    expect(selected.b.runDir).toBe(fs.realpathSync(external))
+    expect(selected.outputDir).toBe(fs.realpathSync(output))
+    expect(selected.outputRoot).toBe('configured')
+    expect(selected.b.outputDir).toBe(fs.realpathSync(output))
     expect(() => resolveCompareRuns(output, external, external)).toThrow(/same run/)
     fs.symlinkSync(external, path.join(root, 'alias'))
     expect(() => resolveCompareRuns(output, 'local', path.join(root, 'alias'))).toThrow(/symlink/)
@@ -145,6 +188,7 @@ describe('resolveCompareRuns', () => {
 
     expect(resolveCompareRuns(output, 'run-a', 'run-b')).toEqual({
       outputDir: fs.realpathSync(output),
+      outputRoot: 'configured',
       a: {
         outputDir: fs.realpathSync(output),
         runDir: fs.realpathSync(path.join(output, 'run-a')),

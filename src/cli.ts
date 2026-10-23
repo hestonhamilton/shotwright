@@ -779,6 +779,8 @@ export async function compare(
       ? runPathDigests(selected.a.runDir, selected.b.runDir)
       : null
   let outputFile: string
+  let exclusiveCreate = false
+  let pruneStale = true
   if (args.output === null) {
     outputFile = path.join(
       selected.outputDir,
@@ -790,14 +792,13 @@ export async function compare(
   }
   try {
     outputFile = resolveCompareOutput(args.output ?? outputFile!, runDirs)
-    if (args.output === null && fs.existsSync(outputFile)) {
+    if (args.output === null) {
       const sidecar = path.join(
         path.dirname(outputFile),
         `${path.basename(outputFile, path.extname(outputFile))}.compare.json`,
       )
-      // ADR 0009: the default stem is generator-owned, so a page without a readable
-      // sidecar is ours to overwrite. Only a sidecar that records a different pair
-      // marks the page as another comparison's output.
+      // ADR 0009 owns default stems only inside the configured output root.
+      // Beside a downloaded run, a sidecar must prove ownership before reuse.
       let runs: unknown = null
       try {
         runs = (JSON.parse(fs.readFileSync(sidecar, 'utf8')) as { runs?: unknown }).runs ?? null
@@ -814,10 +815,39 @@ export async function compare(
           pathDigest: createHash('sha256').update(selected.b.runDir).digest('hex'),
         },
       }
-      if (runs !== null && JSON.stringify(runs) !== JSON.stringify(expected)) {
+      const pageExists = fs.existsSync(outputFile)
+      const sidecarExists = fs.existsSync(sidecar)
+      const samePair = JSON.stringify(runs) === JSON.stringify(expected)
+      if (
+        selected.outputRoot === 'beside-a' &&
+        ((!pageExists && sidecarExists) || (pageExists && !samePair))
+      ) {
+        throw new Error(
+          `default page ${outputFile} is not owned by this run pair; use --output to choose another file`,
+        )
+      }
+      if (pageExists && runs !== null && !samePair) {
         throw new Error(
           `default page ${outputFile} is not owned by runs ${selected.a.runDir} and ${selected.b.runDir}; sidecar ${sidecar} records a different pair`,
         )
+      }
+      if (selected.outputRoot === 'beside-a') {
+        exclusiveCreate = !pageExists
+        pruneStale = pageExists && samePair
+        if (exclusiveCreate) {
+          const stem = path.basename(outputFile, '.html')
+          const conflict = fs
+            .readdirSync(path.dirname(outputFile))
+            .find(
+              (name) =>
+                name.startsWith(`${stem}.diff-`) && /^\d+\.png$/.test(name.slice(stem.length + 6)),
+            )
+          if (conflict) {
+            throw new Error(
+              `default page ${outputFile} has an unowned diff file ${conflict}; use --output to choose another file`,
+            )
+          }
+        }
       }
     }
   } catch (error) {
@@ -827,6 +857,9 @@ export async function compare(
   const generated = generateCompareGallery(selected.a.runDir, selected.b.runDir, {
     outputFile,
     failOnChange: args.failOnChange,
+    exclusiveCreate,
+    pruneStale,
+    pruneTemps: selected.outputRoot === 'configured' || args.output !== null,
   })
 
   const digestNote = (side: 'a' | 'b'): string =>
