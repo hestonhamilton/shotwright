@@ -29,11 +29,17 @@ export interface ImageComparison {
   errorDetail: string | null
 }
 
+/** Reused by sequential file comparisons; pixelmatch overwrites every output pixel. */
+export interface DiffBuffer {
+  data: Buffer
+}
+
 export function compareImageFiles(
   aPng: Buffer,
   bPng: Buffer,
   opts: CompareOptions,
   paths: { a?: string; b?: string } = {},
+  diffBuffer?: DiffBuffer,
 ): ImageComparison {
   const decoded: Partial<Record<'A' | 'B', PNG>> = {}
   const messages: string[] = [],
@@ -68,10 +74,15 @@ export function compareImageFiles(
       },
       errorDetail: details.join('; '),
     }
-  return { verdict: compareDecoded(a, b, opts), errorDetail: null }
+  return { verdict: compareDecoded(a, b, opts, diffBuffer), errorDetail: null }
 }
 
-function compareDecoded(a: PNG, b: PNG, opts: CompareOptions): CompareVerdict {
+function compareDecoded(
+  a: PNG,
+  b: PNG,
+  opts: CompareOptions,
+  diffBuffer?: DiffBuffer,
+): CompareVerdict {
   const aSize = { width: a.width, height: a.height },
     bSize = { width: b.width, height: b.height }
   if (a.width !== b.width || a.height !== b.height)
@@ -95,8 +106,11 @@ function compareDecoded(a: PNG, b: PNG, opts: CompareOptions): CompareVerdict {
       bSize,
       diffPng: null,
     }
-  const diff = new PNG({ width: a.width, height: a.height })
-  const differentPixels = pixelmatch(a.data, b.data, diff.data, a.width, a.height, {
+  const byteLength = totalPixels * 4
+  if (diffBuffer && diffBuffer.data.byteLength < byteLength)
+    diffBuffer.data = Buffer.allocUnsafe(byteLength)
+  const data = diffBuffer?.data.subarray(0, byteLength) ?? Buffer.allocUnsafe(byteLength)
+  const differentPixels = pixelmatch(a.data, b.data, data, a.width, a.height, {
     threshold: opts.threshold,
     includeAA: opts.includeAA,
   })
@@ -107,7 +121,10 @@ function compareDecoded(a: PNG, b: PNG, opts: CompareOptions): CompareVerdict {
     ratio: differentPixels / totalPixels,
     aSize,
     bSize,
-    diffPng: differentPixels === 0 ? null : PNG.sync.write(diff),
+    diffPng:
+      differentPixels === 0
+        ? null
+        : PNG.sync.write({ width: a.width, height: a.height, data } as PNG),
   }
 }
 

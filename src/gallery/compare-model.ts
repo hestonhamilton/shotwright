@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import type { ArtifactEntry } from '../manifest.js'
-import { compareImageFiles } from './pixels.js'
+import { compareImageFiles, type DiffBuffer } from './pixels.js'
 import {
   shotKey,
   validateRelativePath,
@@ -32,6 +32,8 @@ export interface ComparePair {
   /** Raw reader or decoder message behind `error`, for `compare.json` only. */
   errorDetail: string | null
   order: number
+  diffTemp?: string
+  diffBytes?: number
 }
 
 export interface GalleryCompareModel extends Omit<CompareModel, 'pairs'> {
@@ -190,10 +192,17 @@ function lineDiff(a: string[], b: string[]): string {
 export function buildCompareModel(
   a: GalleryModel,
   b: GalleryModel,
-  options: Partial<CompareOptions> & { aRunDir?: string; bRunDir?: string } = {},
+  options: Partial<CompareOptions> & {
+    aRunDir?: string
+    bRunDir?: string
+    stageDiff?: (png: Buffer, order: number) => string
+  } = {},
 ): GalleryCompareModel {
   const opts = { threshold: options.threshold ?? 0.1, includeAA: options.includeAA ?? false }
   const pairs: ComparePair[] = []
+  const diffBuffer: DiffBuffer | undefined = options.stageDiff
+    ? { data: Buffer.alloc(0) }
+    : undefined
   const assemble = <T extends GalleryShot | ArtifactEntry>(
     kind: 'shot' | 'artifact',
     left: T[],
@@ -235,6 +244,7 @@ export function buildCompareModel(
               bytes('B', options.bRunDir, by.entry.file, by.image?.dataUri),
               opts,
               { a: ax.entry.file, b: by.entry.file },
+              diffBuffer,
             )
             pair.verdict = verdict
             pair.state = verdict.state
@@ -260,6 +270,13 @@ export function buildCompareModel(
           pair.errorDetail = error instanceof ReadFailure ? error.detail : pair.error
           pair.state = 'unreadable'
         }
+      }
+      if (pair.verdict?.diffPng && options.stageDiff) {
+        // Playwright and reg-cli write each pair's diff promptly; keeping every
+        // encoded PNG until page render makes memory grow with the run count.
+        pair.diffBytes = pair.verdict.diffPng.byteLength
+        pair.diffTemp = options.stageDiff(pair.verdict.diffPng, pair.order)
+        pair.verdict.diffPng = null
       }
       pairs.push(pair)
     }

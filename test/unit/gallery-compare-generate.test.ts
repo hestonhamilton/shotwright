@@ -5,6 +5,9 @@ import path from 'node:path'
 import { PNG } from 'pngjs'
 import { afterEach, expect, it, vi } from 'vitest'
 import { generateCompareGallery } from '../../src/gallery/generate-compare.js'
+import { buildCompareModel } from '../../src/gallery/compare-model.js'
+import { loadGalleryModel } from '../../src/gallery/model.js'
+import { renderCompare } from '../../src/gallery/render-compare.js'
 import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
 const roots: string[] = []
@@ -47,6 +50,9 @@ it('pins compare.json numbers, default settings, diff PNG and generation result 
   expect(result.outputFile).toBe(path.join(dir, 'run-a.vs.run-b.html'))
   expect(result.counts.changed).toBe(1)
   expect(result.gate).toEqual({ nonParity: 1, failOnChange: false })
+  expect((result.model.pairs[0]!.a as { image: { dataUri: string } }).image.dataUri).toBe('')
+  expect((result.model.pairs[0]!.b as { image: { dataUri: string } }).image.dataUri).toBe('')
+  expect(result.model.pairs[0]!.verdict?.diffPng).toBeNull()
   expect(summary).toMatchObject({
     tool: 'shotwright',
     comparator: { name: 'pixelmatch', version: pixelmatchVersion },
@@ -89,6 +95,77 @@ it('prunes only regular files owned by the stem', () => {
   expect(fs.readFileSync(path.join(directory, 'keep'), 'utf8')).toBe('nested')
   expect(fs.lstatSync(symlink).isSymbolicLink()).toBe(true)
   expect(fs.readFileSync(target, 'utf8')).toBe('target')
+})
+it('keeps fresh foreign compare temps and prunes old ones', () => {
+  const { a, b } = fixture()
+  const dir = path.dirname(generateCompareGallery(a, b).outputFile)
+  const fresh = path.join(dir, `.compare.run-a.vs.run-b.html.${process.pid}.${'a'.repeat(32)}.tmp`)
+  const old = path.join(dir, `.compare.run-a.vs.run-b.html.${process.pid}.${'b'.repeat(32)}.tmp`)
+  fs.writeFileSync(fresh, 'in flight')
+  fs.writeFileSync(old, 'abandoned')
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
+  fs.utimesSync(old, twoHoursAgo, twoHoursAgo)
+  generateCompareGallery(a, b)
+  expect(fs.readFileSync(fresh, 'utf8')).toBe('in flight')
+  expect(fs.existsSync(old)).toBe(false)
+})
+it('marks a disappeared original unreadable in the final JSON, HTML, counts and gate', () => {
+  const { a, b } = fixture()
+  const bytes = fs.readFileSync(path.join(a, 'shots/one.png'))
+  fs.writeFileSync(path.join(b, 'shots/one.png'), bytes)
+  for (const run of [a, b]) {
+    fs.writeFileSync(path.join(run, 'shots/two.png'), bytes)
+    const manifestFile = path.join(run, 'manifest.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
+    manifest.shots.push(makeShot({ spec: 'home.shots.ts', name: 'two', file: 'shots/two.png' }))
+    fs.writeFileSync(manifestFile, JSON.stringify(manifest))
+  }
+  const original = path.join(b, 'shots/one.png')
+  const read = fs.readFileSync
+  let reads = 0
+  vi.spyOn(fs, 'readFileSync').mockImplementation(((
+    file: fs.PathOrFileDescriptor,
+    options?: unknown,
+  ) => {
+    if (file === original && ++reads === 2) fs.rmSync(original)
+    return read(file, options as BufferEncoding)
+  }) as typeof fs.readFileSync)
+  const result = generateCompareGallery(a, b)
+  const summary = JSON.parse(
+    fs.readFileSync(result.outputFile.replace(/\.html$/, '.compare.json'), 'utf8'),
+  )
+  const html = fs.readFileSync(result.outputFile, 'utf8')
+  const reason = 'B: unreadable file (shots/one.png): referenced file is missing or unreadable'
+  expect(result.model.pairs).toMatchObject([
+    { state: 'unreadable', error: reason },
+    { state: 'identical' },
+  ])
+  expect(result.counts).toMatchObject({ identical: 1, unreadable: 1 })
+  expect(result.gate).toEqual({ nonParity: 1, failOnChange: false })
+  expect(summary).toMatchObject({
+    counts: { identical: 1, unreadable: 1 },
+    gate: { nonParity: 1, failOnChange: false },
+    pairs: [
+      { state: 'unreadable', diff: null, error: { message: reason } },
+      { state: 'identical' },
+    ],
+  })
+  expect(html).toContain('unreadable: 1')
+  expect(html).toContain(reason)
+  expect(html).toContain('home.shots.ts / two')
+})
+it('publishes the full HTML when writeSync makes short writes', () => {
+  const { a, b } = fixture()
+  const expected = renderCompare(buildCompareModel(loadGalleryModel(a), loadGalleryModel(b)))
+  const write = fs.writeSync
+  vi.spyOn(fs, 'writeSync').mockImplementation(((
+    fd: number,
+    bytes: Buffer,
+    offset: number,
+    length: number,
+  ) => write(fd, bytes, offset, Math.min(length, 7))) as typeof fs.writeSync)
+  const result = generateCompareGallery(a, b)
+  expect(fs.readFileSync(result.outputFile, 'utf8')).toBe(expected)
 })
 it('keeps the previous complete HTML, JSON and diff PNG when staging the new HTML fails', () => {
   const { a, b } = fixture(),

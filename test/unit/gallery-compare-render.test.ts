@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { PNG } from 'pngjs'
 import { expect, it } from 'vitest'
 import { buildCompareModel } from '../../src/gallery/compare-model.js'
@@ -15,6 +16,8 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     const write = (id: string, statuses: string[]): string => {
       const dir = path.join(root, id)
       fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+      fs.mkdirSync(path.join(dir, 'data'))
+      fs.writeFileSync(path.join(dir, 'data', 'note.txt'), id === 'a' ? 'before' : 'after')
       const shots = statuses.map((name, index) => {
         const file = `shots/${name}.png`,
           image = new PNG({ width: name === 'size-changed' && id === 'b' ? 3 : 2, height: 2 })
@@ -31,7 +34,21 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
       fs.writeFileSync(
         path.join(dir, 'manifest.json'),
         JSON.stringify(
-          makeManifest({ runId: id, status: id === 'a' ? 'failed' : 'passed', shots }),
+          makeManifest({
+            runId: id,
+            status: id === 'a' ? 'failed' : 'passed',
+            shots,
+            artifacts: [
+              {
+                spec: 'example.shots.ts',
+                name: 'note',
+                file: 'data/note.txt',
+                contentType: 'text/plain',
+                bytes: id === 'a' ? 6 : 5,
+                testId: 'test-note',
+              },
+            ],
+          }),
         ),
       )
       return dir
@@ -50,6 +67,21 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
       bRunDir: b,
     })
     const html = renderCompare(model, true)
+    const generated = generateCompareGallery(a, b, { failOnChange: true })
+    const page = fs.readFileSync(generated.outputFile, 'utf8')
+    expect(page).toBe(html)
+    const summary = JSON.parse(
+      fs.readFileSync(generated.outputFile.replace(/\.html$/, '.compare.json'), 'utf8'),
+    ) as { runs: { a: { pathDigest: string }; b: { pathDigest: string } } }
+    summary.runs.a.pathDigest = 'PATH'
+    summary.runs.b.pathDigest = 'PATH'
+    const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+    expect(sha256(page)).toMatchInlineSnapshot(
+      `"d049def9f8ca558ff43dba9495ef192083b805210b538a53214130cab5ff40a2"`,
+    )
+    expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
+      `"65aa1130e5ef88f8665144ea79b0ee4a7fce7d16a55a993a4bb6213621a71984"`,
+    )
     for (const state of [
       'identical',
       'similar',
