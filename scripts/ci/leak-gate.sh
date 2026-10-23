@@ -42,8 +42,11 @@ source "$root/scripts/ci/gitleaks-pin.sh"
 # of LICENSE (shotwright-746.18.36); npm does not ship it unconditionally, so it
 # is in package.json `files` and in the allowlist. dist/version.js and its .d.ts
 # made 47 on 2026-10-14 (shotwright-746.18.19, the --version flag).
-BASELINE_FILES=47
-BASELINE_PACKED="60.5 kB"
+# On 2026-10-22, shotwright-746.28.12 refreshed the baseline after
+# shotwright-746.28.4 added dist/gallery/pixels.js and pixels.d.ts to the
+# packed package. The gate reports tarball size with `du -h`.
+BASELINE_FILES=49
+BASELINE_PACKED="76K"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
