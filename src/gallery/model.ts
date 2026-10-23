@@ -368,7 +368,7 @@ export function pngStructureReason(contents: Buffer): string | null {
   return 'truncated PNG (missing a terminal IEND chunk)'
 }
 
-export function readPngModel(runDir: string, relativePath: string): PngModel {
+export function readPngModel(runDir: string, relativePath: string, inline = true): PngModel {
   validateRelativePath(relativePath, 'PNG path')
   const file = containedFile(runDir, relativePath)
   let contents: Buffer
@@ -384,7 +384,7 @@ export function readPngModel(runDir: string, relativePath: string): PngModel {
     width: contents.readUInt32BE(16),
     height: contents.readUInt32BE(20),
     byteLength: contents.byteLength,
-    dataUri: `data:image/png;base64,${contents.toString('base64')}`,
+    dataUri: inline ? `data:image/png;base64,${contents.toString('base64')}` : '',
   }
 }
 
@@ -403,7 +403,7 @@ function readArtifact(
   }
 }
 
-export function loadGalleryModel(runDir: string): GalleryModel {
+export function loadGalleryModel(runDir: string, inline = true): GalleryModel {
   const manifestPath = path.join(runDir, 'manifest.json')
   let manifestBytes: Buffer
   try {
@@ -424,6 +424,7 @@ export function loadGalleryModel(runDir: string): GalleryModel {
     validateManifest(parsed, path.basename(runDir)),
     manifestBytes.byteLength,
     (parsed as { manifestVersion: 1 | 2 }).manifestVersion,
+    inline,
   )
 }
 
@@ -432,6 +433,7 @@ export function buildGalleryModel(
   manifest: Manifest,
   manifestByteLength = Buffer.byteLength(JSON.stringify(manifest, null, 2) + '\n'),
   sourceManifestVersion: 1 | 2 = 2,
+  inline = true,
 ): GalleryModel {
   // Validate every consumer-controlled path before reading any referenced file.
   for (const [index, entry] of manifest.shots.entries()) {
@@ -455,7 +457,7 @@ export function buildGalleryModel(
     let image: PngModel | null = null
     let imageError: string | null = null
     try {
-      image = readPngModel(runDir, entry.file)
+      image = readPngModel(runDir, entry.file, inline)
     } catch (error) {
       imageError = error instanceof Error ? error.message : String(error)
       diagnostics.push({ path: entry.file, message: `screenshot unavailable: ${imageError}` })
