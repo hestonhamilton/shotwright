@@ -75,8 +75,15 @@ jobs:
       # launches headless Chromium against a generated gallery. Skipping this
       # fails that file, and it stayed invisible until a CI provider first ran
       # `pnpm test`.
+      #
+      # No `--with-deps` (shotwright-746.28.14). ubuntu-latest already ships the
+      # shared libraries Chromium needs, and the flag re-runs apt on every job:
+      # measured 2026-10-22 at 29 s on Playwright 1.63 and 9 min 11 s on 1.64,
+      # of which the browser downloads were 9 s and apt fetched 25.9 MB in
+      # 8 min 51 s from a throttled mirror (run 39884171294). `--only-shell`
+      # installs just the headless shell, which is what `headless: true` runs.
       - name: Install Chromium for the browser-backed unit tests
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --only-shell chromium
 
       # verify.sh fails closed if either reviewed security tool is absent or has
       # the wrong identity. Install both exact binaries before the shared lane.

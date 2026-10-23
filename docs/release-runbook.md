@@ -400,12 +400,12 @@ irreversible one. Check before you click:
       for **this run** is green and the packed file set in its log matches the
       check below. Approval is the last point at which nothing has happened.
 - [ ] The packed file set in the run log is what you expect — baseline is
-      **47 files, 60.5 kB packed** (since `dist/version.js` shipped,
-      `shotwright-746.18.19`), and `scripts/ci/expected-files.txt` lists every
-      one of them. The authoritative figures are `BASELINE_FILES` and
-      `BASELINE_PACKED` in `scripts/ci/leak-gate.sh`, which the gate prints; if
-      this line disagrees with them, this line is stale. A jump to 200 files is
-      a caught mistake.
+      **49 files, 76K packed** (since `dist/gallery/pixels.js` shipped,
+      `shotwright-746.28.4`; refreshed by `shotwright-746.28.12`), and
+      `scripts/ci/expected-files.txt` lists every one of them. The
+      authoritative figures are `BASELINE_FILES` and `BASELINE_PACKED` in
+      `scripts/ci/leak-gate.sh`, which the gate prints; if this line disagrees
+      with them, this line is stale. A jump to 200 files is a caught mistake.
 - [ ] `dist-tag` is right. `next` for anything with a prerelease suffix. The
       workflow also enforces the pairing, so a mismatch fails before packing.
 - [ ] The version number is one you are willing to burn permanently.
