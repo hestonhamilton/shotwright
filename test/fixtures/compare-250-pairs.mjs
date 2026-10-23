@@ -58,9 +58,12 @@ const html = fs.readFileSync(result.outputFile)
 const json = JSON.parse(fs.readFileSync(result.outputFile.replace(/\.html$/, '.compare.json'), 'utf8'))
 json.runs.a.pathDigest = 'PATH'
 json.runs.b.pathDigest = 'PATH'
+// Package and comparator versions are release-dependent; the hash pins the rest.
+json.version = 'VERSION'
+json.comparator.version = 'VERSION'
 const htmlHash = sha256(html)
 const jsonHash = sha256(JSON.stringify(json, null, 2) + '\n')
-if (htmlHash !== '24dedcc69b7e252c01b829c51fd8b17a4f97916b5c951935cc37be08b1930f64' || jsonHash !== '2f6a28bdcb6c935d9df034f3c5d1052acb35638b46a72a2af4f8c3d4c85a68a1') throw new Error('compare output bytes changed from the original implementation')
+if (htmlHash !== '24dedcc69b7e252c01b829c51fd8b17a4f97916b5c951935cc37be08b1930f64' || jsonHash !== '38e63544c34b69d888cee5875ad666cd8da275117e4d7f13b2f489b36e10f68f') throw new Error(`compare output bytes changed from the original implementation (html ${htmlHash}, normalized json ${jsonHash})`)
 // Process-lifetime maxRSS includes fixture setup (~119 MB at compare start),
 // making this a conservative whole-process bound. 256,610,304 measured bytes
 // × 1.5, rounded up to the next 50 MB.
