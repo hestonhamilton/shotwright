@@ -138,6 +138,15 @@ shotwright init     [--dry-run] [--package-manager npm|pnpm|yarn]
   one — comparing against a run that failed halfway is a comparison against
   nothing. (It is a POSIX symlink; Windows support is not in v1.)
 
+### Selecting tests and shots
+
+Use `--only b` to select which shots are written while all tests still run.
+Use `-- -g <regex>` to pass a regular expression to Playwright and select which
+tests run. Playwright matches it against one string joining the project name,
+spec file, `describe` titles, test title and tags, so do not anchor it at the
+start: `-- -g '^b$'` finds no test named `b`, while `-- -g 'b$'` matches it
+(and any other test whose joined string ends in `b`).
+
 ## Configuration
 
 `shots.config.ts` wraps a Playwright config. Playwright options such as

@@ -20,15 +20,17 @@ export interface ResolvedCompareRuns {
   b: ResolvedGalleryRun
 }
 
-function realDirectory(value: string, label: string): string {
+type RunCommand = 'gallery' | 'compare'
+
+function realDirectory(value: string, label: string, command: RunCommand): string {
   let canonical: string
   try {
     canonical = fs.realpathSync(value)
   } catch {
-    throw new Error(`shotwright gallery: ${label} is missing or unreadable: ${value}`)
+    throw new Error(`shotwright ${command}: ${label} is missing or unreadable: ${value}`)
   }
   if (!fs.statSync(canonical).isDirectory()) {
-    throw new Error(`shotwright gallery: ${label} is not a directory: ${value}`)
+    throw new Error(`shotwright ${command}: ${label} is not a directory: ${value}`)
   }
   return canonical
 }
@@ -37,7 +39,7 @@ function isImmediateChild(parent: string, child: string): boolean {
   return path.dirname(child) === parent && path.basename(child) !== ''
 }
 
-export function validateRunId(runId: string): void {
+export function validateRunId(runId: string, command: RunCommand = 'gallery'): void {
   if (
     runId.length === 0 ||
     runId.includes('\0') ||
@@ -48,20 +50,21 @@ export function validateRunId(runId: string): void {
     path.isAbsolute(runId) ||
     path.basename(runId) !== runId
   ) {
-    throw new Error('shotwright gallery: run-id must be a single run directory basename')
+    throw new Error(`shotwright ${command}: run-id must be a single run directory basename`)
   }
 }
 
 export function resolveGalleryRun(
   outputDir: string,
   explicitRunId: string | null,
+  command: RunCommand = 'gallery',
 ): ResolvedGalleryRun {
-  const canonicalOutput = realDirectory(outputDir, 'output directory')
+  const canonicalOutput = realDirectory(outputDir, 'output directory', command)
   let candidate: string
 
   if (explicitRunId === '--last') {
     const newest = listRuns(canonicalOutput).find((run) => run.status !== 'incomplete')
-    if (!newest) throw new Error('shotwright gallery: no run with a manifest for --last')
+    if (!newest) throw new Error(`shotwright ${command}: no run with a manifest for --last`)
     candidate = newest.runDir
   } else if (explicitRunId === null) {
     candidate = path.join(canonicalOutput, 'latest')
@@ -70,23 +73,24 @@ export function resolveGalleryRun(
       latest = fs.lstatSync(candidate)
     } catch {
       throw new Error(
-        'shotwright gallery: latest is missing — run `shotwright run` successfully or pass a run-id',
+        `shotwright ${command}: latest is missing — run \`shotwright run\` successfully or pass a run-id`,
       )
     }
     if (!latest.isSymbolicLink()) {
-      throw new Error('shotwright gallery: latest must be a symlink to a completed run')
+      throw new Error(`shotwright ${command}: latest must be a symlink to a completed run`)
     }
   } else {
-    validateRunId(explicitRunId)
+    validateRunId(explicitRunId, command)
     candidate = path.join(canonicalOutput, explicitRunId)
   }
 
   const canonicalRun = realDirectory(
     candidate,
     explicitRunId === null ? 'latest run' : `run "${explicitRunId}"`,
+    command,
   )
   if (!isImmediateChild(canonicalOutput, canonicalRun)) {
-    throw new Error('shotwright gallery: selected run escapes the output directory')
+    throw new Error(`shotwright ${command}: selected run escapes the output directory`)
   }
 
   return {
@@ -108,16 +112,16 @@ function containsSymlink(value: string): boolean {
 }
 
 function resolveCompareSelector(outputDir: string, selector: string): ResolvedGalleryRun {
-  if (selector === 'latest') return resolveGalleryRun(outputDir, null)
-  if (selector === '--last') return resolveGalleryRun(outputDir, '--last')
+  if (selector === 'latest') return resolveGalleryRun(outputDir, null, 'compare')
+  if (selector === '--last') return resolveGalleryRun(outputDir, '--last', 'compare')
   if (!path.isAbsolute(selector) && !selector.includes('/') && !selector.includes('\\')) {
-    return resolveGalleryRun(outputDir, selector)
+    return resolveGalleryRun(outputDir, selector, 'compare')
   }
   const candidate = path.resolve(selector)
   if (containsSymlink(candidate)) {
     throw new Error('shotwright compare: run path contains a symlink')
   }
-  const runDir = realDirectory(candidate, `run "${selector}"`)
+  const runDir = realDirectory(candidate, `run "${selector}"`, 'compare')
   return {
     // A path-selected run is independent of the configured output directory.
     // Its parent is a usable fallback for a default comparison page.
@@ -150,7 +154,9 @@ export function resolveCompareRuns(
   // With two paths, preserve the configured default when it exists; otherwise
   // put the default compare/ directory beside run A.
   const output = fs.lstatSync(outputDir, { throwIfNoEntry: false })
-  const canonicalOutput = output ? realDirectory(outputDir, 'output directory') : a.outputDir
+  const canonicalOutput = output
+    ? realDirectory(outputDir, 'output directory', 'compare')
+    : a.outputDir
   return {
     outputDir: canonicalOutput,
     outputRoot: output ? 'configured' : 'beside-a',
