@@ -397,7 +397,9 @@ function expectCompareGallery(): void {
     expect(html).toContain(unfilteredRun.manifest.runId)
     expect(html).toContain(videoRun.manifest.runId)
     expect(html).toContain('Pairing key: spec + name · threshold 0.1 · includeAA false')
-    expect(html).toMatch(/Gate: \d+ non-parity pairs? · fail-on-change off/)
+    expect(html).toMatch(
+      /Gate: measured non-parity \d+ · ignored non-parity 0 · gated pairs \d+ · fail-on-change off/,
+    )
     expect(html).toContain('aria-label="Verdict counts"')
     expect(html).toContain('form-filled')
     expect(html).toContain('about-desktop')
@@ -1366,7 +1368,7 @@ describe('shotwright run against the demo app', () => {
       expect(reported.stderr).toBe('')
       expect(reported.stdout).toContain(`shotwright compare: wrote ${page}`)
       expect(reported.stdout).toMatch(
-        /shotwright compare: 1 non-parity pair; identical 4, similar 0, changed 1, .*; report only \(exit 0\)/,
+        /shotwright compare: 1 measured non-parity pair; identical 4, similar 0, changed 1, .*; report only \(exit 0\)/,
       )
       expect(fs.readdirSync(reviewDir).sort()).toEqual([
         'parity.compare.json',
@@ -1376,14 +1378,19 @@ describe('shotwright run against the demo app', () => {
       const summary = JSON.parse(
         fs.readFileSync(path.join(reviewDir, 'parity.compare.json'), 'utf8'),
       ) as { gate: { nonParity: number; failOnChange: boolean }; counts: { changed: number } }
-      expect(summary.gate).toEqual({ nonParity: 1, failOnChange: false })
+      expect(summary.gate).toEqual({
+        measuredNonParity: 1,
+        ignoredNonParity: 0,
+        nonParity: 1,
+        failOnChange: false,
+      })
       expect(summary.counts.changed).toBe(1)
 
       const gated = compare('--fail-on-change', '--output', page)
       expect(gated.status).toBe(1)
       expect(gated.stdout).toContain(`shotwright compare: wrote ${page}`)
       expect(gated.stderr).toMatch(
-        /shotwright compare: 1 non-parity pair; .*; --fail-on-change: fail \(exit 1\)/,
+        /shotwright compare: 1 measured non-parity pair; .*; --fail-on-change: fail \(exit 1\)/,
       )
       expect(
         (
@@ -1391,7 +1398,7 @@ describe('shotwright run against the demo app', () => {
             gate: unknown
           }
         ).gate,
-      ).toEqual({ nonParity: 1, failOnChange: true })
+      ).toEqual({ measuredNonParity: 1, ignoredNonParity: 0, nonParity: 1, failOnChange: true })
 
       // Parity passes the opt-in gate.
       const parity = spawnSync(
@@ -1422,6 +1429,56 @@ describe('shotwright run against the demo app', () => {
       expect(fs.existsSync(compareDir) ? fs.readdirSync(compareDir).sort() : null).toEqual(
         compareBefore,
       )
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('gates similar only with --strict and exits only with --fail-on-change', () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-strict-'))
+    try {
+      const a = path.join(scratch, 'a', unfilteredRun.manifest.runId)
+      const b = path.join(scratch, 'b', unfilteredRun.manifest.runId)
+      fs.cpSync(unfilteredRun.runDir, a, { recursive: true })
+      fs.cpSync(unfilteredRun.runDir, b, { recursive: true })
+      const shotFile = unfilteredRun.manifest.shots[0]!.file
+      const image = PNG.sync.read(fs.readFileSync(path.join(b, shotFile)))
+      image.data[0] = image.data[0]! === 0 ? 1 : image.data[0]! - 1
+      fs.writeFileSync(path.join(b, shotFile), PNG.sync.write(image))
+      const page = path.join(scratch, 'strict.html')
+      const run = (...flags: string[]) =>
+        spawnSync(
+          process.execPath,
+          [
+            'dist/cli.js',
+            'compare',
+            a,
+            b,
+            '--config',
+            'demo/shots.config.ts',
+            '--output',
+            page,
+            '--threshold',
+            '1',
+            ...flags,
+          ],
+          { cwd: root, encoding: 'utf8', timeout: 60_000 },
+        )
+      expect(run('--fail-on-change').status).toBe(0)
+      const reported = run('--strict')
+      expect(reported.status).toBe(0)
+      expect(reported.stdout).toContain('measured similar pairs are gated')
+      const gated = run('--strict', '--fail-on-change')
+      expect(gated.status).toBe(1)
+      const summary = JSON.parse(fs.readFileSync(path.join(scratch, 'strict.compare.json'), 'utf8'))
+      expect(summary.settings).toMatchObject({ threshold: 1, strict: true })
+      expect(summary.gate).toMatchObject({
+        measuredNonParity: 0,
+        ignoredNonParity: 0,
+        nonParity: 1,
+      })
+      expect(summary.pairs.some((pair: { state: string }) => pair.state === 'similar')).toBe(true)
+      expect(fs.readFileSync(page, 'utf8')).toContain('strict on')
     } finally {
       fs.rmSync(scratch, { recursive: true, force: true })
     }
@@ -1475,7 +1532,7 @@ describe('shotwright run against the demo app', () => {
       })
       expect(reported.status).toBe(0)
       expect(reported.stdout).toMatch(
-        /shotwright compare: 1 non-parity pair; identical 5, similar 0, changed 1, .*; report only \(exit 0\)/,
+        /shotwright compare: 1 measured non-parity pair; identical 5, similar 0, changed 1, .*; report only \(exit 0\)/,
       )
       const summary = JSON.parse(
         fs.readFileSync(path.join(scratch, 'artifact.compare.json'), 'utf8'),
@@ -1490,6 +1547,32 @@ describe('shotwright run against the demo app', () => {
       })
       expect(gated.status).toBe(1)
       expect(gated.stderr).toContain('--fail-on-change: fail (exit 1)')
+      const ignored = spawnSync(
+        process.execPath,
+        [...args, '--ignore', 'home.shots.ts/reading.json', '--fail-on-change'],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          timeout: 60_000,
+        },
+      )
+      expect(ignored.status).toBe(0)
+      expect(ignored.stdout).toContain('1 measured non-parity pair')
+      expect(ignored.stdout).toContain('ignored non-parity 1, gated 0')
+      expect(ignored.stdout).not.toContain('parity (every pair')
+      const ignoredJson = JSON.parse(
+        fs.readFileSync(path.join(scratch, 'artifact.compare.json'), 'utf8'),
+      )
+      expect(
+        ignoredJson.pairs.find((pair: { kind: string }) => pair.kind === 'artifact'),
+      ).toMatchObject({ ignored: true, state: 'changed' })
+      const typo = spawnSync(process.execPath, [...args, '--ignore', 'home.shots.ts/typo'], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 60_000,
+      })
+      expect(typo.status).not.toBe(0)
+      expect(typo.stderr).toContain('--ignore did not match an artifact')
     } finally {
       fs.rmSync(scratch, { recursive: true, force: true })
     }

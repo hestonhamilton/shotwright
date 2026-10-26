@@ -254,6 +254,9 @@ describe('parseCompareArgs', () => {
       last: false,
       failOnChange: false,
       output: null,
+      ignore: [],
+      threshold: undefined,
+      strict: false,
     })
     expect(parseCompareArgs(['latest', 'run-b'])).toMatchObject({ a: 'latest', b: 'run-b' })
   })
@@ -266,6 +269,9 @@ describe('parseCompareArgs', () => {
       last: false,
       failOnChange: false,
       output: null,
+      ignore: [],
+      threshold: undefined,
+      strict: false,
     })
   })
 
@@ -279,7 +285,36 @@ describe('parseCompareArgs', () => {
       last: false,
       failOnChange: true,
       output: 'out/review.html',
+      ignore: [],
+      threshold: undefined,
+      strict: false,
     })
+  })
+
+  it('parses repeated ignores, threshold endpoints and strict', () => {
+    expect(
+      parseCompareArgs([
+        'a',
+        '--ignore',
+        'nested/a.shots.ts/value/one',
+        'b',
+        '--ignore',
+        'nested/a.shots.ts/two',
+        '--threshold',
+        '0',
+        '--strict',
+      ]),
+    ).toMatchObject({
+      ignore: ['nested/a.shots.ts/value/one', 'nested/a.shots.ts/two'],
+      threshold: 0,
+      strict: true,
+    })
+    expect(parseCompareArgs(['a', 'b', '--threshold', '1']).threshold).toBe(1)
+    for (const value of ['-0.1', '1.1', 'NaN', 'Infinity', 'abc'])
+      expect(() => parseCompareArgs(['a', 'b', '--threshold', value])).toThrow()
+    expect(() => parseCompareArgs(['a', 'b', '--threshold', '0.2', '--threshold', '0.3'])).toThrow(
+      'duplicate',
+    )
   })
 
   it.each([
@@ -565,7 +600,9 @@ describe('helpFor', () => {
   })
 
   it('documents the compare gate, compare output, and gallery trace override flags', () => {
-    expect(helpFor(['help', 'compare'])).toContain('[--output <file.html>] [--fail-on-change]')
+    expect(helpFor(['help', 'compare'])).toContain(
+      '[--ignore <spec.shots.ts/name>]... [--threshold <0..1>] [--strict] [--fail-on-change]',
+    )
     expect(helpFor(['help', 'compare'])).toContain(
       'Exits 0 after writing the page unless --fail-on-change',
     )
@@ -934,21 +971,39 @@ describe('compare gate line', () => {
   }
 
   it('states the verdict and every count, and that the default only reports', () => {
-    expect(formatCompareGate({ counts, gate: { nonParity: 2, failOnChange: false } })).toBe(
-      'shotwright compare: 2 non-parity pairs; identical 3, similar 1, changed 1, size-changed 0, added 1, removed 0, unreadable 0; report only (exit 0)',
+    expect(
+      formatCompareGate({
+        counts,
+        gate: { measuredNonParity: 2, ignoredNonParity: 0, nonParity: 2, failOnChange: false },
+      }),
+    ).toBe(
+      'shotwright compare: 2 measured non-parity pairs; identical 3, similar 1, changed 1, size-changed 0, added 1, removed 0, unreadable 0; ignored non-parity 0, gated 2; report only (exit 0)',
     )
   })
 
   it('states a failing and a passing opt-in gate', () => {
-    expect(formatCompareGate({ counts, gate: { nonParity: 1, failOnChange: true } })).toMatch(
-      /: 1 non-parity pair; .*; --fail-on-change: fail \(exit 1\)$/,
-    )
+    expect(
+      formatCompareGate({
+        counts,
+        gate: { measuredNonParity: 2, ignoredNonParity: 1, nonParity: 1, failOnChange: true },
+      }),
+    ).toMatch(/: 2 measured non-parity pairs; .*; --fail-on-change: fail \(exit 1\)$/)
     expect(
       formatCompareGate({
         counts: { ...counts, changed: 0, added: 0 },
-        gate: { nonParity: 0, failOnChange: true },
+        gate: { measuredNonParity: 0, ignoredNonParity: 0, nonParity: 0, failOnChange: true },
       }),
     ).toMatch(/: parity \(every pair identical or similar\); .*; --fail-on-change: pass$/)
+  })
+
+  it('does not claim parity when all measured differences are ignored', () => {
+    const line = formatCompareGate({
+      counts,
+      gate: { measuredNonParity: 2, ignoredNonParity: 2, nonParity: 0, failOnChange: true },
+    })
+    expect(line).toContain('2 measured non-parity pairs')
+    expect(line).not.toContain('parity (every pair')
+    expect(line).toContain('gated 0')
   })
 })
 

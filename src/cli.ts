@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url'
 
 import { formatGalleryDiagnostics, generateGallery } from './gallery/generate.js'
 import { compareStates } from './gallery/compare-model.js'
-import { generateCompareGallery } from './gallery/generate-compare.js'
+import { generateCompareGallery, InvalidCompareIgnoreError } from './gallery/generate-compare.js'
 import type { CompareGenerationResult } from './gallery/model.js'
 import {
   resolveCompareRuns,
@@ -70,11 +70,14 @@ export interface CompareArgs {
   last: boolean
   failOnChange: boolean
   output: string | null
+  ignore: string[]
+  threshold?: number
+  strict: boolean
 }
 
 const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--run-dir-file <path>] [--config <path>] [-- <playwright test args>]. The run-dir-file must be unique per invocation.`
 const GALLERY_USAGE = `Usage: shotwright gallery [run-id|--last] [--config <path>] [--host <host>] [--port <port>] [--lan] [--include-traces]. Traces are withheld on a non-loopback bind unless --include-traces is given.`
-const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file.html>] [--fail-on-change]. Exits 0 after writing the page unless --fail-on-change is given and a pair is not identical or similar.`
+const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file.html>] [--ignore <spec.shots.ts/name>]... [--threshold <0..1>] [--strict] [--fail-on-change]. Exits 0 after writing the page unless --fail-on-change is given and a gated pair exists.`
 const RUNS_USAGE = `Usage: shotwright runs [--config <path>] [--json]`
 const INIT_USAGE = `Usage: shotwright init [--dry-run] [--package-manager npm|pnpm|yarn]`
 const GLOBAL_USAGE = `Usage: shotwright --help | --version`
@@ -276,6 +279,9 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
   let last = false
   let failOnChange = false
   let output: string | null = null
+  const ignore: string[] = []
+  let threshold: number | undefined
+  let strict = false
 
   for (let i = 0; i < argv.length; i++) {
     const argument = argv[i]!
@@ -289,6 +295,17 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
     } else if (argument === '--fail-on-change') {
       if (failOnChange) throw new Error('duplicate argument: --fail-on-change')
       failOnChange = true
+    } else if (argument === '--ignore') {
+      ignore.push(requireValue(argv, ++i, argument))
+    } else if (argument === '--threshold') {
+      if (threshold !== undefined) throw new Error('duplicate argument: --threshold')
+      const value = requireValue(argv, ++i, argument)
+      threshold = Number(value)
+      if (value.trim() === '' || !Number.isFinite(threshold) || threshold < 0 || threshold > 1)
+        throw new Error('--threshold must be a number between 0 and 1')
+    } else if (argument === '--strict') {
+      if (strict) throw new Error('duplicate argument: --strict')
+      strict = true
     } else if (argument === '--last') {
       if (last) throw new Error('duplicate argument: --last')
       last = true
@@ -312,6 +329,9 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
     last,
     failOnChange,
     output,
+    ignore,
+    threshold,
+    strict,
   }
 }
 
@@ -404,15 +424,17 @@ export function formatCompareGate(
   result: Pick<CompareGenerationResult, 'counts' | 'gate'>,
 ): string {
   const counts = compareStates.map((state) => `${state} ${result.counts[state]}`).join(', ')
-  const { nonParity, failOnChange } = result.gate
+  const { measuredNonParity, ignoredNonParity, nonParity, failOnChange } = result.gate
   const verdict =
-    nonParity === 0
-      ? 'parity (every pair identical or similar)'
-      : `${nonParity} non-parity pair${nonParity === 1 ? '' : 's'}`
+    measuredNonParity === 0
+      ? nonParity === 0
+        ? 'parity (every pair identical or similar)'
+        : 'measured similar pairs are gated'
+      : `${measuredNonParity} measured non-parity pair${measuredNonParity === 1 ? '' : 's'}`
   const gate = failOnChange
     ? `--fail-on-change: ${nonParity === 0 ? 'pass' : 'fail (exit 1)'}`
     : 'report only (exit 0)'
-  return `shotwright compare: ${verdict}; ${counts}; ${gate}`
+  return `shotwright compare: ${verdict}; ${counts}; ignored non-parity ${ignoredNonParity}, gated ${nonParity}; ${gate}`
 }
 
 export function formatIncludedTracesNotice(host: string): string {
@@ -863,13 +885,23 @@ export async function compare(
     console.error(`shotwright compare: ${message.replace(/^shotwright compare: /, '')}`)
     return 2
   }
-  const generated = generateCompareGallery(selected.a.runDir, selected.b.runDir, {
-    outputFile,
-    failOnChange: args.failOnChange,
-    exclusiveCreate,
-    pruneStale,
-    pruneTemps: selected.outputRoot === 'configured' || args.output !== null,
-  })
+  let generated: ReturnType<typeof generateCompareGallery>
+  try {
+    generated = generateCompareGallery(selected.a.runDir, selected.b.runDir, {
+      outputFile,
+      failOnChange: args.failOnChange,
+      ignore: args.ignore,
+      threshold: args.threshold,
+      strict: args.strict,
+      exclusiveCreate,
+      pruneStale,
+      pruneTemps: selected.outputRoot === 'configured' || args.output !== null,
+    })
+  } catch (error) {
+    if (!(error instanceof InvalidCompareIgnoreError)) throw error
+    console.error(`shotwright compare: ${error.message}`)
+    return 2
+  }
 
   const digestNote = (side: 'a' | 'b'): string =>
     digests === null ? '' : ` (digest ${digests[side]} = ${selected[side].runDir})`

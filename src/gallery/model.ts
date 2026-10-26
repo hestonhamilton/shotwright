@@ -522,7 +522,12 @@ export type ComparePairState =
 export interface CompareGenerationResult {
   outputFile: string
   counts: Record<ComparePairState, number>
-  gate: { nonParity: number; failOnChange: boolean }
+  gate: {
+    measuredNonParity: number
+    ignoredNonParity: number
+    nonParity: number
+    failOnChange: boolean
+  }
 }
 export { shotKey }
 

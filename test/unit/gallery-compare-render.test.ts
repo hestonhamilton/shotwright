@@ -93,10 +93,10 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     summary.comparator.version = 'VERSION'
     const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"d049def9f8ca558ff43dba9495ef192083b805210b538a53214130cab5ff40a2"`,
+      `"8d1aa6c99489ee0d4f4f127668e92a2ded4194c3752a70b39e9e75e353ff29b1"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
-      `"6977f0d3893c0abd52dc14d870d1db22b6ae26a1b24c46dee475b0096f2892d3"`,
+      `"033b10f9d61b2a53eef61d259ed02c756bdbf778ece8bc98d89af76d35c587e9"`,
     )
     for (const state of [
       'identical',
