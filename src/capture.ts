@@ -22,7 +22,12 @@ export { parseOnly, shouldCapture }
 /** Alias of the consumer's `test` — specs read as walkthroughs, not assertions. */
 export const walkthrough = test
 
-export interface ShotOptions {
+type PageScreenshotOptions = NonNullable<Parameters<Page['screenshot']>[0]>
+
+export interface ShotOptions extends Pick<
+  PageScreenshotOptions,
+  'animations' | 'caret' | 'mask' | 'style'
+> {
   /** Full-page capture. Default: true, unless `clip` or `locator` is given. */
   fullPage?: boolean
   clip?: { x: number; y: number; width: number; height: number }
@@ -171,8 +176,22 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
   let completed = false
   try {
     const bytes = opts.locator
-      ? await opts.locator.screenshot({ type: 'png' })
-      : await page.screenshot({ type: 'png', fullPage, ...(opts.clip ? { clip: opts.clip } : {}) })
+      ? await opts.locator.screenshot({
+          type: 'png',
+          ...(opts.animations !== undefined && { animations: opts.animations }),
+          ...(opts.caret !== undefined && { caret: opts.caret }),
+          ...(opts.mask !== undefined && { mask: opts.mask }),
+          ...(opts.style !== undefined && { style: opts.style }),
+        })
+      : await page.screenshot({
+          type: 'png',
+          fullPage,
+          ...(opts.clip ? { clip: opts.clip } : {}),
+          ...(opts.animations !== undefined && { animations: opts.animations }),
+          ...(opts.caret !== undefined && { caret: opts.caret }),
+          ...(opts.mask !== undefined && { mask: opts.mask }),
+          ...(opts.style !== undefined && { style: opts.style }),
+        })
     fs.writeFileSync(fd, bytes)
     const browser = await observeBrowser(
       page.context().browser(),

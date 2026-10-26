@@ -75,6 +75,16 @@ describe('real Playwright contract consumer', () => {
     expect(published).not.toContain(os.homedir())
     expect(published).not.toContain('--remote-debugging-pipe')
   })
+  it('passes screenshot options through and preserves page and locator PNG bytes', () => {
+    const result = run(['--grep', 'shot screenshot options preserve Playwright bytes'])
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    const { manifest } = newest()
+    expect(manifest.shots.map((shot) => shot.name).sort()).toEqual([
+      'default-options',
+      'full-page-options',
+      'locator-options',
+    ])
+  })
   it('uses the loaded spec for a helper-registered nested test', () => {
     const result = run(['--grep', 'helper registered capture'])
     expect(result.status, result.stdout + result.stderr).toBe(0)
