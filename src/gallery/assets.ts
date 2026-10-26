@@ -94,6 +94,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--line); border-bottom-width: 2px;
 .card-body { padding: 14px; }
 .card-title { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
 .card-title h3 { margin: 0; overflow-wrap: anywhere; font-size: 18px; }
+.test-title { margin: 8px 0 0; color: var(--muted); overflow-wrap: anywhere; }
 .kind { color: var(--muted); white-space: nowrap; font-size: 12px; }
 .meta { margin: 10px 0; }
 .meta span { padding: 4px 7px; border-radius: 6px; background: var(--panel-2); font-size: 12px; }

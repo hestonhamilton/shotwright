@@ -603,7 +603,13 @@ function expectFiveShotGallery(): void {
     const intrinsic = pngDimensions(png)
     expect(Buffer.from(dataUris[index]!.base64, 'base64')).toEqual(png)
     expect(card).toContain(`<h3>${shot.name}</h3>`)
-    expect(card).toContain(`data-search="${shot.name.toLowerCase()} ${shot.spec.toLowerCase()}"`)
+    const test = unfilteredRun.manifest.tests.find((entry) => entry.id === shot.testId)
+    expect(test).toBeDefined()
+    const title = test!.titlePath?.join(' › ') ?? test!.title
+    expect(card).toContain(`<p class="test-title">${title}</p>`)
+    expect(card).toContain(
+      `data-search="${shot.name.toLowerCase()} ${shot.spec.toLowerCase()} ${title.toLowerCase()}"`,
+    )
     if (shot.viewport === null) {
       expect(card).toContain('Viewport unavailable')
     } else {

@@ -112,6 +112,9 @@ screenshot is taken. Artifact names may contain safe relative subpaths such as
 `logs/network.json`. Manifest v2 records each test's `titlePath` from enclosing
 `test.describe()` titles through its own title. Older v2 manifests are read with
 `[title]` as the path.
+Gallery cards show that full title path, joined with ` › `, and the search box
+matches describe titles and test titles as well as shot names and specs. Cards
+without a linked test omit the title path.
 Artifact and shot writes reject traversal and symlinks present at write time.
 The output directory is trusted against concurrent path changes, as with
 Playwright's `outputDir`.
