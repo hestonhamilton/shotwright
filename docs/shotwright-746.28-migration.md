@@ -126,10 +126,10 @@ files in the current package and workflow/skill files at the containing Git
 root. It detects a single supported lockfile or package manager declaration;
 use the flag when detection is ambiguous. `init` writes a caller workflow from
 `templates/github/shotwright.yml`, pinned to the release tag matching the
-installed package (currently `@v0.1.1`). The release process updates the
-template pin when the package version changes. The inputs below are available
-on the 0.2.0 reusable workflow. If you scaffolded under 0.1.1, change the
-caller's `uses:` line before using them:
+installed package. Check the `uses:` line in that template for the current pin;
+the release process updates it when the package version changes. The inputs
+below are available on the 0.2.0 reusable workflow. If you scaffolded under
+0.1.1, change the caller's `uses:` line before using them:
 
 ```yaml
 # Before

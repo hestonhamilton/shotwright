@@ -345,8 +345,8 @@ describe('probeOutputDir', () => {
       expect(stderr).toHaveLength(1_048_576)
       expect(stdout).toMatch(/^a+$/)
       expect(stderr).toMatch(/^b+$/)
-      expect(messages).toContain('shotwright: probe stdout truncated to last 1 MiB')
-      expect(messages).toContain('shotwright: probe stderr truncated to last 1 MiB')
+      expect(messages).toContain('shotwright gallery: probe stdout truncated to last 1 MiB')
+      expect(messages).toContain('shotwright gallery: probe stderr truncated to last 1 MiB')
     } finally {
       console.error = originalError
       process.stdout.write = originalStdout
@@ -399,7 +399,7 @@ describe('probeOutputDir', () => {
       ).rejects.toThrow(/config probe failed/)
       expect(stdout).toBe(noise)
       expect(stderr).toBe('config broke\n')
-      expect(logged).toEqual(['shotwright: config probe output for bad.ts:'])
+      expect(logged).toEqual(['shotwright gallery: config probe output for bad.ts:'])
     } finally {
       console.error = originalLog
       process.stdout.write = originalStdout
@@ -448,6 +448,25 @@ describe('probeOutputDir', () => {
       fs.rmSync(tempRoot, { recursive: true, force: true })
     }
   })
+
+  it.each(['gallery', 'runs', 'compare'] as const)(
+    'labels a failed config probe with %s',
+    async (command) => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-probe-test-'))
+      try {
+        await expect(
+          probeOutputDir(
+            'broken.ts',
+            tempRoot,
+            { playwrightCli: 'fake', tempRoot, invoke: async () => 1 },
+            command,
+          ),
+        ).rejects.toThrow(`shotwright ${command}: config probe failed`)
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('never assumes shots-output when the config omits defineShotsConfig', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-probe-test-'))

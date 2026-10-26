@@ -515,6 +515,7 @@ export async function probeOutputDir(
   config: string,
   cwd = process.cwd(),
   dependencies: ConfigProbeDependencies = {},
+  command: 'gallery' | 'runs' | 'compare' = 'gallery',
 ): Promise<string> {
   const probeDir = fs.mkdtempSync(
     path.join(dependencies.tempRoot ?? os.tmpdir(), 'shotwright-config-probe-'),
@@ -535,13 +536,15 @@ export async function probeOutputDir(
     )
     const probe = typeof result === 'number' ? { code: result, stdout: '', stderr: '' } : result
     if (probe.code !== 0) {
-      console.error(`shotwright: config probe output for ${config}:`)
-      if (probe.stdoutTruncated) console.error('shotwright: probe stdout truncated to last 1 MiB')
-      if (probe.stderrTruncated) console.error('shotwright: probe stderr truncated to last 1 MiB')
+      console.error(`shotwright ${command}: config probe output for ${config}:`)
+      if (probe.stdoutTruncated)
+        console.error(`shotwright ${command}: probe stdout truncated to last 1 MiB`)
+      if (probe.stderrTruncated)
+        console.error(`shotwright ${command}: probe stderr truncated to last 1 MiB`)
       if (probe.stdout) process.stdout.write(probe.stdout)
       if (probe.stderr) process.stderr.write(probe.stderr)
       throw new Error(
-        `shotwright gallery: config probe failed for ${config} — fix the config and try again`,
+        `shotwright ${command}: config probe failed for ${config} — fix the config and try again`,
       )
     }
     let outputDir: string
@@ -549,7 +552,7 @@ export async function probeOutputDir(
       outputDir = fs.readFileSync(probeFile, 'utf8')
     } catch {
       throw new Error(
-        'shotwright gallery: config did not call defineShotsConfig() — export defineShotsConfig(...) from the selected config',
+        `shotwright ${command}: config did not call defineShotsConfig() — export defineShotsConfig(...) from the selected config`,
       )
     }
     if (
@@ -558,7 +561,9 @@ export async function probeOutputDir(
       !path.isAbsolute(outputDir) ||
       path.resolve(outputDir) !== outputDir
     ) {
-      throw new Error('shotwright gallery: config probe returned a non-canonical output directory')
+      throw new Error(
+        `shotwright ${command}: config probe returned a non-canonical output directory`,
+      )
     }
     return outputDir
   } finally {
@@ -596,17 +601,19 @@ async function run(argv: string[]): Promise<number> {
     const parent = path.dirname(path.resolve(callerFile))
     try {
       if (!fs.statSync(parent).isDirectory()) {
-        console.error('shotwright: --run-dir-file parent must be a directory')
+        console.error('shotwright run: --run-dir-file parent must be a directory')
         return 2
       }
     } catch {
-      console.error('shotwright: --run-dir-file parent directory does not exist or is unreadable')
+      console.error(
+        'shotwright run: --run-dir-file parent directory does not exist or is unreadable',
+      )
       return 2
     }
     try {
       const stat = fs.lstatSync(callerFile)
       if (!stat.isFile() || stat.isSymbolicLink()) {
-        console.error('shotwright: --run-dir-file destination must be a regular file or absent')
+        console.error('shotwright run: --run-dir-file destination must be a regular file or absent')
         return 2
       }
       fs.unlinkSync(callerFile)
@@ -616,7 +623,7 @@ async function run(argv: string[]): Promise<number> {
   }
   if (!fs.existsSync(args.config)) {
     console.error(
-      `shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`,
+      `shotwright run: config not found: ${args.config} — pass --config or create shots.config.ts`,
     )
     return 1
   }
@@ -654,7 +661,7 @@ async function run(argv: string[]): Promise<number> {
         } catch (error) {
           copyFailed = true
           console.error(
-            `shotwright: --run-dir-file copy failed: ${error instanceof Error ? error.message : String(error)}`,
+            `shotwright run: --run-dir-file copy failed: ${error instanceof Error ? error.message : String(error)}`,
           )
         } finally {
           fs.rmSync(temp, { force: true })
@@ -673,7 +680,7 @@ async function gallery(argv: string[]): Promise<number> {
   const args = parseGalleryArgs(argv)
   if (!fs.existsSync(args.config)) {
     console.error(
-      `shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`,
+      `shotwright gallery: config not found: ${args.config} — pass --config or create shots.config.ts`,
     )
     return 1
   }
@@ -740,11 +747,11 @@ async function runs(argv: string[]): Promise<number> {
   }
   if (!fs.existsSync(config)) {
     console.error(
-      `shotwright: config not found: ${config} — pass --config or create shots.config.ts`,
+      `shotwright runs: config not found: ${config} — pass --config or create shots.config.ts`,
     )
     return 1
   }
-  const rows = listRuns(await probeOutputDir(config))
+  const rows = listRuns(await probeOutputDir(config, process.cwd(), {}, 'runs'))
   if (json) console.log(JSON.stringify(rows, null, 2))
   else {
     console.log('id\tstarted\tstatus\tpublication\tshots')
@@ -759,12 +766,13 @@ async function runs(argv: string[]): Promise<number> {
 
 export async function compare(
   argv: string[],
-  outputDirProbe: (config: string) => Promise<string> = probeOutputDir,
+  outputDirProbe: (config: string) => Promise<string> = (config) =>
+    probeOutputDir(config, process.cwd(), {}, 'compare'),
 ): Promise<number> {
   const args = parseCompareArgs(argv)
   if (!fs.existsSync(args.config)) {
     console.error(
-      `shotwright: config not found: ${args.config} — pass --config or create shots.config.ts`,
+      `shotwright compare: config not found: ${args.config} — pass --config or create shots.config.ts`,
     )
     return 1
   }
@@ -851,7 +859,8 @@ export async function compare(
       }
     }
   } catch (error) {
-    console.error(`shotwright compare: ${error instanceof Error ? error.message : String(error)}`)
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(`shotwright compare: ${message.replace(/^shotwright compare: /, '')}`)
     return 2
   }
   const generated = generateCompareGallery(selected.a.runDir, selected.b.runDir, {
@@ -937,7 +946,10 @@ const invokedDirectly = (() => {
 
 if (invokedDirectly) {
   main().catch((err) => {
-    console.error(err instanceof Error ? err.message : err)
+    const command = process.argv[2]
+    const message = err instanceof Error ? err.message : String(err)
+    const detail = message.replace(/^shotwright(?: (?:run|runs|gallery|compare|init))?: /, '')
+    console.error(command && COMMAND_USAGE[command] ? `shotwright ${command}: ${detail}` : message)
     process.exitCode = 1
   })
 }

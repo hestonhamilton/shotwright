@@ -51,6 +51,17 @@ describe('validateRunId', () => {
 })
 
 describe('resolveGalleryRun', () => {
+  it('uses the invoking command in shared resolver errors', () => {
+    const output = tmpDir()
+    expect(() => resolveGalleryRun(output, null)).toThrow(/^shotwright gallery: latest is missing/)
+    expect(() => resolveCompareRuns(output, 'latest', 'other')).toThrow(
+      /^shotwright compare: latest is missing/,
+    )
+    expect(() => resolveCompareRuns(output, 'bad.name', 'other')).toThrow(
+      /^shotwright compare: run-id must be a single run directory basename/,
+    )
+  })
+
   it('--last selects newest manifest run while latest stays on last passed', () => {
     const output = tmpDir()
     const passed = '2026-07-29T10-00-00_aaaa'
