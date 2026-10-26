@@ -229,6 +229,11 @@ and does not grow.
 
 ### 2.5 Adversarial: what still gets past this gate while it stays green
 
+> **Correction (2026-10-26).** The encoding claim in item 1 is stale:
+> gitleaks 8.30.1 decoded base64, percent and unicode escapes, and Layer B
+> fired on all three in E9.V §2.1–2.3. Split runtime concatenation remains
+> outside this byte-oriented gate.
+
 The bead requires this section, and the requirement is earned — a prior redteam
 in this repo defeated four greppable checks in one attempt by satisfying the
 vocabulary and exit-status constraints while computing the forbidden thing

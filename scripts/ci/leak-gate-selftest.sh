@@ -86,6 +86,16 @@ echo '==> leak-gate-selftest: each layer-B rule fires on its own shape'
 expect_fires host-path-posix   'const out = "/home/someone/projects/shotwright/dist"' 'a POSIX home path'
 expect_fires host-path-windows 'const out = "C:\Users\someone\AppData\Local"'         'a Windows profile path'
 expect_fires private-ipv4      'const host = "192.168.77.13"'                          'an RFC1918 address'
+expect_fires private-ipv6      'const host = "fe80::1"'                                 'an IPv6 link-local address'
+expect_fires private-ipv6      'const host = "fc00::1"'                                 'an IPv6 unique-local address'
+expect_fires private-hostname  'README example: http://printer.lan/status'             'a LAN hostname in a README example'
+expect_fires private-hostname  'template host: example.local'                         'a local hostname in a template example'
+expect_fires private-hostname  'url: http://PRINTER.LAN:8080/'                         'an upper-case hostname URL'
+expect_fires private-hostname  'Connect to Printer.Local for the example.'            'a mixed-case hostname in prose'
+expect_fires private-hostname  'const h = "nas-01.local"'                              'a quoted .local hostname'
+expect_fires private-ipv6      'const host = "fe80::"'                                  'a bare link-local prefix'
+expect_fires private-ipv6      'const host = "[fc00::]"'                                'a bracketed unique-local prefix'
+expect_fires private-hostname  'args.lan = true; host = "printer.lan"'                 'a real hostname beside the allowed property'
 # Deliberately under /srv/ rather than /home/, so this asserts the username rule
 # itself rather than being caught by host-path-posix first.
 expect_fires operator-username-in-path 'cacheDir: "/srv/hestonhamilton/build"'         'the username in path position'
@@ -94,6 +104,9 @@ echo '==> leak-gate-selftest: no rule fires on legitimate tarball content'
 expect_silent 'const url = "http://127.0.0.1:4173/"'                                      'the loopback gallery bind' loopback
 expect_silent '"url": "git+https://github.com/hestonhamilton/shotwright.git"'              'package.json repository.url' repourl
 expect_silent 'uses: hestonhamilton/shotwright/.github/workflows/shotwright.yml@main'      'the reusable-workflow reference' uses
+expect_silent 'args.lan = true; entry.internal = false'                                    'dist property accesses' properties
+expect_silent 'const a = x.local; const b = os.local.name; run(args.lan, os.local)'        'identifier.local property accesses' local-props
+expect_silent 'const a = "2001:db8:fe80::1"; const b = "fc00:ffff"'                         'interior hextets and non-addresses' ipv6-interior
 
 echo '==> leak-gate-selftest: the operator-login rule exists only when the login is supplied'
 expect_silent 'user: probeuser@workstation' 'a login the gate was not told about' login-unset
@@ -145,10 +158,10 @@ TOML
 # Builds package/{README.md,package.json,dist/cli.js} with the given cli.js body
 # and packs it the way npm would, so layer A sees an allowlisted file set.
 make_tarball() {
-  local body="$1" name="$2"
+  local body="$1" name="$2" readme="${3:-# probe}"
   local dir="$work/tarball-$name"
   mkdir -p "$dir/package/dist"
-  printf '# probe\n' >"$dir/package/README.md"
+  printf '%s\n' "$readme" >"$dir/package/README.md"
   printf '{"name":"probe","version":"0.0.0"}\n' >"$dir/package/package.json"
   printf '%s\n' "$body" >"$dir/package/dist/cli.js"
   tar czf "$dir.tgz" -C "$dir" package
@@ -185,8 +198,14 @@ expect_gate() {
 clean_tgz="$(make_tarball 'export const ok = true' clean)"
 seeded_tgz="$(make_tarball "const token = \"$seed\"" seeded)"
 allowed_tgz="$(make_tarball "const token = \"$seed\" // gitleaks:allow" allowed)"
+hostname_tgz="$(make_tarball 'export const ok = true' hostname 'Connect to printer.lan for the example.')"
+upper_tgz="$(make_tarball 'export const ok = true' upper 'Open http://PRINTER.LAN:8080/ to start.')"
+property_tgz="$(make_tarball 'args.lan = true; entry.internal = false' property)"
 
 expect_gate 0 "$clean_tgz"  'a clean miniature tarball' 'leak gate: PASSED'
+expect_gate 1 "$hostname_tgz" 'a README hostname example' 'leaks found: 1'
+expect_gate 1 "$upper_tgz" 'an upper-case README hostname' 'leaks found: 1'
+expect_gate 0 "$property_tgz" 'dist property accesses' 'leak gate: PASSED'
 expect_gate 1 "$seeded_tgz" 'a seeded token, plain' '' \
   SHOTWRIGHT_OPERATOR_LOGIN=
 expect_gate 1 "$seeded_tgz" 'a seeded token with GITLEAKS_CONFIG pointed at a ruleset that never fires' '' \
@@ -195,6 +214,37 @@ expect_gate 1 "$seeded_tgz" 'a seeded token with GITLEAKS_CONFIG_TOML carrying t
   SHOTWRIGHT_OPERATOR_LOGIN= GITLEAKS_CONFIG_TOML="$(cat "$empty_rules")"
 expect_gate 1 "$allowed_tgz" 'a seeded token marked gitleaks:allow' 'gitleaks:allow marker' \
   SHOTWRIGHT_OPERATOR_LOGIN=
+
+# Layer A must examine member names and bytes, even if an exact allowlist would
+# also reject the extra name. The message assertions prove the new checks ran.
+member_dir="$work/tarball-member"
+mkdir -p "$member_dir/package/templates/home/probe"
+printf '# probe\n' >"$member_dir/package/README.md"
+printf '{"name":"probe","version":"0.0.0"}\n' >"$member_dir/package/package.json"
+printf 'export const ok = true\n' >"$member_dir/package/templates/home/probe/example.ts"
+tar czf "$work/tarball-member.tgz" -C "$member_dir" package
+expect_gate 1 "$work/tarball-member.tgz" 'a sensitive tar member name' 'unsafe tar member name'
+
+magic_dir="$work/tarball-magic"
+mkdir -p "$magic_dir/package/dist"
+printf '# probe\n' >"$magic_dir/package/README.md"
+printf '{"name":"probe","version":"0.0.0"}\n' >"$magic_dir/package/package.json"
+printf 'PK\003\004opaque payload' >"$magic_dir/package/dist/cli.js"
+tar czf "$work/tarball-magic.tgz" -C "$magic_dir" package
+expect_gate 1 "$work/tarball-magic.tgz" 'archive bytes disguised as dist/cli.js' 'archive or executable bytes'
+
+# Archive bytes are refused in every packed file, not just dist/ and templates/.
+readme_magic_dir="$work/tarball-readme-magic"
+mkdir -p "$readme_magic_dir/package/dist"
+printf 'PK\003\004opaque payload' >"$readme_magic_dir/package/README.md"
+printf '{"name":"probe","version":"0.0.0"}\n' >"$readme_magic_dir/package/package.json"
+printf 'export const ok = true\n' >"$readme_magic_dir/package/dist/cli.js"
+tar czf "$work/tarball-readme-magic.tgz" -C "$readme_magic_dir" package
+expect_gate 1 "$work/tarball-readme-magic.tgz" 'archive bytes disguised as README.md' 'archive or executable bytes'
+
+# A JS file that merely starts with MZ is not a PE.
+mz_tgz="$(make_tarball 'MZ = 1;' mz)"
+expect_gate 0 "$mz_tgz" 'a JS file beginning MZ = 1;' 'leak gate: PASSED'
 
 # The ignore-file path, at the scanner level: a .gitleaksignore in the working
 # directory is honoured by default, so the gate's explicit empty ignore path is
