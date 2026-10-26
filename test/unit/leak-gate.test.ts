@@ -36,10 +36,14 @@ interface ScriptResult {
   stderr: string
 }
 
-function runCheck(target: string, allowlist?: string): ScriptResult {
+function runCheck(target: string, allowlist?: string, login?: string): ScriptResult {
   const args = allowlist ? [target, allowlist] : [target]
   try {
-    const stdout = execFileSync(checkFileSet, args, { encoding: 'utf8', stdio: 'pipe' })
+    const stdout = execFileSync(checkFileSet, args, {
+      encoding: 'utf8',
+      stdio: 'pipe',
+      env: { ...process.env, SHOTWRIGHT_OPERATOR_LOGIN: login ?? '' },
+    })
     return { status: 0, stdout, stderr: '' }
   } catch (error) {
     const err = error as { status?: number; stdout?: string; stderr?: string }
@@ -164,6 +168,144 @@ describe('leak gate layer A — file-set allowlist', () => {
     expect(result.status).toBe(2)
     expect(result.stderr).toContain('not a directory')
   })
+
+  it.each(['home/someone/example.ts', 'Users/someone/example.ts', 'root/example.ts'])(
+    'rejects a sensitive member name %s',
+    (rel) => {
+      const dir = makeTree([...cleanTarball, rel])
+      try {
+        const result = runCheck(dir)
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('unsafe tar member name')
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each(['templates/C:\\Users\\someone\\example.ts', 'templates/hestonhamilton/example.ts'])(
+    'rejects a username or Windows profile member name %s',
+    (rel) => {
+      const dir = makeTree([...cleanTarball, rel])
+      try {
+        const result = runCheck(dir)
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('unsafe tar member name')
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('rejects the supplied operator login in a member name', () => {
+    const dir = makeTree([...cleanTarball, 'templates/probeuser/example.ts'])
+    try {
+      const result = runCheck(dir, undefined, 'probeuser')
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('unsafe tar member name')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['zip', '504b0304'],
+    ['gzip', '1f8b'],
+    ['7z', '377abcaf271c'],
+    ['xz', 'fd377a585a00'],
+    ['bzip2', '425a68'],
+    ['ELF', '7f454c46'],
+    ['Mach-O', 'feedfacf'],
+  ])('rejects %s bytes disguised as dist/cli.js', (_kind, hex) => {
+    const dir = makeTree(cleanTarball)
+    try {
+      fs.writeFileSync(path.join(dir, 'dist/cli.js'), Buffer.from(hex, 'hex'))
+      const result = runCheck(dir)
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('archive or executable bytes')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a real PE (MZ plus PE signature at e_lfanew)', () => {
+    const dir = makeTree(cleanTarball)
+    try {
+      const pe = Buffer.alloc(256)
+      pe.write('MZ', 0)
+      pe.writeUInt32LE(128, 0x3c)
+      pe.write('PE\0\0', 128, 'latin1')
+      fs.writeFileSync(path.join(dir, 'dist/cli.js'), pe)
+      const result = runCheck(dir)
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('archive or executable bytes')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['a JS file starting MZ', 'MZ = 1;\n'],
+    ['a two-byte MZ file', 'MZ'],
+    ['a short MZ file with a large offset', 'MZ'.padEnd(100, ' ')],
+  ])('allows %s', (_label, content) => {
+    const dir = makeTree(cleanTarball)
+    try {
+      fs.writeFileSync(path.join(dir, 'dist/cli.js'), content)
+      expect(runCheck(dir).status).toBe(0)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('allows MZ text whose e_lfanew points outside the file', () => {
+    const dir = makeTree(cleanTarball)
+    try {
+      const buf = Buffer.alloc(200, 0x20)
+      buf.write('MZ', 0)
+      buf.writeUInt32LE(0xffffff00, 0x3c)
+      fs.writeFileSync(path.join(dir, 'dist/cli.js'), buf)
+      expect(runCheck(dir).status).toBe(0)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['README.md', 'package.json'])('rejects archive bytes in top-level %s', (name) => {
+    const dir = makeTree(cleanTarball)
+    try {
+      fs.writeFileSync(path.join(dir, name), Buffer.from('504b0304', 'hex'))
+      const result = runCheck(dir)
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('archive or executable bytes')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects tar ustar bytes at the header offset', () => {
+    const dir = makeTree(cleanTarball)
+    try {
+      const header = Buffer.alloc(512)
+      header.write('ustar', 257)
+      fs.writeFileSync(path.join(dir, 'templates/init/shots.config.ts'), header)
+      const result = runCheck(dir)
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('archive or executable bytes')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('allows image bytes under an allowlisted path', () => {
+    const dir = makeTree(cleanTarball)
+    try {
+      fs.writeFileSync(path.join(dir, 'dist/cli.js'), Buffer.from('89504e470d0a1a0a', 'hex'))
+      expect(runCheck(dir).status).toBe(0)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 // --- Layer B: rule patterns -------------------------------------------------
@@ -172,6 +314,7 @@ interface Rule {
   id: string
   regex: RegExp
   allowlist: RegExp[]
+  allowTarget: 'line' | 'match'
 }
 
 function parseRules(): Map<string, Rule> {
@@ -194,7 +337,8 @@ function parseRules(): Map<string, Rule> {
         if (m[1]) allowlist.push(new RegExp(m[1]))
       }
     }
-    rules.set(id, { id, regex: new RegExp(pattern), allowlist })
+    const allowTarget = /regexTarget\s*=\s*"match"/.test(allowBlock ?? '') ? 'match' : 'line'
+    rules.set(id, { id, regex: new RegExp(pattern), allowlist, allowTarget })
   }
   return rules
 }
@@ -204,20 +348,82 @@ const rules = parseRules()
 function fires(id: string, line: string): boolean {
   const rule = rules.get(id)
   if (!rule) throw new Error(`no such rule in gitleaks-tarball.toml: ${id}`)
-  if (!rule.regex.test(line)) return false
-  // gitleaks suppresses a finding when a rule allowlist matches; regexTarget =
-  // "line" means the whole line is the subject.
-  return !rule.allowlist.some((a) => a.test(line))
+  const match = rule.regex.exec(line)
+  if (!match) return false
+  // gitleaks suppresses a finding when a rule allowlist matches; regexTarget
+  // selects the subject: the whole line (default) or just the matched text.
+  const subject = rule.allowTarget === 'match' ? match[0] : line
+  return !rule.allowlist.some((a) => a.test(subject))
 }
 
 describe('leak gate layer B — rule patterns', () => {
-  it('defines exactly the four rules the plan specifies', () => {
+  it('defines the committed tarball rules', () => {
     expect([...rules.keys()].sort()).toEqual([
       'host-path-posix',
       'host-path-windows',
       'operator-username-in-path',
+      'private-hostname',
       'private-ipv4',
+      'private-ipv6',
     ])
+  })
+
+  it.each([
+    'Connect to printer.lan for the example.',
+    'template host: example.local',
+    'http://printer.lan/status',
+    'http://PRINTER.LAN:8080/',
+    'see Printer.Local',
+    'const h = "nas-01.local"',
+    'const h = `nas-01.LOCAL`',
+    'ssh admin@nas-01.local',
+    'args.lan = true; host = "printer.lan"',
+  ])('fires on hostname %s', (line) => {
+    expect(fires('private-hostname', line)).toBe(true)
+  })
+
+  it.each([
+    'args.lan',
+    'args.lan = true',
+    'entry.internal',
+    'printer.landing',
+    'const a = x.local;',
+    'if (os.local) {',
+    'return os.local.name;',
+    'os.local()',
+    'run(a, os.local, b)',
+    'const b = args.lan && entry.internal;',
+    'x.local = 1',
+    'const c = obj.landing;',
+  ])('does not fire on identifier %s', (line) => {
+    expect(fires('private-hostname', line)).toBe(false)
+  })
+
+  it.each([
+    'fe80::1',
+    'febf::1',
+    'fc00::1',
+    'fdff::1',
+    'fe80::',
+    'fc00::',
+    '[fc00::]',
+    'FE80::1',
+    'host fe80:1:2:3:4:5:6:7 up',
+    'fe80:1::2',
+  ])('fires on private IPv6 %s', (line) => {
+    expect(fires('private-ipv6', line)).toBe(true)
+  })
+
+  it.each([
+    'fec0::1',
+    '2001:db8::1',
+    '2001:db8:fe80::1',
+    '2001:db8:fc00::1',
+    'fc00:ffff',
+    'fe80:1',
+    'abcfe80::1',
+  ])('does not fire on other IPv6 %s', (line) => {
+    expect(fires('private-ipv6', line)).toBe(false)
   })
 
   describe('host-path-posix', () => {
