@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
-import { buildCompareModel, type GalleryCompareModel } from './compare-model.js'
+import { buildCompareModel, isGatedPair, type GalleryCompareModel } from './compare-model.js'
 import {
   loadGalleryModel,
   readPngModel,
@@ -170,11 +170,8 @@ export function generateCompareGallery(
       gate.ignoredNonParity = model.pairs.filter(
         (pair) => pair.ignored && pair.state !== 'identical' && pair.state !== 'similar',
       ).length
-      gate.nonParity = model.pairs.filter(
-        (pair) =>
-          !pair.ignored &&
-          ((pair.state !== 'identical' && pair.state !== 'similar') ||
-            (options.strict && pair.state === 'similar')),
+      gate.nonParity = model.pairs.filter((pair) =>
+        isGatedPair(pair, options.strict ?? false),
       ).length
     }
     updateGate()
@@ -230,7 +227,7 @@ export function generateCompareGallery(
     bodyTemp = bodyPath
     const bodyFd = fs.openSync(bodyTemp, 'a')
     try {
-      for (const chunk of renderComparePairChunks(model, links, (pair) => {
+      for (const chunk of renderComparePairChunks(model, links, options.strict ?? false, (pair) => {
         const hydrated: GalleryShot[] = []
         for (const [side, run] of [
           ['a', aRun],
