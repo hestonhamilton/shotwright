@@ -76,6 +76,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
       version: string
       comparator: { name: string; version: string }
       runs: { a: { pathDigest: string }; b: { pathDigest: string } }
+      provenance: { unavailable: string[] }
     }
     summary.runs.a.pathDigest = 'PATH'
     summary.runs.b.pathDigest = 'PATH'
@@ -92,11 +93,16 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     summary.version = 'VERSION'
     summary.comparator.version = 'VERSION'
     const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+    // Fixture runs record no provenance; the advisory banner says so and the
+    // compare.json provenance carries the same strings.
+    expect(page).toContain(
+      `<p class="provenance">Render environment provenance incomplete: ${summary.provenance.unavailable.join('; ')}</p>`,
+    )
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"8d1aa6c99489ee0d4f4f127668e92a2ded4194c3752a70b39e9e75e353ff29b1"`,
+      `"f1700aa91f29e5874a2bfb818aa1d9106c29f0a0226098a6534381d80d68b0b0"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
-      `"033b10f9d61b2a53eef61d259ed02c756bdbf778ece8bc98d89af76d35c587e9"`,
+      `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
     )
     for (const state of [
       'identical',

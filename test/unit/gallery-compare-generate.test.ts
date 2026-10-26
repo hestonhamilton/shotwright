@@ -72,6 +72,54 @@ it('pins compare.json numbers, default settings, diff PNG and generation result 
   expect(fs.readFileSync(path.join(dir, 'run-a.vs.run-b.compare.json'), 'utf8')).not.toContain(a)
   expect(PNG.sync.read(fs.readFileSync(path.join(dir, summary.pairs[0].diff))).width).toBe(3)
 })
+it('keeps image verdict, counts, gate, and CLI exit unchanged when provenance differs', async () => {
+  const { a, b } = fixture()
+  const baseline = generateCompareGallery(a, b, { failOnChange: true })
+  const before = {
+    pairs: baseline.model.pairs.map((pair) => pair.state),
+    counts: { ...baseline.counts },
+    gate: { ...baseline.gate },
+  }
+  const set = (dir: string, version: string) => {
+    const file = path.join(dir, 'manifest.json')
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8'))
+    manifest.environment = { platform: 'linux', distribution: { id: 'debian', versionId: '12' } }
+    manifest.browsers = [
+      {
+        project: 'desktop',
+        name: 'chromium',
+        version,
+        channel: null,
+        executable: { kind: 'managed', path: 'chromium/chrome', sha256: 'a'.repeat(64) },
+      },
+    ]
+    fs.writeFileSync(file, JSON.stringify(manifest))
+  }
+  set(a, '1.0')
+  set(b, '2.0')
+  const changed = generateCompareGallery(a, b, { failOnChange: true })
+  const summary = JSON.parse(
+    fs.readFileSync(changed.outputFile.replace(/\.html$/, '.compare.json'), 'utf8'),
+  )
+  expect(summary.provenance).toEqual({
+    status: 'known-fields-differ',
+    differences: ['desktop browser version: 1.0 → 2.0'],
+    unavailable: [],
+  })
+  expect(fs.readFileSync(changed.outputFile, 'utf8')).toContain(
+    `<p class="provenance">Render environments differ: ${summary.provenance.differences[0]}</p>`,
+  )
+  expect({
+    pairs: changed.model.pairs.map((pair) => pair.state),
+    counts: changed.counts,
+    gate: changed.gate,
+  }).toEqual(before)
+  expect(
+    await compare([a, b, '--config', 'demo/shots.config.ts', '--fail-on-change'], async () =>
+      path.dirname(a),
+    ),
+  ).toBe(1)
+})
 it('pins recovery from partial prior write and atomic temp cleanup', () => {
   const { a, b } = fixture(),
     result = generateCompareGallery(a, b)

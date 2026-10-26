@@ -153,6 +153,14 @@ conflicting values are `null`. Older v2 runs read with `environment: null` and
 `browsers: []`. These fields are diagnostic and do not change compare verdicts
 or the gate.
 
+The gallery header shows the recorded environment and per-project browser rows,
+including the configured channel when set. Compare adds advisory `provenance` to
+its JSON summary. Its header names known differing fields, or says which side's
+fields are unavailable; when all compared fields are present and match, it says
+"No known render environment difference (recorded fields only)". This never
+claims equivalent rendering and never changes image verdicts, counts, the gate,
+or the command's exit status.
+
 ## Commands
 
 ```

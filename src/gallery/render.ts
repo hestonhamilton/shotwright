@@ -406,6 +406,17 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
     model.sourceManifestVersion === 1
       ? 'Run status: unrecorded (manifest v1) · publication: unrecorded'
       : `Run status: ${manifest.status} · tests: ${manifest.tests.filter((test) => test.status === 'passed').length}/${manifest.tests.length} · publication: ${publication}`
+  const environment = manifest.environment
+    ? `${manifest.environment.platform}${manifest.environment.distribution ? ` · ${manifest.environment.distribution.id} ${manifest.environment.distribution.versionId}` : ''}`
+    : 'unavailable'
+  const browsers = manifest.browsers?.length
+    ? manifest.browsers
+        .map(
+          (browser) =>
+            `${browser.project}: ${browser.name ?? 'unavailable'} ${browser.version ?? 'unavailable'}${browser.channel ? ` · configured channel ${browser.channel}` : ''} · executable ${browser.executable ? `${browser.executable.kind} ${browser.executable.path} · SHA-256 prefix ${browser.executable.sha256.slice(0, 12)}…` : 'unavailable'}`,
+        )
+        .join('; ')
+    : 'unavailable'
 
   return `<!doctype html>
 <html lang="en">
@@ -439,6 +450,8 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
         <div><dt>Finished</dt><dd>${escapeHtml(manifest.finishedAt)}</dd></div>
         <div><dt>Elapsed</dt><dd>${elapsed(manifest.startedAt, manifest.finishedAt)}</dd></div>
         <div><dt>Versions</dt><dd>shotwright ${escapeHtml(manifest.shotwrightVersion)} · Playwright ${escapeHtml(manifest.playwrightVersion)}</dd></div>
+        <div><dt>Environment</dt><dd>${escapeHtml(environment)}</dd></div>
+        <div><dt>Browsers</dt><dd>${escapeHtml(browsers)}</dd></div>
         <div><dt>Only filter</dt><dd>${escapeHtml(only)}</dd></div>
         <div><dt>Video flag</dt><dd>${manifest.flags.video ? 'On' : 'Off'}</dd></div>
         <div><dt>Trace flag</dt><dd>${manifest.flags.trace ? 'On' : 'Off'}</dd></div>

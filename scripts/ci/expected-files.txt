@@ -58,6 +58,8 @@ dist/gallery/model.d.ts
 dist/gallery/model.js
 dist/gallery/pixels.d.ts
 dist/gallery/pixels.js
+dist/gallery/provenance.d.ts
+dist/gallery/provenance.js
 dist/gallery/render-compare.d.ts
 dist/gallery/render-compare.js
 dist/gallery/render.d.ts
