@@ -17,7 +17,8 @@ config and its own `*.shots.ts` specs.
 
 - **Review artifacts, not assertions.** Captures are throwaway output for human
   eyeballing ("does this actually render/fit?"), regenerated each run and never
-  committed. Golden-diff visual regression is deliberately out of scope.
+  committed. Compare two runs for review or opt into `--fail-on-change`;
+  committed golden baselines and approval management are out of scope.
 - **Specs are committed; output is gitignored.** The walkthrough scripts are
   durable project code; the PNGs/videos/traces are not.
 - **Built on the Playwright test-runner.** Videos, traces, and reporting come for
@@ -153,6 +154,18 @@ shotwright init     [--dry-run] [--package-manager npm|pnpm|yarn]
   `latest` resolves to the **last fully passed run**, not simply the most recent
   one — comparing against a run that failed halfway is a comparison against
   nothing. (It is a POSIX symlink; Windows support is not in v1.)
+
+### Baselines and assertions
+
+For committed visual assertions, use Playwright's
+[`toHaveScreenshot()`](https://playwright.dev/docs/test-snapshots). In a
+walkthrough, prefer [`expect.soft`](https://playwright.dev/docs/test-assertions)
+so a failed assertion does not stop later captures; the run still fails and does
+not advance `latest`. For hosted review, set `RUN_DIR` to a run directory and
+`ARGOS_TOKEN` to an Argos project token, then upload its `shots/` directory with
+`npx @argos-ci/cli upload "$RUN_DIR/shots"` ([Argos CLI](https://www.npmjs.com/package/%40argos-ci/cli)).
+For local review, run `shotwright compare <chosen-run> latest`; the chosen run
+can also be a downloaded run directory path.
 
 ### Selecting tests and shots
 

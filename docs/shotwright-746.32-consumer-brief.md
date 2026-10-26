@@ -98,3 +98,17 @@ Run a spec that writes `.xlsx` artifacts twice, then `npx shotwright compare <a>
   font list. compare shows a "different environments" banner, and writes it to compare.json, when A and B differ.
 - **Workaround:** a compared pair comes only from the consumer's CI workflow; local runs use Playwright's image plus
   the CI font set.
+
+## Follow-up (2026-10-26)
+
+- **A1/A2 and F1:** The consumer withdrew A1/A2 into a request for review-based
+  baselines: approve a run, compare against it by default, record per-pair
+  accept/deny decisions, and gate on those decisions. W2 shipped `--ignore`,
+  `--threshold`, and `--strict` anyway as refinements of the existing opt-in
+  compare gate. F1 is declined in [ADR 0024](adr/0024-review-based-baselines-declined.md).
+- **A4:** The render-environment warning was restated and is already planned.
+  Recording the distribution ID and version covers the reported cross-system
+  case; browser and font provenance remain part of the broader design work.
+- **A5:** `shot()` should pass `animations`, `caret`, `mask`, and `style` through
+  to Playwright screenshot capture, preserving `page.screenshot()` defaults.
+  In particular, `page.screenshot()` already defaults `caret` to `'hide'`.
