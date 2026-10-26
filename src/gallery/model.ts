@@ -8,6 +8,7 @@ import {
   type ShotEntry,
   type Viewport,
   shotKey,
+  validExecutable,
 } from '../manifest.js'
 
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -266,6 +267,73 @@ export function validateManifest(value: unknown, expectedRunId?: string): Manife
     throw new GalleryManifestError('runError is invalid')
   if (runError !== null && status !== 'failed')
     throw new GalleryManifestError('runError requires failed status')
+  let environment: Manifest['environment'] = null
+  if (version === 2 && candidate.environment !== undefined && candidate.environment !== null) {
+    const value = record(candidate.environment, 'environment')
+    const platform = string(value.platform, 'environment.platform')
+    if (
+      ![
+        'aix',
+        'android',
+        'darwin',
+        'freebsd',
+        'haiku',
+        'linux',
+        'openbsd',
+        'sunos',
+        'win32',
+        'cygwin',
+        'netbsd',
+      ].includes(platform)
+    )
+      throw new GalleryManifestError('environment.platform is invalid')
+    let distribution: NonNullable<Manifest['environment']>['distribution'] = null
+    if (value.distribution !== null) {
+      const release = record(value.distribution, 'environment.distribution')
+      const id = string(release.id, 'environment.distribution.id')
+      const versionId = string(release.versionId, 'environment.distribution.versionId')
+      if (
+        platform !== 'linux' ||
+        !/^[a-z0-9][a-z0-9._-]*$/i.test(id) ||
+        !/^[a-z0-9][a-z0-9._-]*$/i.test(versionId)
+      )
+        throw new GalleryManifestError('environment.distribution is invalid')
+      distribution = { id, versionId }
+    }
+    environment = { platform: platform as NodeJS.Platform, distribution }
+  }
+  const browsers: NonNullable<Manifest['browsers']> = []
+  if (version === 2 && candidate.browsers !== undefined) {
+    const rows = array(candidate.browsers, 'browsers')
+    for (const [index, row] of rows.entries()) {
+      const label = `browsers[${index}]`
+      const browser = record(row, label)
+      const project = string(browser.project, `${label}.project`)
+      const name = nullableString(browser.name, `${label}.name`)
+      const browserVersion = nullableString(browser.version, `${label}.version`)
+      const channel = nullableString(browser.channel, `${label}.channel`)
+      if (
+        (name !== null && !['chromium', 'firefox', 'webkit'].includes(name)) ||
+        (browserVersion !== null && !/^\d+(?:\.\d+)*$/.test(browserVersion)) ||
+        (channel !== null && !/^[a-z0-9-]+$/.test(channel)) ||
+        !validExecutable(browser.executable) ||
+        (browser.executable !== null && name !== 'chromium')
+      )
+        throw new GalleryManifestError(`${label} is invalid`)
+      if (
+        browsers.some((prior) => prior.project === project) ||
+        (browsers.length && browsers.at(-1)!.project.localeCompare(project) >= 0)
+      )
+        throw new GalleryManifestError('browsers must be sorted with unique projects')
+      browsers.push({
+        project,
+        name,
+        version: browserVersion,
+        channel,
+        executable: browser.executable,
+      })
+    }
+  }
   return {
     manifestVersion: MANIFEST_VERSION,
     runId,
@@ -273,6 +341,8 @@ export function validateManifest(value: unknown, expectedRunId?: string): Manife
     finishedAt: string(candidate.finishedAt, 'finishedAt'),
     shotwrightVersion: string(candidate.shotwrightVersion, 'shotwrightVersion'),
     playwrightVersion: string(candidate.playwrightVersion, 'playwrightVersion'),
+    environment,
+    browsers,
     flags: {
       only: [...flags.only] as string[],
       video: boolean(flags.video, 'flags.video'),

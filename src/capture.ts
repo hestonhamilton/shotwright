@@ -15,6 +15,7 @@ import type { Locator, Page } from '@playwright/test'
 
 import { parseOnly, shouldCapture } from './filter.js'
 import { readSidecars, writeSidecar } from './manifest.js'
+import { observeBrowser } from './provenance.js'
 
 export { parseOnly, shouldCapture }
 
@@ -173,6 +174,10 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
       ? await opts.locator.screenshot({ type: 'png' })
       : await page.screenshot({ type: 'png', fullPage, ...(opts.clip ? { clip: opts.clip } : {}) })
     fs.writeFileSync(fd, bytes)
+    const browser = await observeBrowser(
+      page.context().browser(),
+      info.project.use.launchOptions?.channel ?? info.project.use.channel,
+    )
     writeSidecar(runDir, {
       kind: 'shot',
       name,
@@ -186,6 +191,7 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
       testId: info.testId,
       checked: opts.check !== undefined,
       retry: info.retry,
+      browser,
     })
     completed = true
   } finally {

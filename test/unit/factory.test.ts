@@ -53,6 +53,17 @@ describe('defineShotsConfig', () => {
     })
     expect(config.reporter).toBeDefined()
   })
+  it('preserves consumer launch arguments and executable overrides exactly', () => {
+    const launchOptions = { args: ['--disable-features=Translate'], executablePath: 'browser-bin' }
+    const config = defineShotsConfig({
+      use: { launchOptions },
+      projects: [{ name: 'one', use: { launchOptions, channel: 'chrome' } }],
+    })
+    expect(config.use?.launchOptions).toEqual(launchOptions)
+    expect(config.projects?.[0]?.use?.launchOptions).toEqual(launchOptions)
+    expect(defineShotsConfig().use?.launchOptions).toBeUndefined()
+    expect(defineShotsConfig().projects?.[0]?.use?.launchOptions).toBeUndefined()
+  })
   it('guard refuses bare config evaluation before run directory creation', () => {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-guard-'))
     try {

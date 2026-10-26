@@ -326,6 +326,19 @@ function runCli(cliSpecificArgs: string[], expectedFlags: Flags): CliRun {
   expect(manifest.runId).toBe(runId)
   expect(manifest.playwrightVersion).toMatch(/^\d+\.\d+/)
   expect(manifest.flags).toEqual(expectedFlags)
+  expect(manifest.environment?.platform).toBe(process.platform)
+  expect(manifest.browsers?.map((browser) => browser.project)).toEqual(['shots'])
+  expect(manifest.browsers?.[0]?.name).toBe('chromium')
+  expect(manifest.browsers?.[0]?.version).toMatch(/^\d+(?:\.\d+)*$/)
+  if (process.platform === 'linux') {
+    expect(manifest.browsers?.[0]?.executable?.kind).toBe('managed')
+    expect(manifest.browsers?.[0]?.executable?.path).toContain('chrome-headless-shell')
+  }
+  const published =
+    fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8') +
+    fs.readFileSync(path.join(runDir, 'gallery.html'), 'utf8')
+  expect(published).not.toContain(os.homedir())
+  expect(published).not.toContain('--remote-debugging-pipe')
 
   const manifestFiles = manifest.shots.flatMap((shot) => [
     shot.file,

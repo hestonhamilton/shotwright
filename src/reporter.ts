@@ -21,6 +21,7 @@ import {
 import { publishManifest, updateLatestSymlink, SIDECAR_DIR } from './runs.js'
 import { shotwrightVersion } from './version.js'
 import { storageSpec } from './capture.js'
+import { runEnvironment } from './provenance.js'
 
 interface FinalResult {
   test: TestCase
@@ -150,6 +151,7 @@ export default class ShotwrightReporter implements Reporter {
       finishedAt: new Date().toISOString(),
       shotwrightVersion: shotwrightVersion(),
       playwrightVersion: this.playwrightVersion,
+      environment: runEnvironment(),
       flags: {
         only: parseOnly(process.env.SHOTWRIGHT_ONLY),
         video: process.env.SHOTWRIGHT_VIDEO === '1',

@@ -43,6 +43,38 @@ function newest(): { dir: string; manifest: Manifest } {
   }
 }
 describe('real Playwright contract consumer', () => {
+  it.skipIf(process.platform !== 'linux')(
+    'keeps the PNG when browser internals throw during observation',
+    () => {
+      const result = run(['--grep', 'provenance internals fail after capture'])
+      expect(result.status, result.stdout + result.stderr).toBe(0)
+      const { dir, manifest } = newest()
+      expect(manifest.shots).toHaveLength(1)
+      const file = path.join(dir, manifest.shots[0]!.file)
+      expect(fs.readFileSync(file).subarray(0, 8)).toEqual(
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      )
+      expect(manifest.browsers?.[0]?.executable).toBeNull()
+    },
+  )
+  it('aggregates two worker and project browser observations without host paths', () => {
+    const result = run(['--grep', 'provenance across projects', '--workers=2'], {
+      CONTRACT_TWO_PROJECTS: '1',
+    })
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    const { dir, manifest } = newest()
+    expect(manifest.browsers?.map((browser) => browser.project)).toEqual(['one', 'two'])
+    for (const browser of manifest.browsers ?? []) {
+      expect(browser.name).toBe('chromium')
+      expect(browser.version).toMatch(/^\d+(?:\.\d+)*$/)
+      if (process.platform === 'linux') expect(browser.executable?.kind).toBe('managed')
+    }
+    const published =
+      fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8') +
+      fs.readFileSync(path.join(dir, 'gallery.html'), 'utf8')
+    expect(published).not.toContain(os.homedir())
+    expect(published).not.toContain('--remote-debugging-pipe')
+  })
   it('uses the loaded spec for a helper-registered nested test', () => {
     const result = run(['--grep', 'helper registered capture'])
     expect(result.status, result.stdout + result.stderr).toBe(0)

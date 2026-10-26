@@ -120,6 +120,19 @@ Artifact and shot writes reject traversal and symlinks present at write time.
 The output directory is trusted against concurrent path changes, as with
 Playwright's `outputDir`.
 
+Manifest v2 also records run platform and, on Linux, distribution `ID` and
+`VERSION_ID`, plus one observed browser row per project that captured a shot.
+The row uses the browser of the actual page for name and version. Its channel is
+the configured project channel (`launchOptions.channel` takes precedence over
+`channel`); spec-level `test.use()` overrides are not visible here. For a local
+Linux Chromium process, the row also records a SHA-256 digest of its running
+executable image. Managed means the binary that ran is in Playwright's browser
+cache, regardless of who selected it, and stores a cache-relative path. A binary
+outside that cache is overridden and stores only its basename. Unavailable or
+conflicting values are `null`. Older v2 runs read with `environment: null` and
+`browsers: []`. These fields are diagnostic and do not change compare verdicts
+or the gate.
+
 ## Commands
 
 ```
