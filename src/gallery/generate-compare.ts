@@ -70,6 +70,68 @@ function pixelmatchVersion(): string {
  */
 type Staged = { file: string; temp: string }
 
+/**
+ * Rename each staged temp over its published file, in order. Each file it
+ * replaces is first hard-linked to a backup temp, so a failed rename restores
+ * every file already replaced and the previous output stays whole. If a restore
+ * itself fails, the thrown error names exactly the files left holding new output.
+ */
+function errorCode(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException | null)?.code
+}
+
+function publishReplacing(order: Staged[]): void {
+  const published: { file: string; backup: string | undefined }[] = []
+  let pending: string | undefined
+  try {
+    for (const { file, temp } of order) {
+      pending = tempPath(file)
+      try {
+        fs.linkSync(file, pending)
+      } catch (error) {
+        if (errorCode(error) === 'ENOENT') pending = undefined
+        else {
+          // No hard links here (FAT/exFAT, some network or FUSE mounts): copy the backup instead.
+          try {
+            fs.copyFileSync(file, pending, fs.constants.COPYFILE_EXCL)
+          } catch (copyError) {
+            if (errorCode(copyError) !== 'ENOENT') throw copyError
+            pending = undefined
+          }
+        }
+      }
+      fs.renameSync(temp, file)
+      published.push({ file, backup: pending })
+      pending = undefined
+    }
+  } catch (error) {
+    if (pending) fs.rmSync(pending, { force: true })
+    const stuck: string[] = []
+    for (const { file, backup } of published.reverse()) {
+      try {
+        if (backup) fs.renameSync(backup, file)
+        else fs.rmSync(file, { force: true })
+      } catch {
+        stuck.push(file)
+      }
+    }
+    if (stuck.length === 0) throw error
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `${message}; compare output partially published: could not restore the previous ${stuck.join(', ')} (now new output); every other file keeps the previous output`,
+      { cause: error },
+    )
+  }
+  for (const { backup } of published) {
+    if (!backup) continue
+    try {
+      fs.rmSync(backup, { force: true })
+    } catch {
+      /* next run prunes abandoned temps */
+    }
+  }
+}
+
 export function generateCompareGallery(
   aRun: string,
   bRun: string,
@@ -301,28 +363,49 @@ export function generateCompareGallery(
     fs.rmSync(bodyTemp)
     bodyTemp = undefined
     stage(jsonFile, JSON.stringify(buildJson(), null, 2) + '\n')
+    // The HTML goes last on both paths, after the sidecar and diff PNGs it names.
+    const order = [
+      ...staged.filter((entry) => entry.file !== outputFile),
+      ...staged.filter((entry) => entry.file === outputFile),
+    ]
     if (options.exclusiveCreate) {
-      for (const { file, temp } of staged) {
+      for (const { file, temp } of order) {
         fs.linkSync(temp, file)
         created.push(file)
       }
       for (const { temp } of staged) fs.unlinkSync(temp)
     } else {
-      for (const { file, temp } of staged) fs.renameSync(temp, file)
+      publishReplacing(order)
     }
     // Only after the new HTML is in place: prune diff PNGs and temps a previous run of this stem left.
+    // The output is already complete and consistent, so a prune failure is a diagnostic, not an error.
     const keep = new Set(diffFiles.map((entry) => path.basename(entry.file)))
     const stale = new RegExp(
       `^(?:${escapeRegExp(stem)}\\.diff-\\d+\\.png|\\.compare\\.(?:${escapeRegExp(htmlName)}|${escapeRegExp(stem)}\\.(?:compare\\.json|diff-\\d+\\.png))\\.\\d+(?:\\.[0-9a-f]{32})?\\.tmp)$`,
     )
-    for (const name of options.pruneStale === false ? [] : fs.readdirSync(compareDir)) {
+    const pruneFailed = (file: string, error: unknown): void => {
+      const reason = error instanceof Error ? error.message : String(error)
+      model.diagnostics.push({ path: file, message: `stale compare output not pruned: ${reason}` })
+    }
+    let names: string[] = []
+    try {
+      names = options.pruneStale === false ? [] : fs.readdirSync(compareDir)
+    } catch (error) {
+      pruneFailed(compareDir, error)
+    }
+    for (const name of names) {
       if (!stale.test(name) || keep.has(name)) continue
       if (options.pruneTemps === false && name.startsWith('.compare.')) continue
       const candidate = path.join(compareDir, name)
-      const stat = fs.lstatSync(candidate)
-      if (!stat.isFile()) continue
-      if (name.startsWith('.compare.') && Date.now() - stat.mtimeMs <= 60 * 60 * 1000) continue
-      fs.unlinkSync(candidate)
+      try {
+        const stat = fs.lstatSync(candidate)
+        if (!stat.isFile()) continue
+        if (name.startsWith('.compare.') && Date.now() - stat.mtimeMs <= 60 * 60 * 1000) continue
+        fs.unlinkSync(candidate)
+      } catch (error) {
+        // A concurrent run already removed it: nothing left to prune.
+        if (errorCode(error) !== 'ENOENT') pruneFailed(candidate, error)
+      }
     }
     return {
       outputFile: legacy ? requestedOutputFile : outputFile,

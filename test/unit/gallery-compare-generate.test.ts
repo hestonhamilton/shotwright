@@ -315,6 +315,135 @@ it('keeps the previous complete HTML when renaming the new HTML into place fails
     fs.readdirSync(path.dirname(first.outputFile)).filter((name) => name.startsWith('.compare.')),
   ).toEqual([])
 })
+it('restores every replaced file and exits 2 without a wrote line when a later rename fails', async () => {
+  const { a, b } = fixture()
+  const page = path.join(path.dirname(a), 'cli.html')
+  const run = (extra: string[]) =>
+    compare([a, b, '--config', 'demo/shots.config.ts', '--output', page, ...extra], async () =>
+      path.dirname(a),
+    )
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(await run([])).toBe(0)
+  const dir = path.dirname(page)
+  const names = ['cli.html', 'cli.compare.json', 'cli.diff-0.png']
+  const before = names.map((name) => fs.readFileSync(path.join(dir, name)))
+  vi.restoreAllMocks()
+  const rename = fs.renameSync
+  const renamed: string[] = []
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (to === path.join(dir, 'cli.compare.json')) throw new Error('injected rename failure')
+    renamed.push(path.basename(String(to)))
+    rename(from, to)
+  })
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(await run(['--threshold', '0.5', '--fail-on-change'])).toBe(2)
+  // The diff PNG was replaced before the failure and then restored from its backup.
+  expect(renamed).toEqual(['cli.diff-0.png', 'cli.diff-0.png'])
+  expect(names.map((name) => fs.readFileSync(path.join(dir, name)))).toEqual(before)
+  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
+  expect(log).not.toHaveBeenCalledWith(expect.stringContaining('wrote'))
+  expect(error).toHaveBeenCalledWith('shotwright compare: injected rename failure')
+  vi.restoreAllMocks()
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(await run(['--threshold', '0.5'])).toBe(0)
+  expect(fs.readFileSync(page)).not.toEqual(before[0])
+})
+it('names the files left holding new output when restoring a replaced file fails', () => {
+  const { a, b } = fixture(),
+    first = generateCompareGallery(a, b)
+  const dir = path.dirname(first.outputFile)
+  const diff = path.join(dir, 'run-a.vs.run-b.diff-0.png')
+  const before = ['run-a.vs.run-b.html', 'run-a.vs.run-b.compare.json'].map((name) =>
+    fs.readFileSync(path.join(dir, name)),
+  )
+  const rename = fs.renameSync
+  let diffRenames = 0
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (to === path.join(dir, 'run-a.vs.run-b.compare.json'))
+      throw new Error('injected rename failure')
+    if (to === diff && ++diffRenames === 2) throw new Error('injected restore failure')
+    rename(from, to)
+  })
+  expect(() => generateCompareGallery(a, b, { threshold: 0.5 })).toThrow(
+    `injected rename failure; compare output partially published: could not restore the previous ${diff}`,
+  )
+  expect(
+    ['run-a.vs.run-b.html', 'run-a.vs.run-b.compare.json'].map((name) =>
+      fs.readFileSync(path.join(dir, name)),
+    ),
+  ).toEqual(before)
+})
+it('reports a prune failure after a complete publish as a diagnostic and keeps the gate exit', async () => {
+  const { a, b } = fixture()
+  const page = path.join(path.dirname(a), 'cli.html')
+  const stale = path.join(path.dirname(a), 'cli.diff-99.png')
+  fs.writeFileSync(stale, 'stale')
+  const unlink = fs.unlinkSync
+  vi.spyOn(fs, 'unlinkSync').mockImplementation((file) => {
+    if (file === stale) throw Object.assign(new Error('EACCES: injected'), { code: 'EACCES' })
+    unlink(file)
+  })
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(
+    await compare(
+      [a, b, '--config', 'demo/shots.config.ts', '--output', page, '--fail-on-change'],
+      async () => path.dirname(a),
+    ),
+  ).toBe(1)
+  expect(log).toHaveBeenCalledWith(`shotwright compare: wrote ${page}`)
+  expect(error).toHaveBeenCalledWith(
+    `shotwright compare: ${stale}: stale compare output not pruned: EACCES: injected`,
+  )
+  expect(error).toHaveBeenCalledWith(expect.stringContaining('--fail-on-change: fail (exit 1)'))
+  expect(fs.readFileSync(stale, 'utf8')).toBe('stale')
+  const summary = JSON.parse(fs.readFileSync(page.replace(/\.html$/, '.compare.json'), 'utf8'))
+  expect(summary.gate.nonParity).toBe(1)
+})
+it('backs up by copy where hard links fail, and still rolls back from the copy', () => {
+  const { a, b } = fixture()
+  vi.spyOn(fs, 'linkSync').mockImplementation(() => {
+    throw Object.assign(new Error('EPERM: injected'), { code: 'EPERM' })
+  })
+  const first = generateCompareGallery(a, b)
+  const dir = path.dirname(first.outputFile)
+  const names = ['run-a.vs.run-b.html', 'run-a.vs.run-b.compare.json', 'run-a.vs.run-b.diff-0.png']
+  const second = generateCompareGallery(a, b, { threshold: 0.5 })
+  expect(second.diagnostics).toEqual([])
+  const json = (): { settings: { threshold: number } } =>
+    JSON.parse(fs.readFileSync(path.join(dir, 'run-a.vs.run-b.compare.json'), 'utf8'))
+  expect(json().settings.threshold).toBe(0.5)
+  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
+  const before = names.map((name) => fs.readFileSync(path.join(dir, name)))
+  const rename = fs.renameSync
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (to === path.join(dir, 'run-a.vs.run-b.compare.json'))
+      throw new Error('injected rename failure')
+    rename(from, to)
+  })
+  expect(() => generateCompareGallery(a, b, { threshold: 0.25 })).toThrow(
+    /^injected rename failure$/,
+  )
+  expect(names.map((name) => fs.readFileSync(path.join(dir, name)))).toEqual(before)
+  expect(json().settings.threshold).toBe(0.5)
+  expect(fs.readdirSync(dir).filter((name) => name.startsWith('.compare.'))).toEqual([])
+})
+it('does not report a stale file a concurrent run already removed', () => {
+  const { a, b } = fixture()
+  const dir = path.dirname(generateCompareGallery(a, b).outputFile)
+  const stale = path.join(dir, 'run-a.vs.run-b.diff-99.png')
+  fs.writeFileSync(stale, 'stale')
+  const unlink = fs.unlinkSync
+  vi.spyOn(fs, 'unlinkSync').mockImplementation((file) => {
+    unlink(file)
+    if (file === stale) throw Object.assign(new Error('ENOENT: injected'), { code: 'ENOENT' })
+  })
+  expect(generateCompareGallery(a, b).diagnostics).toEqual([])
+  expect(fs.existsSync(stale)).toBe(false)
+})
 it('records caller threshold and includeAA and echoes the optional parity gate', () => {
   const { a, b } = fixture()
   const result = generateCompareGallery(a, b, {
