@@ -98,13 +98,33 @@ walkthrough('checkout', async ({ page }) => {
 
 `shot(page, name, opts?)` writes `<runDir>/shots/<spec>/<name>.png` and records a
 manifest entry. Options: `fullPage` (default true unless `clip` or `locator` is
-given), `clip`, `locator`, and `check`. A resolved `check` runs before capture and
-sets `checked: true`; this records callback completion, even for a no-op, not
-proof that an assertion ran. A thrown callback saves no shot. `artifact(name,
+given), `clip`, `locator`, `animations`, `caret`, `mask`, `style`, and `check`.
+The four screenshot options pass through to Playwright for both page and locator
+captures: `animations` controls animation handling, `caret` controls text caret
+visibility, `mask` takes locators to cover, and `style` applies screenshot-only
+CSS. Omitted options keep Playwright's own defaults. A resolved `check` runs
+before capture and sets `checked: true`; this records callback completion, even
+for a no-op, not proof that an assertion ran. A thrown callback saves no shot. `artifact(name,
 { body, contentType })` also accepts `path` instead of `body`; supply exactly
 one and an explicit MIME type. Its gallery preview is escaped and capped at
 256 KiB, with the full file downloadable. `shot()` defaults to a full-page image;
 Playwright's `page.screenshot()` defaults to the viewport.
+
+For a more repeatable capture, opt in to Playwright's screenshot assertion
+settings when needed:
+
+```ts
+await shot(page, 'stable-cart', {
+  animations: 'disabled',
+  caret: 'hide',
+})
+```
+
+[`toHaveScreenshot()`](https://playwright.dev/docs/api/class-pageassertions#page-assertions-to-have-screenshot)
+defaults to disabled animations and a hidden caret. By comparison,
+[`page.screenshot()`](https://playwright.dev/docs/api/class-page#page-screenshot)
+defaults to allowed animations and already hides the caret. This recipe changes
+the animation setting; it does not add screenshot assertion retries or baselines.
 
 The manifest uses the loaded `.shots.ts` file as the spec identity, including
 tests registered by imported helpers. Shot names remain single file-name
