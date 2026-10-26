@@ -14,6 +14,7 @@ import {
   type GalleryShot,
 } from './model.js'
 import { renderCompareHeader, renderComparePairChunks } from './render-compare.js'
+import { compareProvenance } from './provenance.js'
 
 export interface CompareGenerationOptions {
   outputFile?: string
@@ -95,6 +96,7 @@ export function generateCompareGallery(
     throw new Error('threshold must be between 0 and 1')
   const a = loadGalleryModel(aRun, false),
     b = loadGalleryModel(bRun, false)
+  const provenance = compareProvenance(a.manifest, b.manifest)
   const ignore = [...new Set(options.ignore ?? [])].sort()
   const artifactKeys = new Map<string, Map<string, { spec: string; name: string }>>()
   for (const entry of [...a.manifest.artifacts, ...b.manifest.artifacts]) {
@@ -199,6 +201,7 @@ export function generateCompareGallery(
       },
       counts: model.counts,
       gate,
+      provenance,
       pairs: model.pairs.map((pair, index) => ({
         kind: pair.kind,
         spec: pair.spec,
@@ -281,7 +284,10 @@ export function generateCompareGallery(
     staged.push({ file: outputFile, temp: htmlTemp })
     const fd = fs.openSync(htmlTemp, 'a')
     try {
-      writeAll(fd, renderCompareHeader(model, gate.failOnChange, gate, options.strict ?? false))
+      writeAll(
+        fd,
+        renderCompareHeader(model, gate.failOnChange, gate, options.strict ?? false, provenance),
+      )
       const input = fs.openSync(bodyTemp, 'r')
       try {
         const buffer = Buffer.alloc(64 * 1024)

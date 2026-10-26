@@ -819,6 +819,7 @@ function expectPackInventory(): void {
       'dist/gallery/generate.js',
       'dist/gallery/model.js',
       'dist/gallery/pixels.js',
+      'dist/gallery/provenance.js',
       'dist/gallery/render-compare.js',
       'dist/gallery/render.js',
       'dist/gallery/resolve.js',
