@@ -145,6 +145,7 @@ dialog::backdrop { background: rgb(0 0 0 / 72%); }
 }
 .debug.active { display: block; }
 footer { margin: 26px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); }
+footer .source { margin: 8px 0 0; font-size: .9em; overflow-wrap: anywhere; }
 @media (max-width: 760px) {
   .shell { padding: 10px; }
   .topbar { padding: 16px; }
