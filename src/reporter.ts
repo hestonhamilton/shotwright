@@ -58,18 +58,29 @@ export default class ShotwrightReporter implements Reporter {
     const prefixes = new Map<string, string>()
     try {
       for (const [id, { test, result: attempt }] of this.finals) {
+        let fileSuite = test.parent
+        while (fileSuite.parent && fileSuite.type !== 'file') fileSuite = fileSuite.parent
         const spec = path
-          .relative(test.parent.project()?.testDir ?? '', test.location.file)
+          .relative(
+            test.parent.project()?.testDir ?? '',
+            fileSuite.location?.file ?? test.location.file,
+          )
           .split(path.sep)
           .join('/')
         const project = test.parent.project()?.name ?? ''
         const title = test.title
+        const ancestors: string[] = []
+        for (let suite = test.parent; suite && suite.type !== 'file'; suite = suite.parent!) {
+          if (suite.type === 'describe') ancestors.unshift(suite.title)
+          if (!suite.parent) break
+        }
         const errorMessage = attempt.error?.message
           ?.replace(new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g'), '')
           .split('\n')[0]
         tests.push({
           id,
           title,
+          titlePath: [...ancestors, title],
           spec,
           project,
           status: attempt.status,
@@ -173,7 +184,7 @@ export default class ShotwrightReporter implements Reporter {
       throw error
     }
     if (
-      result.status === 'passed' &&
+      manifest.status === 'passed' &&
       manifest.publication.gallery.ok &&
       manifest.publication.evidence.ok
     )
@@ -192,6 +203,7 @@ export default class ShotwrightReporter implements Reporter {
       ].filter(Boolean)
       throw new Error(`shotwright: ${failures.join('; ')}`)
     }
+    if (manifest.runError) throw new Error(`shotwright: ${manifest.runError.message}`)
   }
   async onExit(): Promise<void> {
     const runDir = process.env.SHOTWRIGHT_RUN_DIR

@@ -143,15 +143,20 @@ describe('assembleManifest', () => {
     }
   })
 
-  it('duplicate within a spec is a run-level error', () => {
-    expect(() =>
-      assembleManifest(
-        input([
-          sidecar({ name: 'dup', spec: 'a.shots.ts' }),
-          sidecar({ name: 'dup', spec: 'a.shots.ts' }),
-        ]),
-      ),
-    ).toThrow(/duplicate shot name "dup"/)
+  it('late duplicate omits ambiguous captures and fails the run', () => {
+    const result = assembleManifest(
+      input([
+        sidecar({ name: 'dup', spec: 'a.shots.ts' }),
+        sidecar({ name: 'dup', spec: 'a.shots.ts' }),
+        sidecar({ name: 'kept', spec: 'a.shots.ts' }),
+      ]),
+    )
+    expect(result.shots.map((shot) => shot.name)).toEqual(['kept'])
+    expect(result.status).toBe('failed')
+    expect(result.runError).toEqual({
+      code: 'DUPLICATE_SHOT',
+      message: 'Duplicate shot identity found during manifest assembly',
+    })
   })
 
   it.each([

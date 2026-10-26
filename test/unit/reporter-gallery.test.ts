@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -9,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { writeSidecar } from '../../src/manifest.js'
 import ShotwrightReporter from '../../src/reporter.js'
 import { createRunDir, updateLatestSymlink } from '../../src/runs.js'
+import { listRuns } from '../../src/runs.js'
 import { makePng } from '../fixtures/png.js'
 
 const tmpDirs: string[] = []
@@ -158,6 +160,82 @@ describe('reporter identity layout', () => {
 })
 
 describe('ShotwrightReporter gallery publication', () => {
+  it('publishes a Playwright-passed late duplicate as one structural failed run', async () => {
+    const outputDir = tmpDir()
+    const prior = createRunDir(outputDir)
+    updateLatestSymlink(outputDir, prior.runId)
+    const run = prepareRun(outputDir)
+    writeSidecar(run.runDir, {
+      kind: 'shot',
+      checked: false,
+      retry: 0,
+      name: 'example',
+      spec: 'home.shots.ts',
+      file: 'shots/home/example.png',
+      viewport: { width: 1440, height: 960 },
+      deviceScaleFactor: 2,
+      fullPage: true,
+      capturedAt: '2026-07-29T00:00:00.000Z',
+      durationMs: 1,
+      testId: 'test-id',
+    })
+    const safe = 'shots/home/safe.png'
+    fs.writeFileSync(path.join(run.runDir, safe), makePng(40, 30))
+    writeSidecar(run.runDir, {
+      kind: 'shot',
+      checked: false,
+      retry: 0,
+      name: 'safe',
+      spec: 'home.shots.ts',
+      file: safe,
+      viewport: { width: 1440, height: 960 },
+      deviceScaleFactor: 2,
+      fullPage: true,
+      capturedAt: '2026-07-29T00:00:01.000Z',
+      durationMs: 1,
+      testId: 'test-id',
+    })
+    await expect(endRun(run.runDir, 'passed')).rejects.toThrow(/Duplicate shot identity/)
+    const manifest = JSON.parse(fs.readFileSync(path.join(run.runDir, 'manifest.json'), 'utf8'))
+    expect(manifest.status).toBe('failed')
+    expect(manifest.runError).toEqual({
+      code: 'DUPLICATE_SHOT',
+      message: 'Duplicate shot identity found during manifest assembly',
+    })
+    expect(manifest.shots.map((entry: { name: string }) => entry.name)).toEqual(['safe'])
+    expect(fs.existsSync(path.join(run.runDir, 'shots/home/example.png'))).toBe(false)
+    const gallery = fs.readFileSync(path.join(run.runDir, 'gallery.html'), 'utf8')
+    expect(gallery).toContain('Duplicate shot identity found during manifest assembly')
+    expect(gallery).not.toContain(outputDir)
+    expect(listRuns(outputDir).find((entry) => entry.runId === run.runId)).toMatchObject({
+      status: 'failed',
+      runError: { message: 'Duplicate shot identity found during manifest assembly' },
+    })
+    const config = path.resolve('test/fixtures/contract-consumer/shots.config.ts')
+    const cli = path.resolve('dist/cli.js')
+    const fixture = path.dirname(config)
+    const env = { ...process.env, CONTRACT_OUTPUT_DIR: outputDir }
+    const textRuns = spawnSync(process.execPath, [cli, 'runs', '--config', config], {
+      cwd: fixture,
+      env,
+      encoding: 'utf8',
+    })
+    expect(textRuns.status, textRuns.stderr).toBe(0)
+    expect(textRuns.stdout).toContain('Duplicate shot identity found during manifest assembly')
+    expect(textRuns.stdout).not.toContain(outputDir)
+    const jsonRuns = spawnSync(process.execPath, [cli, 'runs', '--config', config, '--json'], {
+      cwd: fixture,
+      env,
+      encoding: 'utf8',
+    })
+    expect(jsonRuns.status, jsonRuns.stderr).toBe(0)
+    const runError = JSON.parse(jsonRuns.stdout).find(
+      (entry: { runId: string }) => entry.runId === run.runId,
+    ).runError
+    expect(runError).toEqual(manifest.runError)
+    expect(JSON.stringify(runError)).not.toContain(outputDir)
+    expect(fs.readlinkSync(path.join(outputDir, 'latest'))).toBe(prior.runId)
+  })
   it('publishes manifest and gallery atomically, then advances latest for a passed result', async () => {
     const outputDir = tmpDir()
     const run = prepareRun(outputDir)

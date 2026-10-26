@@ -776,10 +776,10 @@ async function runs(argv: string[]): Promise<number> {
   const rows = listRuns(await probeOutputDir(config, process.cwd(), {}, 'runs'))
   if (json) console.log(JSON.stringify(rows, null, 2))
   else {
-    console.log('id\tstarted\tstatus\tpublication\tshots')
+    console.log('id\tstarted\tstatus\tpublication\tshots\treason')
     for (const row of rows) {
       console.log(
-        `${row.runId}\t${row.startedAt ?? '-'}\t${row.status}\t${formatPublication(row)}\t${row.shotCount ?? '-'}`,
+        `${row.runId}\t${row.startedAt ?? '-'}\t${row.status}\t${formatPublication(row)}\t${row.shotCount ?? '-'}\t${row.runError?.message ?? '-'}`,
       )
     }
   }

@@ -19,6 +19,7 @@ export interface RunListing {
   shotCount: number | null
   startedAt: string | null
   publication: Manifest['publication'] | null
+  runError: Manifest['runError']
 }
 
 function runTimestamp(runId: string): number | null {
@@ -51,6 +52,7 @@ export function listRuns(outputDir: string): RunListing[] {
       shotCount: null,
       startedAt: null,
       publication: null,
+      runError: null,
     }
     try {
       if (fs.lstatSync(path.join(runDir, 'manifest.json')).isSymbolicLink()) return [row]
@@ -61,6 +63,7 @@ export function listRuns(outputDir: string): RunListing[] {
         status: manifest.status,
         shotCount: manifest.shots.length,
         startedAt: manifest.startedAt,
+        runError: manifest.runError,
         publication:
           (raw as { manifestVersion: number }).manifestVersion === 1 ? null : manifest.publication,
       }

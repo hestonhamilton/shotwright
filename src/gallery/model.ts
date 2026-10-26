@@ -189,9 +189,19 @@ export function validateManifest(value: unknown, expectedRunId?: string): Manife
             state = string(t.status, `${label}.status`)
           if (!['passed', 'failed', 'timedOut', 'skipped', 'interrupted'].includes(state))
             throw new GalleryManifestError(`${label}.status invalid`)
+          const title = string(t.title, `${label}.title`)
+          const titlePath =
+            t.titlePath === undefined
+              ? [title]
+              : array(t.titlePath, `${label}.titlePath`).map((part, j) =>
+                  string(part, `${label}.titlePath[${j}]`),
+                )
+          if (!titlePath.length || titlePath.some((part) => !part) || titlePath.at(-1) !== title)
+            throw new GalleryManifestError(`${label}.titlePath must be nonempty and end with title`)
           return {
             id: string(t.id, `${label}.id`),
-            title: string(t.title, `${label}.title`),
+            title,
+            titlePath,
             spec: string(t.spec, `${label}.spec`),
             project: string(t.project, `${label}.project`),
             status: state as Manifest['tests'][number]['status'],
@@ -243,6 +253,19 @@ export function validateManifest(value: unknown, expectedRunId?: string): Manife
             }),
           }
         })
+  const runError =
+    version === 1 || candidate.runError === undefined || candidate.runError === null
+      ? null
+      : record(candidate.runError, 'runError')
+  if (
+    runError !== null &&
+    (string(runError.code, 'runError.code') !== 'DUPLICATE_SHOT' ||
+      string(runError.message, 'runError.message') !==
+        'Duplicate shot identity found during manifest assembly')
+  )
+    throw new GalleryManifestError('runError is invalid')
+  if (runError !== null && status !== 'failed')
+    throw new GalleryManifestError('runError requires failed status')
   return {
     manifestVersion: MANIFEST_VERSION,
     runId,
@@ -256,6 +279,13 @@ export function validateManifest(value: unknown, expectedRunId?: string): Manife
       trace: boolean(flags.trace, 'flags.trace'),
     },
     status: status as Manifest['status'],
+    runError:
+      runError === null
+        ? null
+        : {
+            code: 'DUPLICATE_SHOT',
+            message: 'Duplicate shot identity found during manifest assembly',
+          },
     publication: {
       gallery: publication(pub.gallery, 'publication.gallery'),
       evidence: publication(pub.evidence, 'publication.evidence'),

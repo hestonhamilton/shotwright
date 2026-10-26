@@ -29,6 +29,7 @@ export interface ShotEntry {
 export interface TestEntry {
   id: string
   title: string
+  titlePath?: string[]
   spec: string
   project: string
   status: TestStatus
@@ -61,6 +62,7 @@ export interface Manifest {
   playwrightVersion: string
   flags: { only: string[]; video: boolean; trace: boolean }
   status: RunnerStatus
+  runError?: { code: string; message: string } | null
   publication: { gallery: PublicationResult; evidence: PublicationResult }
   tests: TestEntry[]
   shots: ShotEntry[]
@@ -133,7 +135,11 @@ function validateSidecar(value: unknown, index: number, final: Map<string, numbe
     !sidecar.name ||
     sidecar.name === '.' ||
     sidecar.name === '..' ||
-    /[/\\\0]/.test(sidecar.name)
+    (sidecar.kind === 'shot'
+      ? /[/\\\0]/.test(sidecar.name)
+      : sidecar.name
+          .split('/')
+          .some((part) => !part || part === '.' || part === '..' || /[\\\0]/.test(part)))
   )
     invalid('invalid name')
   if (
@@ -217,11 +223,20 @@ export function assembleManifest(input: AssembleInput): Manifest {
   const selected = sidecars.filter((s) => final.get(s.testId) === s.retry)
   const seenShots = new Set<string>(),
     seenArtifacts = new Set<string>()
+  const duplicateShots = new Set<string>()
+  for (const s of selected)
+    if (s.kind === 'shot') {
+      const key = shotKey(s.spec, s.name)
+      if (seenShots.has(key)) duplicateShots.add(key)
+      seenShots.add(key)
+    }
+  seenShots.clear()
   const shots: ShotEntry[] = [],
     artifacts: ArtifactEntry[] = []
   for (const s of selected) {
     const key = shotKey(s.spec, s.name)
     const seen = s.kind === 'shot' ? seenShots : seenArtifacts
+    if (s.kind === 'shot' && duplicateShots.has(key)) continue
     if (seen.has(key))
       throw new Error(`shotwright: duplicate ${s.kind} name "${s.name}" in ${s.spec}`)
     seen.add(key)
@@ -244,7 +259,11 @@ export function assembleManifest(input: AssembleInput): Manifest {
       })
     }
   }
-  const retained = new Set(selected.map((s) => s.file))
+  const retained = new Set(
+    selected
+      .filter((s) => s.kind !== 'shot' || !duplicateShots.has(shotKey(s.spec, s.name)))
+      .map((s) => s.file),
+  )
   for (const s of sidecars) if (!retained.has(s.file)) removeStaleCapture(input.runDir, s.file)
   shots.sort(
     (a, b) =>
@@ -266,7 +285,13 @@ export function assembleManifest(input: AssembleInput): Manifest {
     shotwrightVersion: input.shotwrightVersion,
     playwrightVersion: input.playwrightVersion,
     flags: input.flags,
-    status: input.status,
+    status: duplicateShots.size ? 'failed' : input.status,
+    runError: duplicateShots.size
+      ? {
+          code: 'DUPLICATE_SHOT',
+          message: 'Duplicate shot identity found during manifest assembly',
+        }
+      : null,
     publication: input.publication,
     tests: [...input.tests].sort(
       (a, b) =>

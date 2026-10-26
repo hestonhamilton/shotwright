@@ -105,6 +105,17 @@ one and an explicit MIME type. Its gallery preview is escaped and capped at
 256 KiB, with the full file downloadable. `shot()` defaults to a full-page image;
 Playwright's `page.screenshot()` defaults to the viewport.
 
+The manifest uses the loaded `.shots.ts` file as the spec identity, including
+tests registered by imported helpers. Shot names remain single file-name
+segments and must be unique per spec; a duplicate fails its test before a new
+screenshot is taken. Artifact names may contain safe relative subpaths such as
+`logs/network.json`. Manifest v2 records each test's `titlePath` from enclosing
+`test.describe()` titles through its own title. Older v2 manifests are read with
+`[title]` as the path.
+Artifact and shot writes reject traversal and symlinks present at write time.
+The output directory is trusted against concurrent path changes, as with
+Playwright's `outputDir`.
+
 ## Commands
 
 ```
