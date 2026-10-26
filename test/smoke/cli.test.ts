@@ -1454,6 +1454,53 @@ describe('shotwright run against the demo app', () => {
     }
   }, 120_000)
 
+  it('exits 2 for compare usage errors, distinct from the --fail-on-change exit 1', () => {
+    const run = (...args: string[]): SpawnSyncReturns<string> =>
+      spawnSync(process.execPath, ['dist/cli.js', 'compare', ...args], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 60_000,
+      })
+    const cases: Array<[string, string[], RegExp]> = [
+      ['out-of-range threshold', ['a', 'b', '--threshold', '1.5'], /--threshold must be/],
+      ['unknown flag', ['a', 'b', '--wat'], /unknown argument: --wat/],
+      [
+        'duplicate threshold',
+        ['a', 'b', '--threshold', '0.2', '--threshold', '0.3'],
+        /duplicate argument: --threshold/,
+      ],
+      ['missing selector', ['a'], /exactly two run selectors/],
+    ]
+    for (const [, args, message] of cases) {
+      const result = run(...args)
+      expect(result.status).toBe(2)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toMatch(/^shotwright compare: /)
+      expect(result.stderr).toMatch(message)
+    }
+
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-usage-'))
+    try {
+      const copy = path.join(scratch, 'b', unfilteredRun.manifest.runId)
+      fs.cpSync(unfilteredRun.runDir, copy, { recursive: true })
+      const unmatched = run(
+        unfilteredRun.runDir,
+        copy,
+        '--config',
+        'demo/shots.config.ts',
+        '--output',
+        path.join(scratch, 'x.html'),
+        '--ignore',
+        'nope.shots.ts/missing',
+      )
+      expect(unmatched.stderr).toContain('nope.shots.ts/missing')
+      expect(unmatched.status).toBe(2)
+      expect(unmatched.stderr).toMatch(/^shotwright compare: /)
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true })
+    }
+  }, 120_000)
+
   it('gates similar only with --strict and exits only with --fail-on-change', () => {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-strict-'))
     try {

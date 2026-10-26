@@ -15,6 +15,7 @@ import {
   isLanExposure,
   isVersionRequest,
   misplacedSeparatorWarnings,
+  CompareUsageError,
   parseCompareArgs,
   parseGalleryArgs,
   parseRunArgs,
@@ -325,7 +326,15 @@ describe('parseCompareArgs', () => {
     ['missing config value', ['run-a', 'run-b', '--config']],
     ['unknown flag', ['run-a', 'run-b', '--wat']],
   ])('rejects %s', (_label, argv) => {
-    expect(() => parseCompareArgs(argv)).toThrow()
+    expect(() => parseCompareArgs(argv)).toThrow(CompareUsageError)
+  })
+
+  it('throws the typed usage error for threshold and duplicate-flag mistakes', () => {
+    for (const value of ['-0.1', '1.5', 'NaN', 'abc', ''])
+      expect(() => parseCompareArgs(['a', 'b', '--threshold', value])).toThrow(CompareUsageError)
+    expect(() => parseCompareArgs(['a', 'b', '--threshold'])).toThrow(CompareUsageError)
+    expect(() => parseCompareArgs(['a', 'b', '--strict', '--strict'])).toThrow(CompareUsageError)
+    expect(() => parseCompareArgs(['a', 'b', '--wat'])).toThrow(/unknown argument: --wat/)
   })
 
   it.each([
@@ -604,7 +613,7 @@ describe('helpFor', () => {
       '[--ignore <spec.shots.ts/name>]... [--threshold <0..1>] [--strict] [--fail-on-change]',
     )
     expect(helpFor(['help', 'compare'])).toContain(
-      'Exits 0 after writing the page unless --fail-on-change',
+      'Exits 0 after writing the page; 1 if a gated pair remains under --fail-on-change; 2 on any error, usage or runtime',
     )
     expect(helpFor(['gallery', '--help'])).toContain('[--lan] [--include-traces]')
     expect(helpFor(['gallery', '--help'])).toContain('withheld on a non-loopback bind')
@@ -802,6 +811,28 @@ describe('default compare page ownership', () => {
       expect(fs.existsSync(path.join(root, 'compare', 'run-a.vs.run-b.compare.json'))).toBe(true)
     } finally {
       log.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('exits 2 for runtime failures: missing config, same run, unknown run', async () => {
+    const { root, a, b, config } = runs()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const probe = async () => path.join(root, 'missing')
+    try {
+      expect(await compare([a, b, '--config', path.join(root, 'nope.ts')], probe)).toBe(2)
+      expect(error).toHaveBeenLastCalledWith(
+        expect.stringMatching(/^shotwright compare: config not found: /),
+      )
+      expect(await compare([a, a, '--config', config], probe)).toBe(2)
+      expect(error).toHaveBeenLastCalledWith(
+        expect.stringMatching(/^shotwright compare: A and B resolve to the same run/),
+      )
+      expect(await compare([a, 'no-such-run', '--config', config], probe)).toBe(2)
+      expect(error).toHaveBeenLastCalledWith(expect.stringMatching(/^shotwright compare: /))
+      expect(error.mock.calls.at(-1)![0]).not.toMatch(/^shotwright compare: shotwright compare:/)
+    } finally {
+      error.mockRestore()
       fs.rmSync(root, { recursive: true, force: true })
     }
   })

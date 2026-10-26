@@ -195,6 +195,13 @@ shotwright init     [--dry-run] [--package-manager npm|pnpm|yarn]
   unignored `similar` pairs. By default a completed comparison exits 0;
   `--fail-on-change` exits 1 when a gated pair remains. The terminal, HTML and
   JSON report measured non-parity, ignored non-parity and gated counts separately.
+
+  | Exit | Meaning |
+  | ---- | ------- |
+  | 0 | The comparison was written (and, with `--fail-on-change`, no gated pair remains). |
+  | 1 | A gated pair remains under `--fail-on-change` (only). |
+  | 2 | Any error. Usage: bad, duplicate or unknown flag, wrong number of run selectors, `--threshold` outside 0..1, an unmatched `--ignore`. Runtime: missing config, an unknown run or one without a readable manifest, both selectors resolving to the same run, an `--output` inside a compared run. |
+
   `latest` resolves to the **last fully passed run**, not simply the most recent
   one — comparing against a run that failed halfway is a comparison against
   nothing. (It is a POSIX symlink; Windows support is not in v1.)

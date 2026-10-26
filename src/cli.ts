@@ -77,7 +77,7 @@ export interface CompareArgs {
 
 const RUN_USAGE = `Usage: shotwright run [--only a,b] [--video] [--trace] [--run-dir-file <path>] [--config <path>] [-- <playwright test args>]. The run-dir-file must be unique per invocation.`
 const GALLERY_USAGE = `Usage: shotwright gallery [run-id|--last] [--config <path>] [--host <host>] [--port <port>] [--lan] [--include-traces]. Traces are withheld on a non-loopback bind unless --include-traces is given.`
-const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file.html>] [--ignore <spec.shots.ts/name>]... [--threshold <0..1>] [--strict] [--fail-on-change]. Exits 0 after writing the page unless --fail-on-change is given and a gated pair exists.`
+const COMPARE_USAGE = `Usage: shotwright compare <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file.html>] [--ignore <spec.shots.ts/name>]... [--threshold <0..1>] [--strict] [--fail-on-change]. Exits 0 after writing the page; 1 if a gated pair remains under --fail-on-change; 2 on any error, usage or runtime.`
 const RUNS_USAGE = `Usage: shotwright runs [--config <path>] [--json]`
 const INIT_USAGE = `Usage: shotwright init [--dry-run] [--package-manager npm|pnpm|yarn]`
 const GLOBAL_USAGE = `Usage: shotwright --help | --version`
@@ -192,10 +192,23 @@ function parseRunPassthrough(argv: string[], args: RunArgs): void {
   }
 }
 
-function requireValue(argv: string[], index: number, flag: string): string {
+function requireValue(
+  argv: string[],
+  index: number,
+  flag: string,
+  usageError: (message: string) => Error = (message) => new Error(message),
+): string {
   const value = argv[index]
-  if (!value || value.startsWith('--')) throw new Error(`${flag} requires a value`)
+  if (!value || value.startsWith('--')) throw usageError(`${flag} requires a value`)
   return value
+}
+
+/** A malformed `shotwright compare` command line; `compare()` exits 2 for it. */
+export class CompareUsageError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CompareUsageError'
+  }
 }
 
 function validateHost(host: string): void {
@@ -273,6 +286,7 @@ export function parseGalleryArgs(argv: string[]): GalleryArgs {
 }
 
 export function parseCompareArgs(argv: string[]): CompareArgs {
+  const usage = (message: string): Error => new CompareUsageError(message)
   const selectors: string[] = []
   let config = 'shots.config.ts'
   let sawConfig = false
@@ -286,41 +300,41 @@ export function parseCompareArgs(argv: string[]): CompareArgs {
   for (let i = 0; i < argv.length; i++) {
     const argument = argv[i]!
     if (argument === '--config') {
-      if (sawConfig) throw new Error('duplicate argument: --config')
+      if (sawConfig) throw new CompareUsageError('duplicate argument: --config')
       sawConfig = true
-      config = requireValue(argv, ++i, argument)
+      config = requireValue(argv, ++i, argument, usage)
     } else if (argument === '--output') {
-      if (output !== null) throw new Error('duplicate argument: --output')
-      output = requireValue(argv, ++i, argument)
+      if (output !== null) throw new CompareUsageError('duplicate argument: --output')
+      output = requireValue(argv, ++i, argument, usage)
     } else if (argument === '--fail-on-change') {
-      if (failOnChange) throw new Error('duplicate argument: --fail-on-change')
+      if (failOnChange) throw new CompareUsageError('duplicate argument: --fail-on-change')
       failOnChange = true
     } else if (argument === '--ignore') {
-      ignore.push(requireValue(argv, ++i, argument))
+      ignore.push(requireValue(argv, ++i, argument, usage))
     } else if (argument === '--threshold') {
-      if (threshold !== undefined) throw new Error('duplicate argument: --threshold')
-      const value = requireValue(argv, ++i, argument)
+      if (threshold !== undefined) throw new CompareUsageError('duplicate argument: --threshold')
+      const value = requireValue(argv, ++i, argument, usage)
       threshold = Number(value)
       if (value.trim() === '' || !Number.isFinite(threshold) || threshold < 0 || threshold > 1)
-        throw new Error('--threshold must be a number between 0 and 1')
+        throw new CompareUsageError('--threshold must be a number between 0 and 1')
     } else if (argument === '--strict') {
-      if (strict) throw new Error('duplicate argument: --strict')
+      if (strict) throw new CompareUsageError('duplicate argument: --strict')
       strict = true
     } else if (argument === '--last') {
-      if (last) throw new Error('duplicate argument: --last')
+      if (last) throw new CompareUsageError('duplicate argument: --last')
       last = true
       selectors.push('--last')
     } else if (argument.startsWith('-')) {
-      throw new Error(`unknown argument: ${argument}\n${COMPARE_USAGE}`)
+      throw new CompareUsageError(`unknown argument: ${argument}\n${COMPARE_USAGE}`)
     } else if (selectors.length === 2) {
-      throw new Error(`unexpected positional argument: ${argument}\n${COMPARE_USAGE}`)
+      throw new CompareUsageError(`unexpected positional argument: ${argument}\n${COMPARE_USAGE}`)
     } else {
       selectors.push(argument)
     }
   }
 
   if (selectors.length !== 2) {
-    throw new Error(`compare requires exactly two run selectors\n${COMPARE_USAGE}`)
+    throw new CompareUsageError(`compare requires exactly two run selectors\n${COMPARE_USAGE}`)
   }
   return {
     a: selectors[0]!,
@@ -791,12 +805,26 @@ export async function compare(
   outputDirProbe: (config: string) => Promise<string> = (config) =>
     probeOutputDir(config, process.cwd(), {}, 'compare'),
 ): Promise<number> {
-  const args = parseCompareArgs(argv)
+  // diff(1) contract: 1 is only "a gated pair remains"; any failure is 2.
+  try {
+    return await runCompare(parseCompareArgs(argv), outputDirProbe)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const detail = message.replace(/^shotwright(?: (?:run|runs|gallery|compare|init))?: /, '')
+    console.error(`shotwright compare: ${detail}`)
+    return 2
+  }
+}
+
+async function runCompare(
+  args: CompareArgs,
+  outputDirProbe: (config: string) => Promise<string>,
+): Promise<number> {
   if (!fs.existsSync(args.config)) {
     console.error(
       `shotwright compare: config not found: ${args.config} — pass --config or create shots.config.ts`,
     )
-    return 1
+    return 2
   }
 
   const outputDir = await outputDirProbe(args.config)
