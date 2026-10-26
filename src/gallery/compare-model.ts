@@ -37,6 +37,20 @@ export interface ComparePair {
   diffBytes?: number
 }
 
+/**
+ * The one gate predicate (ADR 0022): a pair counts toward the gate when it is not ignored and is
+ * either non-parity or, under `--strict`, `similar`. Header counts, compare.json and card markers
+ * all derive from this so they cannot disagree.
+ */
+export function isGatedPair(
+  pair: Pick<ComparePair, 'ignored' | 'state'>,
+  strict: boolean,
+): boolean {
+  if (pair.ignored) return false
+  if (pair.state === 'identical') return false
+  return pair.state !== 'similar' || strict
+}
+
 export interface GalleryCompareModel extends Omit<CompareModel, 'pairs'> {
   pairs: ComparePair[]
   options: CompareOptions

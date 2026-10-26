@@ -99,7 +99,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
       `<p class="provenance">Render environment provenance incomplete: ${summary.provenance.unavailable.join('; ')}</p>`,
     )
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"f1700aa91f29e5874a2bfb818aa1d9106c29f0a0226098a6534381d80d68b0b0"`,
+      `"c0a1909e104dc59edf83abb463e263d5d56841b5e291568f8705dc1703a40e4a"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
@@ -200,6 +200,91 @@ it('links Download A / Download B to the sibling files for text, JSON and binary
       'Download A ../run-a/data/page.html',
       'Download B ../run-b/data/page.html',
     ])
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+it('marks exactly the cards the gate counts, derived from the same predicate as the header', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-gated-'))
+  try {
+    const write = (id: string): string => {
+      const dir = path.join(root, id)
+      fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+      fs.mkdirSync(path.join(dir, 'data'))
+      const shots = ['same', 'tint'].map((name) => {
+        const image = new PNG({ width: 2, height: 2 })
+        image.data.fill(name === 'tint' && id === 'b' ? 1 : 0)
+        fs.writeFileSync(path.join(dir, `shots/${name}.png`), PNG.sync.write(image))
+        return makeShot({ name, spec: 'example.shots.ts', file: `shots/${name}.png` })
+      })
+      const artifacts = ['kept', 'noisy'].map((name) => {
+        fs.writeFileSync(path.join(dir, 'data', `${name}.txt`), `${name}-${id}`)
+        return {
+          spec: 'example.shots.ts',
+          name,
+          file: `data/${name}.txt`,
+          contentType: 'text/plain',
+          bytes: name.length + 2,
+          testId: 'test-note',
+        }
+      })
+      fs.writeFileSync(
+        path.join(dir, 'manifest.json'),
+        JSON.stringify(makeManifest({ runId: id, shots, artifacts })),
+      )
+      return dir
+    }
+    const a = write('a'),
+      b = write('b')
+    const cards = (html: string): string[] =>
+      html
+        .split('<article ')
+        .slice(1)
+        .map((card) => card.slice(0, card.indexOf('</header>')))
+    const marked = (html: string): number => (html.match(/ · counted by gate</g) ?? []).length
+    const gatedCount = (html: string): number => Number(/gated pairs (\d+)/.exec(html)?.[1])
+    const find = (html: string, name: string): string =>
+      cards(html).find((card) => card.includes(`/ ${name}</h2>`))!
+
+    const strict = fs.readFileSync(
+      generateCompareGallery(a, b, {
+        strict: true,
+        ignore: ['example.shots.ts/noisy'],
+        outputFile: path.join(root, 'strict.html'),
+      }).outputFile,
+      'utf8',
+    )
+    expect(find(strict, 'tint')).toContain('shot · similar · counted by gate')
+    expect(find(strict, 'tint')).toContain('state-similar gated')
+    expect(find(strict, 'kept')).toContain('artifact · changed · counted by gate')
+    expect(find(strict, 'noisy')).toContain('artifact · changed · ignored for gate')
+    expect(find(strict, 'noisy')).not.toContain('counted by gate')
+    expect(find(strict, 'same')).not.toContain('counted by gate')
+    expect(marked(strict)).toBe(gatedCount(strict))
+    expect(gatedCount(strict)).toBe(2)
+
+    const lenient = fs.readFileSync(
+      generateCompareGallery(a, b, {
+        ignore: ['example.shots.ts/noisy'],
+        outputFile: path.join(root, 'lenient.html'),
+      }).outputFile,
+      'utf8',
+    )
+    expect(find(lenient, 'tint')).not.toContain('counted by gate')
+    expect(find(lenient, 'tint')).not.toContain(' gated')
+    expect(marked(lenient)).toBe(gatedCount(lenient))
+    expect(gatedCount(lenient)).toBe(1)
+
+    // The in-memory renderer takes the same flag and agrees with the generator.
+    const model = buildCompareModel(loadGalleryModel(a), loadGalleryModel(b), {
+      aRunDir: a,
+      bRunDir: b,
+    })
+    for (const strictFlag of [false, true]) {
+      const html = renderCompare(model, false, {}, strictFlag)
+      expect(marked(html)).toBe(gatedCount(html))
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
