@@ -1,5 +1,7 @@
 # Dependencies / build
 node_modules/
+# pnpm puts its store at the workspace mount root on the forge runner; prettier would scan it.
+.pnpm-store/
 dist/
 
 # Harness output — always regenerated, never committed
