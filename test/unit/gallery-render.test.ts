@@ -142,6 +142,55 @@ describe('deterministic gallery publication', () => {
 })
 
 describe('gallery rendering', () => {
+  it('renders and searches linked nested titles, escapes them, and omits unlinked titles', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    const nested = shot('first', 'flow.shots.ts', 0, { testId: 'nested' })
+    const unlinked = shot('second', 'flow.shots.ts', 1, { testId: null })
+    const value = manifest('run', [nested, unlinked])
+    value.tests = [
+      {
+        id: 'nested',
+        title: 'leaf <script> & "quote"',
+        titlePath: ['Checkout <details>', "Review's order", 'leaf <script> & "quote"'],
+        spec: 'flow.shots.ts',
+        project: 'chromium',
+        status: 'passed',
+        retry: 0,
+        durationMs: 1,
+      },
+    ]
+    writeRun(runDir, value)
+    const html = renderGallery(loadGalleryModel(runDir))
+    expect(html).toContain(
+      '<p class="test-title">Checkout &lt;details&gt; › Review&#39;s order › leaf &lt;script&gt; &amp; &quot;quote&quot;</p>',
+    )
+    expect(html).toContain(
+      'data-search="first flow.shots.ts checkout &lt;details&gt; › review&#39;s order › leaf &lt;script&gt; &amp; &quot;quote&quot;"',
+    )
+    expect(html.match(/class="test-title"/g)).toHaveLength(1)
+    expect(html).not.toContain('<script> &')
+  })
+
+  it('uses the leaf title for a linked older v2 test', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    const value = manifest('run', [shot('first', 'flow.shots.ts', 0, { testId: 'legacy' })])
+    value.tests = [
+      {
+        id: 'legacy',
+        title: 'Old leaf',
+        spec: 'flow.shots.ts',
+        project: 'chromium',
+        status: 'passed',
+        retry: 0,
+        durationMs: 1,
+      },
+    ]
+    writeRun(runDir, value)
+    const html = renderGallery(loadGalleryModel(runDir))
+    expect(html).toContain('<p class="test-title">Old leaf</p>')
+    expect(html).toContain('data-search="first flow.shots.ts old leaf"')
+  })
+
   it('renders the five-shot fixture in manifest/spec order with complete metadata and one URI per shot', () => {
     const runDir = path.join(tmpDir(), 'run')
     writeRun(runDir, manifest('run', fiveShots()))

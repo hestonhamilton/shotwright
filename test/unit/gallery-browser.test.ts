@@ -456,3 +456,81 @@ it('keeps an artifact-only spec visible and its escaped preview and full-file li
     await page.close()
   }
 })
+
+it('shows nested test context on desktop and mobile and filters by describe title', async () => {
+  const runDir = path.join(root, 'w4-cards')
+  const captures = [
+    makeShot({
+      name: 'review-order',
+      spec: 'checkout.shots.ts',
+      file: 'shots/checkout.shots.ts/review-order.png',
+      testId: 'checkout',
+    }),
+    makeShot({
+      name: 'account-menu',
+      spec: 'account.shots.ts',
+      file: 'shots/account.shots.ts/account-menu.png',
+      testId: 'account',
+    }),
+  ]
+  for (const [index, entry] of captures.entries()) {
+    const file = path.join(runDir, entry.file)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, uniquePng(30 + index, 960, 620))
+  }
+  fs.writeFileSync(
+    path.join(runDir, 'manifest.json'),
+    JSON.stringify(
+      makeManifest({
+        runId: 'w4-cards',
+        shots: captures,
+        tests: [
+          {
+            id: 'checkout',
+            title: 'shows the complete shipping estimate after applying a promotion',
+            titlePath: [
+              'Checkout',
+              'Review and confirm an order with several delivery options',
+              'shows the complete shipping estimate after applying a promotion',
+            ],
+            spec: 'checkout.shots.ts',
+            project: 'chromium',
+            status: 'passed',
+            retry: 0,
+            durationMs: 1,
+          },
+          {
+            id: 'account',
+            title: 'opens the account menu',
+            titlePath: ['Account settings', 'opens the account menu'],
+            spec: 'account.shots.ts',
+            project: 'chromium',
+            status: 'passed',
+            retry: 0,
+            durationMs: 1,
+          },
+        ],
+      }),
+    ),
+  )
+  const url = pathToFileURL(generateGallery(runDir).galleryPath).href
+  const output = path.join('local')
+  fs.mkdirSync(output, { recursive: true })
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(url)
+    const title =
+      'Checkout › Review and confirm an order with several delivery options › shows the complete shipping estimate after applying a promotion'
+    expect(await page.locator('.test-title').first().textContent()).toBe(title)
+    await page.screenshot({ path: path.join(output, 'w4-cards-desktop.png'), fullPage: true })
+    await page.setViewportSize({ width: 390, height: 844 })
+    expect(await page.locator('.test-title').first().isVisible()).toBe(true)
+    await page.screenshot({ path: path.join(output, 'w4-cards-mobile.png'), fullPage: true })
+    await page.locator('#search').fill('Review and confirm an order')
+    expect(await page.locator('.card:not(.hidden)').count()).toBe(1)
+    expect(await page.locator('.card:not(.hidden) .test-title').textContent()).toBe(title)
+    await page.screenshot({ path: path.join(output, 'w4-search.png'), fullPage: true })
+  } finally {
+    await page.close()
+  }
+})

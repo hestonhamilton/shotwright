@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { GALLERY_CSS, GALLERY_SCRIPT } from './assets.js'
+import type { TestEntry } from '../manifest.js'
 import type { ArtifactReference, GalleryModel, GalleryShot, GallerySpec } from './model.js'
 import { validateRelativePath } from './model.js'
 
@@ -110,10 +111,12 @@ function renderCard(
   index: number,
   viewportKey: string,
   testStatus: string,
+  test: TestEntry | undefined,
 ): string {
   const entry = shot.entry
   const tags = `${viewportKey}${entry.fullPage ? '' : ' cropped'}`
-  const search = `${entry.name} ${entry.spec}`.toLowerCase()
+  const title = test?.titlePath?.join(' › ') ?? test?.title
+  const search = `${entry.name} ${entry.spec} ${title ?? ''}`.toLowerCase()
   const kind = entry.fullPage ? 'full page' : 'not full page'
   const image = shot.image
   const media =
@@ -144,6 +147,7 @@ function renderCard(
           ${media}
           <div class="card-body">
             <div class="card-title"><h3>${escapeHtml(entry.name)}</h3><span class="kind">${kind}</span><span class="badge test-status-${escapeHtml(testStatus)}">test: ${escapeHtml(testStatus)}</span>${entry.checked ? '<span class="badge">checked</span>' : ''}</div>
+            ${title === undefined ? '' : `<p class="test-title">${escapeHtml(title)}</p>`}
             <div class="meta"><span>${escapeHtml(viewportLabel(shot))}</span><span>${escapeHtml(deviceScaleFactorLabel(shot))}</span><span>${number(entry.durationMs)} ms</span>${derived}</div>
             ${actions}
             <details>
@@ -232,10 +236,13 @@ function renderSpec(
   startIndex: number,
   keyFor: (shot: GalleryShot) => string,
   testStatus: (shot: GalleryShot) => string,
+  testFor: (shot: GalleryShot) => TestEntry | undefined,
   dataArtifacts: string,
 ): string {
   const cards = spec.shots
-    .map((shot, index) => renderCard(shot, startIndex + index, keyFor(shot), testStatus(shot)))
+    .map((shot, index) =>
+      renderCard(shot, startIndex + index, keyFor(shot), testStatus(shot), testFor(shot)),
+    )
     .join('\n')
   const groups = artifactGroups(spec)
   const artifacts = groups.map(renderArtifactGroup).join('\n')
@@ -353,11 +360,11 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
         ]),
   ].join('\n')
   let shotIndex = 0
-  const statusById = new Map(manifest.tests.map((test) => [test.id, test.status]))
+  const testsById = new Map(manifest.tests.map((test) => [test.id, test]))
+  const testFor = (shot: GalleryShot): TestEntry | undefined =>
+    shot.entry.testId === null ? undefined : testsById.get(shot.entry.testId)
   const testStatus = (shot: GalleryShot): string =>
-    model.sourceManifestVersion === 1
-      ? 'unrecorded'
-      : (statusById.get(shot.entry.testId ?? '') ?? 'unknown')
+    model.sourceManifestVersion === 1 ? 'unrecorded' : (testFor(shot)?.status ?? 'unknown')
   const specs = model.specs
     .map((spec, specIndex) => {
       const rendered = renderSpec(
@@ -366,6 +373,7 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
         shotIndex,
         keyFor,
         testStatus,
+        testFor,
         renderDataArtifacts(model, runDir, spec.name),
       )
       shotIndex += spec.shots.length
@@ -438,7 +446,7 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
       </dl>
     </header>
     <section class="controls" aria-label="Gallery filters">
-      <label><span class="eyebrow">Find a shot</span><input id="search" class="search" type="search" placeholder="Name or spec, press / to focus"></label>
+      <label><span class="eyebrow">Find a shot</span><input id="search" class="search" type="search" placeholder="Shot, spec, or test title; press / to focus"></label>
       <div class="chips" aria-label="Viewport filters">${chips}</div>
       <div class="keyboard"><kbd>/</kbd> search · <kbd>Esc</kbd> clear · <kbd>Tab</kbd> actions. Every touch target is at least 44 px high.</div>
     </section>
