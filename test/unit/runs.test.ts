@@ -80,6 +80,23 @@ describe('publishManifest', () => {
     const { runDir } = createRunDir(out)
     expect(isCompleteRun(runDir)).toBe(false)
   })
+  it('an abandoned exclusive PNG claim still leaves the run incomplete', () => {
+    const output = tmpDir()
+    const prior = createRunDir(output)
+    updateLatestSymlink(output, prior.runId)
+    const { runDir, runId } = createRunDir(output)
+    fs.mkdirSync(path.join(runDir, 'shots/example'), { recursive: true })
+    const fd = fs.openSync(path.join(runDir, 'shots/example/claimed.png'), 'wx')
+    fs.closeSync(fd)
+    expect(listRuns(output).find((row) => row.runId === runId)).toMatchObject({
+      status: 'incomplete',
+      shotCount: null,
+    })
+    expect(fs.statSync(path.join(runDir, 'shots/example/claimed.png')).size).toBe(0)
+    expect(fs.existsSync(path.join(runDir, 'manifest.json'))).toBe(false)
+    expect(fs.existsSync(path.join(runDir, 'gallery.html'))).toBe(false)
+    expect(fs.readlinkSync(path.join(output, 'latest'))).toBe(prior.runId)
+  })
 })
 
 describe('updateLatestSymlink', () => {
@@ -167,5 +184,21 @@ describe('listRuns', () => {
       publication: { gallery: { ok: false, error: 'render failed' }, evidence: { ok: true } },
     })
     expect(formatPublication(row!)).toBe('gallery failed')
+  })
+
+  it('lists the sanitized structural failure reason without an output path', () => {
+    const output = tmpDir()
+    const { runDir, runId } = createRunDir(output)
+    publishManifest(runDir, fakeManifest(runId))
+    const value = fakeManifest(runId)
+    value.status = 'failed'
+    value.runError = {
+      code: 'DUPLICATE_SHOT',
+      message: 'Duplicate shot identity found during manifest assembly',
+    }
+    publishManifest(runDir, value)
+    const [row] = listRuns(output)
+    expect(row?.runError?.message).toBe('Duplicate shot identity found during manifest assembly')
+    expect(JSON.stringify(row?.runError)).not.toContain(output)
   })
 })

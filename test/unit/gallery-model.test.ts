@@ -66,11 +66,33 @@ function manifest(runId = 'run', shots: ShotEntry[] = [entry()]): Manifest {
 }
 
 describe('validateManifest', () => {
+  it('defaults old v2 title paths and validates present ancestor order and leaf', () => {
+    const value = {
+      ...manifest(),
+      tests: [
+        {
+          id: 't',
+          title: 'leaf',
+          spec: 'home.shots.ts',
+          project: 'shots',
+          status: 'passed',
+          retry: 0,
+          durationMs: 1,
+        },
+      ],
+    }
+    expect(validateManifest(value).tests[0]?.titlePath).toEqual(['leaf'])
+    const nested = { ...value, tests: [{ ...value.tests[0]!, titlePath: ['parent', 'leaf'] }] }
+    expect(validateManifest(nested).tests[0]?.titlePath).toEqual(['parent', 'leaf'])
+    expect(() =>
+      validateManifest({ ...value, tests: [{ ...value.tests[0], titlePath: ['wrong'] }] }),
+    ).toThrow(/titlePath/)
+  })
   it('accepts the complete v2 shape, including nullable fields and an empty run', () => {
     const value = manifest('run', [
       entry({ viewport: null, deviceScaleFactor: null, video: null, trace: null }),
     ])
-    expect(validateManifest(value, 'run')).toEqual(value)
+    expect(validateManifest(value, 'run')).toEqual({ ...value, runError: null })
     expect(validateManifest(manifest('run', []), 'run').shots).toEqual([])
   })
 

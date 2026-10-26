@@ -425,6 +425,7 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
         <span class="badge">${count(model.specs.length, 'spec')}</span>
         <span class="badge">${hasArtifacts ? 'Sibling artifacts grouped by identical manifest path' : 'Video and trace absent in this run'}</span>
       </div>
+      ${manifest.runError ? `<p class="artifact-warning" role="alert">${escapeHtml(manifest.runError.message)}</p>` : ''}
       <dl class="runfacts">
         <div><dt>Started</dt><dd>${escapeHtml(manifest.startedAt)}</dd></div>
         <div><dt>Finished</dt><dd>${escapeHtml(manifest.finishedAt)}</dd></div>

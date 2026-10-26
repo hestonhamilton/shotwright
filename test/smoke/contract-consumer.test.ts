@@ -43,6 +43,16 @@ function newest(): { dir: string; manifest: Manifest } {
   }
 }
 describe('real Playwright contract consumer', () => {
+  it('uses the loaded spec for a helper-registered nested test', () => {
+    const result = run(['--grep', 'helper registered capture'])
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    const { manifest } = newest()
+    expect(manifest.shots[0]).toMatchObject({
+      spec: 'loaded.shots.ts',
+      file: 'shots/loaded/helper-shot.png',
+    })
+    expect(manifest.tests[0]?.titlePath).toEqual(['helper group', 'helper registered capture'])
+  })
   it('writes v2 and allows the same name in two canonical specs with nested suffix layout', () => {
     const result = run(['--grep', 'same name'])
     expect(result.status, result.stderr).toBe(0)
@@ -69,15 +79,44 @@ describe('real Playwright contract consumer', () => {
     const result = run(['--grep', 'duplicate'])
     expect(result.status).not.toBe(0)
     expect(result.stdout + result.stderr).toContain('duplicate shot name')
-    const names = fs
-      .readdirSync(out)
-      .filter((x) => x !== 'latest')
-      .sort(
-        (a, b) =>
-          fs.statSync(path.join(out, a)).birthtimeMs - fs.statSync(path.join(out, b)).birthtimeMs,
-      )
-    expect(fs.existsSync(path.join(out, names.at(-1)!, 'manifest.json'))).toBe(false)
+    const failed = newest()
+    expect(failed.manifest.status).toBe('failed')
+    expect(failed.manifest.shots).toHaveLength(1)
+    expect(failed.manifest.shots[0]?.name).toBe('collision')
+    expect(fs.readFileSync(path.join(failed.dir, failed.manifest.shots[0]!.file))).toEqual(
+      fs.readFileSync(path.join(failed.dir, 'first-expected.png')),
+    )
     expect(fs.readlinkSync(path.join(out, 'latest'))).toBe(previous)
+  })
+  it('keeps the first claimant PNG bytes and fails the loser under parallel workers', () => {
+    const result = run(['--grep', 'duplicate', '--fully-parallel', '--workers=2'])
+    expect(result.status).not.toBe(0)
+    expect(result.stdout + result.stderr).toContain('duplicate shot name')
+    const { dir, manifest } = newest()
+    expect(manifest.status).toBe('failed')
+    expect(manifest.shots).toHaveLength(1)
+    expect(fs.readFileSync(path.join(dir, manifest.shots[0]!.file))).toEqual(
+      fs.readFileSync(path.join(dir, 'first-expected.png')),
+    )
+    expect(fs.readFileSync(path.join(dir, manifest.shots[0]!.file))).not.toEqual(
+      fs.readFileSync(path.join(dir, 'second-expected.png')),
+    )
+    expect(manifest.tests.find((entry) => entry.title === 'duplicate two')?.status).toBe('failed')
+  })
+  it('keeps one PNG when two projects claim the same shot', () => {
+    for (const [args, env] of [
+      [['--grep', 'helper registered capture', '--workers=2'], { CONTRACT_TWO_PROJECTS: '1' }],
+    ] as const) {
+      const result = run([...args], env)
+      expect(result.status).not.toBe(0)
+      const { dir, manifest } = newest()
+      expect(manifest.status).toBe('failed')
+      expect(manifest.shots).toHaveLength(1)
+      const file = path.join(dir, manifest.shots[0]!.file)
+      expect(fs.readFileSync(file).subarray(0, 8)).toEqual(
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      )
+    }
   })
 
   it('exits nonzero after publishing a gallery failure without moving latest', () => {
@@ -152,18 +191,37 @@ describe('real Playwright contract consumer', () => {
       'new',
     )
   })
+  it('removes only its failed retry claim and never publishes the earlier attempt', () => {
+    const result = run(['--grep', 'retry failed capture', '--retries=1'])
+    expect(result.status).not.toBe(0)
+    const { dir, manifest } = newest()
+    expect(manifest.status).toBe('failed')
+    expect(manifest.shots).toEqual([])
+    expect(fs.existsSync(path.join(dir, 'shots/retry/retry-failed-shot.png'))).toBe(false)
+  })
+  it('keeps ownership through a CLI retries=2 override', () => {
+    const result = run(['--grep', 'retry twice', '--retries=2'])
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    const { manifest } = newest()
+    expect(manifest.shots).toHaveLength(1)
+    expect(manifest.shots[0]?.retry).toBe(2)
+    expect(manifest.status).toBe('passed')
+  })
 
   it('artifact MIME, path traversal and duplicate rejection preserve the first bytes', () => {
     const result = run(['--grep', 'data validation'])
     expect(result.status, result.stderr).toBe(0)
     const { dir, manifest } = newest()
-    expect(manifest.artifacts).toHaveLength(1)
-    expect(manifest.artifacts[0]).toMatchObject({
+    expect(manifest.artifacts).toHaveLength(2)
+    expect(manifest.artifacts.find((entry) => entry.name === 'once.txt')).toMatchObject({
       name: 'once.txt',
       contentType: 'text/plain',
       bytes: 5,
     })
-    expect(fs.readFileSync(path.join(dir, manifest.artifacts[0]!.file), 'utf8')).toBe('first')
+    expect(fs.readFileSync(path.join(dir, 'data/data/once.txt'), 'utf8')).toBe('first')
+    expect(fs.readFileSync(path.join(dir, 'data/data/logs/network.json'), 'utf8')).toBe(
+      '{"ok":true}',
+    )
   })
 
   it('bare runner preserves a sentinel and --list succeeds', () => {
