@@ -20,6 +20,7 @@ export interface ComparePair {
   spec: string
   name: string
   kind: 'shot' | 'artifact'
+  ignored: boolean
   state: ComparePairState
   a: GalleryShot | ArtifactEntry | null
   b: GalleryShot | ArtifactEntry | null
@@ -223,6 +224,7 @@ export function buildCompareModel(
         spec,
         name,
         kind,
+        ignored: false,
         a: x,
         b: y,
         state: x === null ? 'added' : y === null ? 'removed' : 'unreadable',

@@ -8,6 +8,7 @@ import { buildCompareModel, type GalleryCompareModel } from './compare-model.js'
 import {
   loadGalleryModel,
   readPngModel,
+  shotKey,
   type CompareGenerationResult,
   type GalleryDiagnostic,
   type GalleryShot,
@@ -25,12 +26,20 @@ export interface CompareGenerationOptions {
   threshold?: number
   includeAA?: boolean
   failOnChange?: boolean
+  ignore?: string[]
+  strict?: boolean
 }
 export interface CompatibleCompareGenerationResult extends CompareGenerationResult {
   comparePath: string
   diagnostics: GalleryDiagnostic[]
   /** Final verdicts and paths only: image.dataUri is empty and diffPng is null after generation. */
   model: GalleryCompareModel
+}
+export class InvalidCompareIgnoreError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InvalidCompareIgnoreError'
+  }
 }
 function tempPath(file: string): string {
   return path.join(
@@ -86,6 +95,28 @@ export function generateCompareGallery(
     throw new Error('threshold must be between 0 and 1')
   const a = loadGalleryModel(aRun, false),
     b = loadGalleryModel(bRun, false)
+  const ignore = [...new Set(options.ignore ?? [])].sort()
+  const artifactKeys = new Map<string, Map<string, { spec: string; name: string }>>()
+  for (const entry of [...a.manifest.artifacts, ...b.manifest.artifacts]) {
+    const key = `${entry.spec}/${entry.name}`
+    const candidates = artifactKeys.get(key) ?? new Map()
+    candidates.set(shotKey(entry.spec, entry.name), { spec: entry.spec, name: entry.name })
+    artifactKeys.set(key, candidates)
+  }
+  const ignoredPairs = new Set<string>()
+  for (const key of ignore) {
+    const candidates = artifactKeys.get(key)
+    if (!candidates)
+      throw new InvalidCompareIgnoreError(`--ignore did not match an artifact: ${key}`)
+    if (candidates.size > 1) {
+      const details = [...candidates.values()]
+        .map(({ spec, name }) => `(spec: ${JSON.stringify(spec)}, name: ${JSON.stringify(name)})`)
+        .sort()
+        .join(', ')
+      throw new InvalidCompareIgnoreError(`--ignore is ambiguous: ${key}; candidates: ${details}`)
+    }
+    ignoredPairs.add(candidates.keys().next().value!)
+  }
   const outputDir = legacy ? first : path.dirname(aRun)
   // The page's own name is the stem: its compare.json sidecar and diff PNGs land
   // beside it as `<stem>.compare.json` and `<stem>.diff-<n>.png`, wherever it is.
@@ -122,12 +153,29 @@ export function generateCompareGallery(
       includeAA: options.includeAA,
       stageDiff: (png, order) => stage(path.join(compareDir, `${stem}.diff-${order}.png`), png),
     })
+    for (const pair of model.pairs)
+      pair.ignored = pair.kind === 'artifact' && ignoredPairs.has(pair.key)
     const gate = {
-      nonParity: model.pairs.filter(
-        (pair) => pair.state !== 'identical' && pair.state !== 'similar',
-      ).length,
+      measuredNonParity: 0,
+      ignoredNonParity: 0,
+      nonParity: 0,
       failOnChange: options.failOnChange ?? false,
     }
+    const updateGate = (): void => {
+      gate.measuredNonParity = model.pairs.filter(
+        (pair) => pair.state !== 'identical' && pair.state !== 'similar',
+      ).length
+      gate.ignoredNonParity = model.pairs.filter(
+        (pair) => pair.ignored && pair.state !== 'identical' && pair.state !== 'similar',
+      ).length
+      gate.nonParity = model.pairs.filter(
+        (pair) =>
+          !pair.ignored &&
+          ((pair.state !== 'identical' && pair.state !== 'similar') ||
+            (options.strict && pair.state === 'similar')),
+      ).length
+    }
+    updateGate()
     const jsonFile = path.join(compareDir, `${stem}.compare.json`)
     const packageInfo = JSON.parse(
       fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
@@ -143,6 +191,8 @@ export function generateCompareGallery(
       settings: {
         threshold: model.options.threshold,
         includeAA: model.options.includeAA,
+        ignore,
+        strict: options.strict ?? false,
         // 'option' when the caller supplied either setting; otherwise both are defaults.
         source:
           options.threshold !== undefined || options.includeAA !== undefined ? 'option' : 'default',
@@ -154,6 +204,7 @@ export function generateCompareGallery(
         spec: pair.spec,
         name: pair.name,
         state: pair.state,
+        ignored: pair.ignored,
         differentPixels: pair.verdict?.differentPixels ?? null,
         totalPixels: pair.verdict?.totalPixels ?? null,
         ratio: pair.verdict?.ratio ?? null,
@@ -218,9 +269,7 @@ export function generateCompareGallery(
     } finally {
       fs.closeSync(bodyFd)
     }
-    gate.nonParity = model.pairs.filter(
-      (pair) => pair.state !== 'identical' && pair.state !== 'similar',
-    ).length
+    updateGate()
     const diffFiles = model.pairs.flatMap((pair, index) => {
       if (!pair.diffTemp) return []
       const file = path.join(compareDir, `${stem}.diff-${index}.png`)
@@ -232,7 +281,7 @@ export function generateCompareGallery(
     staged.push({ file: outputFile, temp: htmlTemp })
     const fd = fs.openSync(htmlTemp, 'a')
     try {
-      writeAll(fd, renderCompareHeader(model, gate.failOnChange))
+      writeAll(fd, renderCompareHeader(model, gate.failOnChange, gate, options.strict ?? false))
       const input = fs.openSync(bodyTemp, 'r')
       try {
         const buffer = Buffer.alloc(64 * 1024)

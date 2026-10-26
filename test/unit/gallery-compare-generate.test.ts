@@ -8,6 +8,7 @@ import { generateCompareGallery } from '../../src/gallery/generate-compare.js'
 import { buildCompareModel } from '../../src/gallery/compare-model.js'
 import { loadGalleryModel } from '../../src/gallery/model.js'
 import { renderCompare } from '../../src/gallery/render-compare.js'
+import { compare } from '../../src/cli.js'
 import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
 const roots: string[] = []
@@ -49,7 +50,12 @@ it('pins compare.json numbers, default settings, diff PNG and generation result 
     summary = JSON.parse(fs.readFileSync(path.join(dir, 'run-a.vs.run-b.compare.json'), 'utf8'))
   expect(result.outputFile).toBe(path.join(dir, 'run-a.vs.run-b.html'))
   expect(result.counts.changed).toBe(1)
-  expect(result.gate).toEqual({ nonParity: 1, failOnChange: false })
+  expect(result.gate).toEqual({
+    measuredNonParity: 1,
+    ignoredNonParity: 0,
+    nonParity: 1,
+    failOnChange: false,
+  })
   expect((result.model.pairs[0]!.a as { image: { dataUri: string } }).image.dataUri).toBe('')
   expect((result.model.pairs[0]!.b as { image: { dataUri: string } }).image.dataUri).toBe('')
   expect(result.model.pairs[0]!.verdict?.diffPng).toBeNull()
@@ -141,10 +147,16 @@ it('marks a disappeared original unreadable in the final JSON, HTML, counts and 
     { state: 'identical' },
   ])
   expect(result.counts).toMatchObject({ identical: 1, unreadable: 1 })
-  expect(result.gate).toEqual({ nonParity: 1, failOnChange: false })
+  expect(result.gate).toEqual({
+    measuredNonParity: 1,
+    ignoredNonParity: 0,
+    nonParity: 1,
+    failOnChange: false,
+  })
+  expect(html).toContain('Gate: measured non-parity 1 · ignored non-parity 0 · gated pairs 1')
   expect(summary).toMatchObject({
     counts: { identical: 1, unreadable: 1 },
-    gate: { nonParity: 1, failOnChange: false },
+    gate: { measuredNonParity: 1, ignoredNonParity: 0, nonParity: 1, failOnChange: false },
     pairs: [
       { state: 'unreadable', diff: null, error: { message: reason } },
       { state: 'identical' },
@@ -153,6 +165,39 @@ it('marks a disappeared original unreadable in the final JSON, HTML, counts and 
   expect(html).toContain('unreadable: 1')
   expect(html).toContain(reason)
   expect(html).toContain('home.shots.ts / two')
+})
+it('uses final hydration counts for the CLI terminal and exit gate', async () => {
+  const { a, b } = fixture()
+  const original = path.join(b, 'shots/one.png')
+  fs.writeFileSync(original, fs.readFileSync(path.join(a, 'shots/one.png')))
+  const read = fs.readFileSync
+  let reads = 0
+  vi.spyOn(fs, 'readFileSync').mockImplementation(((
+    file: fs.PathOrFileDescriptor,
+    options?: unknown,
+  ) => {
+    if (file === original && ++reads === 2) fs.rmSync(original)
+    return read(file, options as BufferEncoding)
+  }) as typeof fs.readFileSync)
+  const line = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const page = path.join(path.dirname(a), 'cli.html')
+  expect(
+    await compare(
+      [a, b, '--config', 'demo/shots.config.ts', '--output', page, '--fail-on-change'],
+      async () => path.dirname(a),
+    ),
+  ).toBe(1)
+  expect(line).toHaveBeenCalledWith(expect.stringContaining('1 measured non-parity pair'))
+  expect(line).toHaveBeenCalledWith(
+    expect.stringContaining(
+      'unreadable 1; ignored non-parity 0, gated 1; --fail-on-change: fail (exit 1)',
+    ),
+  )
+  const summary = JSON.parse(read(page.replace(/\.html$/, '.compare.json'), 'utf8'))
+  expect(summary.gate).toMatchObject({ measuredNonParity: 1, ignoredNonParity: 0, nonParity: 1 })
+  expect(read(page, 'utf8')).toContain(
+    'Gate: measured non-parity 1 · ignored non-parity 0 · gated pairs 1',
+  )
 })
 it('publishes the full HTML when writeSync makes short writes', () => {
   const { a, b } = fixture()
@@ -239,7 +284,178 @@ it('records caller threshold and includeAA and echoes the optional parity gate',
     settings: { threshold: 0.25, includeAA: true, source: 'option' },
     gate: { nonParity: 1, failOnChange: true },
   })
-  expect(result.gate).toEqual({ nonParity: 1, failOnChange: true })
+  expect(result.gate).toEqual({
+    measuredNonParity: 1,
+    ignoredNonParity: 0,
+    nonParity: 1,
+    failOnChange: true,
+  })
+})
+
+it('keeps ignored artifact measurements and diagnostics, including added, removed and unreadable', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-ignore-'))
+  roots.push(root)
+  const write = (id: string, names: string[]): string => {
+    const dir = path.join(root, id)
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true })
+    const artifacts = names.map((name) => {
+      const file = `data/${name.replaceAll('/', '-')}`
+      if (name !== 'unreadable') fs.writeFileSync(path.join(dir, file), `${id}/${name}`)
+      return {
+        spec: 'nested/report.shots.ts',
+        name,
+        file,
+        contentType: 'text/plain',
+        bytes: 8,
+        testId: 'test-data',
+      }
+    })
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify(makeManifest({ runId: id, artifacts })),
+    )
+    return dir
+  }
+  const a = write('a', ['changed/subpath', 'removed', 'unreadable'])
+  const b = write('b', ['changed/subpath', 'added', 'unreadable'])
+  const ignore = [
+    'nested/report.shots.ts/removed',
+    'nested/report.shots.ts/changed/subpath',
+    'nested/report.shots.ts/unreadable',
+    'nested/report.shots.ts/added',
+  ]
+  const result = generateCompareGallery(a, b, { ignore, failOnChange: true })
+  const summary = JSON.parse(
+    fs.readFileSync(result.outputFile.replace(/\.html$/, '.compare.json'), 'utf8'),
+  )
+  const html = fs.readFileSync(result.outputFile, 'utf8')
+  expect(result.model.pairs.map((pair) => [pair.name, pair.state, pair.ignored])).toEqual([
+    ['changed/subpath', 'changed', true],
+    ['unreadable', 'unreadable', true],
+    ['removed', 'removed', true],
+    ['added', 'added', true],
+  ])
+  expect(result.gate).toEqual({
+    measuredNonParity: 4,
+    ignoredNonParity: 4,
+    nonParity: 0,
+    failOnChange: true,
+  })
+  expect(summary.settings.ignore).toEqual([...ignore].sort())
+  expect(summary.pairs.find((pair: { name: string }) => pair.name === 'unreadable')).toMatchObject({
+    ignored: true,
+    state: 'unreadable',
+    error: { message: expect.any(String) },
+  })
+  expect(html).toContain('Gate: measured non-parity 4 · ignored non-parity 4 · gated pairs 0')
+  expect(html).toContain('ignored for gate')
+  expect(html).not.toContain('parity (every pair')
+  expect(() => generateCompareGallery(a, b, { ignore: ['nested/report.shots.ts/typo'] })).toThrow(
+    '--ignore did not match an artifact',
+  )
+  expect(() => generateCompareGallery(a, b, { ignore: ['nested/report.shots.ts'] })).toThrow(
+    '--ignore did not match an artifact',
+  )
+})
+
+it('rejects ambiguous artifact ignores and selects each distinct pair by an unambiguous key', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-ignore-identity-'))
+  roots.push(root)
+  const identities = [
+    { spec: 'a.shots.ts', name: 'b.shots.ts/x' },
+    { spec: 'a.shots.ts/b.shots.ts', name: 'x' },
+  ]
+  const write = (id: string): string => {
+    const dir = path.join(root, id)
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true })
+    const artifacts = identities.map(({ spec, name }, index) => {
+      const file = `data/${index}.txt`
+      fs.writeFileSync(path.join(dir, file), `${id}/${index}`)
+      return { spec, name, file, contentType: 'text/plain', bytes: 3, testId: `test-${index}` }
+    })
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify(makeManifest({ runId: id, artifacts })),
+    )
+    return dir
+  }
+  const a = write('a')
+  const b = write('b')
+  const config = path.join(root, 'shots.config.ts')
+  fs.writeFileSync(config, '')
+  const output = path.join(root, 'compare.html')
+  const ambiguous = 'a.shots.ts/b.shots.ts/x'
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  expect(
+    await compare(
+      [a, b, '--config', config, '--output', output, '--ignore', ambiguous, '--fail-on-change'],
+      async () => root,
+    ),
+  ).toBe(2)
+  expect(error).toHaveBeenCalledWith(expect.stringContaining('--ignore is ambiguous'))
+  expect(error).toHaveBeenCalledWith(
+    expect.stringContaining('spec: "a.shots.ts", name: "b.shots.ts/x"'),
+  )
+  expect(error).toHaveBeenCalledWith(
+    expect.stringContaining('spec: "a.shots.ts/b.shots.ts", name: "x"'),
+  )
+  expect(fs.existsSync(output)).toBe(false)
+  expect(fs.existsSync(path.join(root, 'compare.compare.json'))).toBe(false)
+
+  for (const [key, expected] of [
+    ['a.shots.ts/b.shots.ts/x/one', { spec: 'a.shots.ts', name: 'b.shots.ts/x/one' }],
+    ['a.shots.ts/b.shots.ts/x/two', { spec: 'a.shots.ts/b.shots.ts', name: 'x/two' }],
+  ] as const) {
+    for (const id of ['a', 'b']) {
+      const dir = path.join(root, id)
+      const manifestFile = path.join(dir, 'manifest.json')
+      const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
+      const file = `data/${expected.name.endsWith('one') ? 'one' : 'two'}.txt`
+      fs.writeFileSync(path.join(dir, file), `${id}/${key}`)
+      manifest.artifacts.push({
+        ...expected,
+        file,
+        contentType: 'text/plain',
+        bytes: 3,
+        testId: key,
+      })
+      fs.writeFileSync(manifestFile, JSON.stringify(manifest))
+    }
+    const result = generateCompareGallery(a, b, {
+      ignore: [key],
+      failOnChange: true,
+      outputFile: output,
+    })
+    expect(
+      result.model.pairs.filter((pair) => pair.ignored).map((pair) => [pair.spec, pair.name]),
+    ).toEqual([[expected.spec, expected.name]])
+    expect(result.gate.ignoredNonParity).toBe(1)
+    expect(result.gate.nonParity).toBe(result.gate.measuredNonParity - 1)
+  }
+})
+
+it('gates similar only in strict mode and preserves its measured state', () => {
+  const { a, b } = fixture()
+  const image = PNG.sync.read(fs.readFileSync(path.join(a, 'shots/one.png')))
+  image.data[0] = 1
+  fs.writeFileSync(path.join(b, 'shots/one.png'), PNG.sync.write(image))
+  const normal = generateCompareGallery(a, b)
+  const strict = generateCompareGallery(a, b, { strict: true, failOnChange: true, threshold: 1 })
+  const summary = JSON.parse(
+    fs.readFileSync(strict.outputFile.replace(/\.html$/, '.compare.json'), 'utf8'),
+  )
+  expect(normal.model.pairs[0]!.state).toBe('similar')
+  expect(normal.gate.nonParity).toBe(0)
+  expect(strict.model.pairs[0]!.state).toBe('similar')
+  expect(strict.gate).toEqual({
+    measuredNonParity: 0,
+    ignoredNonParity: 0,
+    nonParity: 1,
+    failOnChange: true,
+  })
+  expect(summary.settings).toMatchObject({ threshold: 1, strict: true })
+  expect(summary.gate.nonParity).toBe(1)
+  expect(fs.readFileSync(strict.outputFile, 'utf8')).toContain('strict on')
 })
 
 it('pins the artifact corpus: text and JSON line diffs, binary byte equality, and changed pairs', () => {

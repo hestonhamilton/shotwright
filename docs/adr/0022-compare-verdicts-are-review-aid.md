@@ -13,6 +13,8 @@ The first external consumer uses shotwright for before/after parity and had to i
 
 Compare always computes seven states: `identical`, `similar`, `changed`, `size-changed`, `added`, `removed`, and `unreadable`. Exact decoded RGBA equality is `identical`; otherwise pixelmatch with recorded threshold and antialias setting distinguishes `similar` from `changed`. Every other state is non-parity. The HTML and JSON are review artifacts; process failure on non-parity is opt-in through `--fail-on-change`.
 
+The 2026-10-26 amendment makes `--ignore <spec.shots.ts/name>` a repeatable exact artifact selection. Ignoring never changes a measured state or diagnostic. Reports distinguish measured non-parity, ignored measured non-parity, and gated pairs; they never claim parity while measured non-parity remains. `--threshold` accepts 0 through 1. `--strict` adds unignored `similar` pairs to the gate, while `--fail-on-change` alone controls the exit code. Counts are finalized after image hydration.
+
 ## Alternatives weighed
 
 | Option | Pros | Cons | Why not |
@@ -28,6 +30,10 @@ Compare always computes seven states: `identical`, `similar`, `changed`, `size-c
 - A zero pixelmatch count after unequal decoded bytes is `similar`, never `identical`.
 - Large comparisons consume memory and time; the 250-pair fixture measures both. Output remains throwaway and is atomically replaced.
 - Future tools must not silently change the seven state meanings or make the exit gate mandatory.
+
+## Prior art and currency
+
+Read 2026-10-26. [Pixelmatch's options](https://github.com/mapbox/pixelmatch#api) document a 0–1 threshold and antialias handling. [Playwright's snapshot assertions](https://playwright.dev/docs/api/class-snapshotassertions) distinguish the per-pixel threshold from a maximum differing-pixel ratio. This amendment keeps the existing pixelmatch verdict and makes the optional gate explicit; no reviewed source established an exact artifact-key ignore convention for shotwright's manifest identity.
 
 ## Reversal
 

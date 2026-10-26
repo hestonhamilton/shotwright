@@ -111,7 +111,7 @@ Playwright's `page.screenshot()` defaults to the viewport.
 shotwright run      [--only a,b] [--video] [--trace] [--run-dir-file <path>] [--config <path>] [-- <playwright test args>]
 shotwright runs     [--config <path>] [--json]
 shotwright gallery  [run-id|--last] [--config <path>] [--host <host>] [--port <port>] [--lan] [--include-traces]
-shotwright compare  <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file.html>] [--fail-on-change]
+shotwright compare  <run-a|latest|--last|path> <run-b|latest|--last|path> [--config <path>] [--output <file.html>] [--ignore <spec.shots.ts/name>]... [--threshold <0..1>] [--strict] [--fail-on-change]
 shotwright init     [--dry-run] [--package-manager npm|pnpm|yarn]
 ```
 
@@ -132,8 +132,13 @@ shotwright init     [--dry-run] [--package-manager npm|pnpm|yarn]
   writes HTML, a `<page-stem>.compare.json` summary, and
   `<page-stem>.diff-<n>.png` images beside the HTML. It accepts run IDs or
   external run directory paths. `--output <file.html>` chooses the HTML path and
-  sidecar stem. By default a completed comparison exits 0;
-  `--fail-on-change` exits 1 if any pair is outside `identical` or `similar`.
+  sidecar stem. Repeat `--ignore <spec.shots.ts/name>` to remove an exact artifact
+  from the gate; the measured state and any error stay visible. Artifact names
+  may contain `/`. Unmatched keys are rejected. `--threshold` selects pixelmatch's
+  per-pixel color threshold from 0 to 1 (default 0.1). `--strict` also gates
+  unignored `similar` pairs. By default a completed comparison exits 0;
+  `--fail-on-change` exits 1 when a gated pair remains. The terminal, HTML and
+  JSON report measured non-parity, ignored non-parity and gated counts separately.
   `latest` resolves to the **last fully passed run**, not simply the most recent
   one — comparing against a run that failed halfway is a comparison against
   nothing. (It is a POSIX symlink; Windows support is not in v1.)
