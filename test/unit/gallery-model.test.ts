@@ -92,7 +92,12 @@ describe('validateManifest', () => {
     const value = manifest('run', [
       entry({ viewport: null, deviceScaleFactor: null, video: null, trace: null }),
     ])
-    expect(validateManifest(value, 'run')).toEqual({ ...value, runError: null })
+    expect(validateManifest(value, 'run')).toEqual({
+      ...value,
+      runError: null,
+      environment: null,
+      browsers: [],
+    })
     expect(validateManifest(manifest('run', []), 'run').shots).toEqual([])
   })
 

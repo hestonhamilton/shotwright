@@ -72,6 +72,8 @@ dist/init.d.ts
 dist/init.js
 dist/manifest.d.ts
 dist/manifest.js
+dist/provenance.d.ts
+dist/provenance.js
 dist/reporter.d.ts
 dist/reporter.js
 dist/runs.d.ts

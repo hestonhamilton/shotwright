@@ -49,6 +49,24 @@ export interface FailureEntry {
   testId: string
   files: Array<{ name: string; contentType: string; file: string }>
 }
+export interface RunEnvironment {
+  platform: NodeJS.Platform
+  distribution: { id: string; versionId: string } | null
+}
+export interface BrowserExecutable {
+  kind: 'managed' | 'overridden'
+  path: string
+  sha256: string
+}
+export interface BrowserObservation {
+  name: string | null
+  version: string | null
+  channel: string | null
+  executable: BrowserExecutable | null
+}
+export interface ProjectBrowser extends BrowserObservation {
+  project: string
+}
 export interface PublicationResult {
   ok: boolean
   error?: string
@@ -60,6 +78,8 @@ export interface Manifest {
   finishedAt: string
   shotwrightVersion: string
   playwrightVersion: string
+  environment?: RunEnvironment | null
+  browsers?: ProjectBrowser[]
   flags: { only: string[]; video: boolean; trace: boolean }
   status: RunnerStatus
   runError?: { code: string; message: string } | null
@@ -72,6 +92,7 @@ export interface Manifest {
 export type ShotSidecar = Omit<ShotEntry, 'video' | 'trace' | 'testId'> & {
   kind: 'shot'
   testId: string
+  browser?: BrowserObservation
 }
 export type ArtifactSidecar = ArtifactEntry & { kind: 'artifact'; retry: number }
 export type Sidecar = ShotSidecar | ArtifactSidecar
@@ -121,6 +142,33 @@ export interface AssembleInput {
   sidecars: Sidecar[]
   artifacts: TestArtifacts
   runDir: string
+  environment?: RunEnvironment | null
+}
+function aggregateBrowsers(shots: ShotSidecar[], tests: TestEntry[]): ProjectBrowser[] {
+  const projects = new Map(tests.map((test) => [test.id, test.project]))
+  const groups = new Map<string, BrowserObservation[]>()
+  for (const shot of shots) {
+    const project = projects.get(shot.testId)
+    if (project === undefined) continue
+    const group = groups.get(project) ?? []
+    group.push(shot.browser ?? { name: null, version: null, channel: null, executable: null })
+    groups.set(project, group)
+  }
+  const agreed = <T>(values: T[]): T | null =>
+    values.length &&
+    values[0] !== null &&
+    values.every((value) => JSON.stringify(value) === JSON.stringify(values[0]))
+      ? values[0]!
+      : null
+  return [...groups]
+    .map(([project, values]) => ({
+      project,
+      name: agreed(values.map((value) => value.name)),
+      version: agreed(values.map((value) => value.version)),
+      channel: agreed(values.map((value) => value.channel)),
+      executable: agreed(values.map((value) => value.executable)),
+    }))
+    .sort((a, b) => a.project.localeCompare(b.project))
 }
 function validateSidecar(value: unknown, index: number, final: Map<string, number>): Sidecar {
   const invalid = (reason: string): never => {
@@ -165,6 +213,20 @@ function validateSidecar(value: unknown, index: number, final: Map<string, numbe
       : `data/${storageSpec}/${sidecar.name}`
   if (sidecar.file !== expected) invalid(`file must equal ${expected}`)
   if (sidecar.kind === 'shot') {
+    if (sidecar.browser !== undefined) {
+      const b = sidecar.browser as BrowserObservation
+      if (
+        !b ||
+        typeof b !== 'object' ||
+        !['chromium', 'firefox', 'webkit', null].includes(b.name) ||
+        (b.version !== null &&
+          (typeof b.version !== 'string' || !/^\d+(?:\.\d+)*$/.test(b.version))) ||
+        (b.channel !== null &&
+          (typeof b.channel !== 'string' || !/^[a-z0-9-]+$/.test(b.channel))) ||
+        !validExecutable(b.executable)
+      )
+        invalid('invalid browser observation')
+    }
     const viewport = sidecar.viewport
     if (
       viewport !== null &&
@@ -201,6 +263,25 @@ function validateSidecar(value: unknown, index: number, final: Map<string, numbe
       invalid('invalid bytes')
   }
   return sidecar as Sidecar
+}
+export function validExecutable(value: unknown): value is BrowserExecutable | null {
+  if (value === null) return true
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  if (candidate.kind !== 'managed' && candidate.kind !== 'overridden') return false
+  if (typeof candidate.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(candidate.sha256)) return false
+  if (
+    typeof candidate.path !== 'string' ||
+    !candidate.path ||
+    candidate.path.includes('\\') ||
+    candidate.path.includes('\0')
+  )
+    return false
+  const parts = candidate.path.split('/')
+  return (
+    parts.every((part) => part && part !== '.' && part !== '..' && !part.includes(':')) &&
+    (candidate.kind === 'managed' || parts.length === 1)
+  )
 }
 
 function removeStaleCapture(runDir: string, file: string): void {
@@ -243,6 +324,7 @@ export function assembleManifest(input: AssembleInput): Manifest {
     if (s.kind === 'shot') {
       const rest = { ...s }
       delete (rest as Partial<Sidecar>).kind
+      delete rest.browser
       shots.push({
         ...rest,
         video: input.artifacts.get(s.testId)?.video ?? null,
@@ -284,6 +366,13 @@ export function assembleManifest(input: AssembleInput): Manifest {
     finishedAt: input.finishedAt,
     shotwrightVersion: input.shotwrightVersion,
     playwrightVersion: input.playwrightVersion,
+    environment: input.environment ?? null,
+    browsers: aggregateBrowsers(
+      selected.filter(
+        (s): s is ShotSidecar => s.kind === 'shot' && !duplicateShots.has(shotKey(s.spec, s.name)),
+      ),
+      input.tests,
+    ),
     flags: input.flags,
     status: duplicateShots.size ? 'failed' : input.status,
     runError: duplicateShots.size
