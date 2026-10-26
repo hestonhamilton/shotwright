@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
 import { chromium } from '@playwright/test'
 import type { Browser } from '@playwright/test'
@@ -17,6 +17,23 @@ import { validateManifest } from '../../src/gallery/model.js'
 
 const linux = process.platform === 'linux'
 const digest = (file: string) => createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+const cacheRoot = () => path.dirname(path.dirname(path.dirname(chromium.executablePath())))
+
+async function managedShellPath(): Promise<string> {
+  const browser = await chromium.launch()
+  try {
+    const executable = (await observeBrowser(browser, null)).executable
+    expect(executable).toMatchObject({
+      kind: 'managed',
+      path: expect.stringMatching(
+        /^chromium_headless_shell-\d+\/chrome-headless-shell[^/]*\/chrome-headless-shell$/,
+      ),
+    })
+    return path.join(cacheRoot(), executable!.path)
+  } finally {
+    await browser.close()
+  }
+}
 
 describe('observed browser provenance', () => {
   it.skipIf(!linux)(
@@ -30,7 +47,7 @@ describe('observed browser provenance', () => {
         expect(observed.executable?.kind).toBe('managed')
         expect(observed.executable?.path).toContain('chrome-headless-shell')
         expect(observed.executable?.path).not.toContain('/chrome-linux/')
-        const cache = path.dirname(path.dirname(path.dirname(chromium.executablePath())))
+        const cache = cacheRoot()
         expect(observed.executable?.sha256).toBe(
           digest(path.join(cache, observed.executable!.path)),
         )
@@ -40,8 +57,8 @@ describe('observed browser provenance', () => {
     },
   )
 
-  it.skipIf(!linux || !process.env.DISPLAY)(
-    'identifies headed Chromium under a display',
+  it.skipIf(!linux || !process.env.DISPLAY || !fs.existsSync(chromium.executablePath()))(
+    'identifies headed Chromium under a display (requires a display and full Chromium)',
     async () => {
       const browser = await chromium.launch({ headless: false })
       try {
@@ -55,45 +72,61 @@ describe('observed browser provenance', () => {
   )
 
   it.skipIf(!linux)('classifies a cache-selected binary by location across two PIDs', async () => {
-    const [a, b] = await Promise.all([
-      chromium.launch(),
-      chromium.launch({ executablePath: chromium.executablePath() }),
-    ])
+    const executablePath = await managedShellPath()
+    const [a, b] = await Promise.all([chromium.launch(), chromium.launch({ executablePath })])
     try {
       const [first, second] = await Promise.all([observeBrowser(a, null), observeBrowser(b, null)])
       expect(first.executable?.kind).toBe('managed')
       expect(second.executable).toMatchObject({
         kind: 'managed',
-        path: expect.stringMatching(/^chromium-\d+\/chrome-linux[^/]*\/chrome$/),
+        path: expect.stringMatching(
+          /^chromium_headless_shell-\d+\/chrome-headless-shell[^/]*\/chrome-headless-shell$/,
+        ),
       })
-      expect(first.executable?.sha256).not.toBe(second.executable?.sha256)
+      expect(second.executable).toEqual(first.executable)
     } finally {
       await Promise.all([a.close(), b.close()])
     }
   })
 
-  it.skipIf(!linux || spawnSync('which', ['google-chrome']).status !== 0)(
+  it.skipIf(!linux)(
     'classifies an explicit executable outside the cache as overridden',
     async () => {
-      const executablePath = spawnSync('which', ['google-chrome'], {
-        encoding: 'utf8',
-      }).stdout.trim()
-      const browser = await chromium.launch({ executablePath })
+      const source = await managedShellPath()
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-provenance-'))
       try {
-        const observed = await observeBrowser(browser, 'chrome')
-        expect(observed.channel).toBe('chrome')
-        expect(observed.executable?.kind).toBe('overridden')
-        expect(observed.executable?.path).toBe('chrome')
+        // A symlinked executable resolves back into the cache through /proc/<pid>/exe.
+        // Copy the binary, but link its sibling resources to keep setup small.
+        for (const entry of fs.readdirSync(path.dirname(source))) {
+          const from = path.join(path.dirname(source), entry)
+          const to = path.join(temporary, entry)
+          if (entry === path.basename(source))
+            fs.copyFileSync(from, to, fs.constants.COPYFILE_FICLONE)
+          else fs.symlinkSync(from, to, fs.statSync(from).isDirectory() ? 'dir' : 'file')
+        }
+        const browser = await chromium.launch({
+          executablePath: path.join(temporary, path.basename(source)),
+        })
+        try {
+          const observed = await observeBrowser(browser, 'chrome')
+          expect(observed.channel).toBe('chrome')
+          expect(observed.executable?.kind).toBe('overridden')
+          expect(observed.executable?.path).toBe('chrome-headless-shell')
+          expect(observed.executable?.sha256).toBe(digest(source))
+        } finally {
+          await browser.close()
+        }
       } finally {
-        await browser.close()
+        fs.rmSync(temporary, { recursive: true, force: true })
       }
     },
+    60_000,
   )
 
   it.skipIf(!linux)('honors a configured cache root including the special zero path', async () => {
     const browser = await chromium.launch()
     const prior = process.env.PLAYWRIGHT_BROWSERS_PATH
-    const cache = path.dirname(path.dirname(path.dirname(chromium.executablePath())))
+    const cache = cacheRoot()
     const require = createRequire(import.meta.resolve('@playwright/test'))
     const local = path.join(
       path.dirname(require.resolve('playwright-core/package.json')),
