@@ -13,7 +13,11 @@ import {
   type GalleryDiagnostic,
   type GalleryShot,
 } from './model.js'
-import { renderCompareHeader, renderComparePairChunks } from './render-compare.js'
+import {
+  renderCompareHeader,
+  renderComparePairChunks,
+  renderCompareTail,
+} from './render-compare.js'
 import { compareProvenance } from './provenance.js'
 
 export interface CompareGenerationOptions {
@@ -356,7 +360,7 @@ export function generateCompareGallery(
       } finally {
         fs.closeSync(input)
       }
-      writeAll(fd, '</main></body></html>\n')
+      writeAll(fd, renderCompareTail())
     } finally {
       fs.closeSync(fd)
     }
