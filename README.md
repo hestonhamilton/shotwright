@@ -110,6 +110,24 @@ one and an explicit MIME type. Its gallery preview is escaped and capped at
 256 KiB, with the full file downloadable. `shot()` defaults to a full-page image;
 Playwright's `page.screenshot()` defaults to the viewport.
 
+For a generated file, use Playwright's per-test scratch path. Generate and
+inspect the file at the same path, then publish a copy to the run:
+
+```ts
+import { test } from '@playwright/test'
+import { artifact } from 'shotwright/capture'
+
+test('exports a report', async () => {
+  const source = test.info().outputPath('report.pdf')
+  // Generate the PDF at source, then let an external reader inspect source.
+  await artifact('report.pdf', { path: source, contentType: 'application/pdf' })
+})
+```
+
+The reporter removes the run's `.pw` scratch directory when the run exits
+normally, whether it passes or fails. Inspect and publish before the test ends.
+A hard process kill has no cleanup promise.
+
 For a more repeatable capture, opt in to Playwright's screenshot assertion
 settings when needed:
 

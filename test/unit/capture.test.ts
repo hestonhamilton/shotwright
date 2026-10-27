@@ -5,13 +5,191 @@ import path from 'node:path'
 import { test } from '@playwright/test'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { shot, validateShotName, validateSpecPath } from '../../src/capture.js'
+import { artifact, shot, validateShotName, validateSpecPath } from '../../src/capture.js'
 import { readSidecars } from '../../src/manifest.js'
 import type { Page } from '@playwright/test'
 
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.restoreAllMocks()
+})
+
+describe('artifact path copy', () => {
+  function fixture() {
+    const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-artifact-'))
+    fs.mkdirSync(path.join(runDir, '.sidecar'))
+    vi.stubEnv('SHOTWRIGHT_RUN_DIR', runDir)
+    const info = {
+      titlePath: ['flow.shots.ts', 'walkthrough'],
+      project: { testDir: runDir, use: {} },
+      testId: 'test-1',
+      retry: 0,
+    } as ReturnType<typeof test.info>
+    vi.spyOn(test, 'info').mockReturnValue(info)
+    const source = path.join(runDir, 'source.bin')
+    const dest = path.join(runDir, 'data/flow/report.bin')
+    return { runDir, info, source, dest }
+  }
+
+  it('copies multiple chunks without reading the whole source and records exact bytes', async () => {
+    const { runDir, source, dest } = fixture()
+    try {
+      const content = Buffer.alloc(256 * 1024 + 13, 0x61)
+      fs.writeFileSync(source, content)
+      const read = vi.spyOn(fs, 'readFileSync')
+      const write = vi.spyOn(fs, 'writeSync')
+      await expect(
+        artifact('report.bin', { path: source, contentType: 'application/octet-stream' }),
+      ).resolves.toBeUndefined()
+      expect(read.mock.calls.some(([file]) => file === source)).toBe(false)
+      expect(write.mock.calls.length).toBeGreaterThan(1)
+      expect(fs.readFileSync(dest)).toEqual(content)
+      expect(readSidecars(runDir)).toMatchObject([{ kind: 'artifact', bytes: content.length }])
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
+
+  it('copies an empty source and preserves body bytes and byte counts', async () => {
+    const { runDir, source, dest } = fixture()
+    try {
+      fs.writeFileSync(source, '')
+      await artifact('report.bin', { path: source, contentType: 'application/octet-stream' })
+      await artifact('body.bin', {
+        body: Buffer.from([0, 255, 1]),
+        contentType: 'application/octet-stream',
+      })
+      expect(fs.readFileSync(dest)).toHaveLength(0)
+      expect(fs.readFileSync(path.join(runDir, 'data/flow/body.bin'))).toEqual(
+        Buffer.from([0, 255, 1]),
+      )
+      expect(
+        readSidecars(runDir)
+          .filter((sidecar) => sidecar.kind === 'artifact')
+          .map((sidecar) => [sidecar.name, sidecar.bytes])
+          .sort(),
+      ).toEqual([
+        ['body.bin', 3],
+        ['report.bin', 0],
+      ])
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves a prior retry artifact when the source cannot be opened', async () => {
+    const { runDir, info, source, dest } = fixture()
+    try {
+      await expect(
+        artifact('report.bin', { path: source, contentType: 'text/plain' }),
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(fs.existsSync(dest)).toBe(false)
+      expect(readSidecars(runDir)).toEqual([])
+      await artifact('report.bin', { body: 'old', contentType: 'text/plain' })
+      info.retry = 1
+      await expect(
+        artifact('report.bin', { path: source, contentType: 'text/plain' }),
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(fs.readFileSync(dest, 'utf8')).toBe('old')
+      expect(readSidecars(runDir)).toMatchObject([{ bytes: 3, retry: 0 }])
+      fs.mkdirSync(source)
+      await expect(
+        artifact('report.bin', { path: source, contentType: 'text/plain' }),
+      ).rejects.toThrow('not a regular file')
+      expect(fs.readFileSync(dest, 'utf8')).toBe('old')
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
+
+  it('handles short writes and closes the claimed descriptor once', async () => {
+    const { runDir, source, dest } = fixture()
+    try {
+      fs.writeFileSync(source, Buffer.alloc(130 * 1024, 0x62))
+      const original = fs.writeSync.bind(fs)
+      const write = vi.spyOn(fs, 'writeSync').mockImplementation((...args) => {
+        const [fd, buffer, offset, length] = args as unknown as [number, Buffer, number, number]
+        return original(fd, buffer, offset, Math.min(length, 7))
+      })
+      const close = vi.spyOn(fs, 'closeSync')
+      await artifact('report.bin', { path: source, contentType: 'text/plain' })
+      const destinationFd = write.mock.calls[0]![0]
+      expect(close.mock.calls.filter(([fd]) => fd === destinationFd)).toHaveLength(1)
+      expect(write.mock.calls.length).toBeGreaterThan(2)
+      expect(fs.readFileSync(dest)).toEqual(fs.readFileSync(source))
+      expect(readSidecars(runDir)).toMatchObject([{ bytes: 130 * 1024 }])
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['zero', 'throw', 'replace'] as const)(
+    'cleans a failed %s write only when it still owns the inode',
+    async (failure) => {
+      const { runDir, source, dest } = fixture()
+      try {
+        fs.writeFileSync(source, Buffer.alloc(130 * 1024, 0x63))
+        const original = fs.writeSync.bind(fs)
+        let calls = 0
+        vi.spyOn(fs, 'writeSync').mockImplementation((...args) => {
+          const [fd, buffer, offset, length] = args as unknown as [number, Buffer, number, number]
+          calls++
+          if (calls === 2) {
+            if (failure === 'replace') {
+              fs.unlinkSync(dest)
+              fs.writeFileSync(dest, 'replacement')
+            }
+            if (failure === 'zero') return 0
+            throw new Error('injected write failure')
+          }
+          return original(fd, buffer, offset, length)
+        })
+        const close = vi.spyOn(fs, 'closeSync')
+        await expect(
+          artifact('report.bin', { path: source, contentType: 'text/plain' }),
+        ).rejects.toThrow(failure === 'zero' ? 'no progress' : 'injected write failure')
+        expect(calls).toBe(2)
+        expect(close).toHaveBeenCalledTimes(1)
+        expect(fs.existsSync(dest)).toBe(failure === 'replace')
+        if (failure === 'replace') expect(fs.readFileSync(dest, 'utf8')).toBe('replacement')
+        expect(readSidecars(runDir)).toEqual([])
+      } finally {
+        fs.rmSync(runDir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('removes a partial retry copy after a read failure without masking the error', async () => {
+    const { runDir, info, source, dest } = fixture()
+    try {
+      await artifact('report.bin', { body: 'old', contentType: 'text/plain' })
+      info.retry = 1
+      fs.writeFileSync(source, Buffer.alloc(130 * 1024, 0x64))
+      const create = fs.createReadStream.bind(fs)
+      let reader: fs.ReadStream | undefined
+      vi.spyOn(fs, 'createReadStream').mockImplementation((...args) => {
+        reader = create(...args)
+        return reader
+      })
+      const original = fs.writeSync.bind(fs)
+      const write = vi.spyOn(fs, 'writeSync').mockImplementation((...args) => {
+        const [fd, buffer, offset, length] = args as unknown as [number, Buffer, number, number]
+        const written = original(fd, buffer, offset, length)
+        reader!.destroy(new Error('injected read failure'))
+        return written
+      })
+      const close = vi.spyOn(fs, 'closeSync')
+      await expect(
+        artifact('report.bin', { path: source, contentType: 'text/plain' }),
+      ).rejects.toThrow('injected read failure')
+      expect(write).toHaveBeenCalled()
+      expect(fs.existsSync(dest)).toBe(false)
+      expect(close).toHaveBeenCalledTimes(1)
+      expect(readSidecars(runDir)).toMatchObject([{ retry: 0, bytes: 3 }])
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('shot', () => {
