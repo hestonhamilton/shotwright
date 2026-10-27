@@ -66,6 +66,25 @@ function manifest(runId = 'run', shots: ShotEntry[] = [entry()]): Manifest {
 }
 
 describe('validateManifest', () => {
+  it.each(['unnoted', 'noted'])('loads the checked-in %s v2 fixture', (name) => {
+    const fixture = JSON.parse(
+      fs.readFileSync(path.join('test', 'fixtures', 'note-v2', `${name}.json`), 'utf8'),
+    )
+    const runDir = path.join(tmpDir(), 'run')
+    fs.mkdirSync(path.join(runDir, 'shots', 'home'), { recursive: true })
+    fs.writeFileSync(path.join(runDir, 'shots', 'home', 'row.png'), makePng())
+    fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(fixture))
+    const model = loadGalleryModel(runDir)
+    expect(model.sourceManifestVersion).toBe(2)
+    if (name === 'noted') expect(model.manifest.shots[0]?.note).toBe(fixture.shots[0].note)
+    else expect(model.manifest.shots[0]).not.toHaveProperty('note')
+  })
+
+  it('rejects a present non-string v2 note', () => {
+    expect(() =>
+      validateManifest(manifest('run', [entry({ note: 42 as unknown as string })])),
+    ).toThrow(/shots\[0\]\.note/)
+  })
   it('defaults old v2 title paths and validates present ancestor order and leaf', () => {
     const value = {
       ...manifest(),

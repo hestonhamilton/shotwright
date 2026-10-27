@@ -34,6 +34,8 @@ export interface ShotOptions extends Pick<
   /** Capture this element instead of the page. */
   locator?: Locator
   check?: () => void | Promise<void>
+  /** Descriptive context for this shot in the gallery. */
+  note?: string
 }
 
 function unsafePathReason(value: string): string | null {
@@ -209,6 +211,7 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
       durationMs: Date.now() - started,
       testId: info.testId,
       checked: opts.check !== undefined,
+      ...(opts.note !== undefined && { note: opts.note }),
       retry: info.retry,
       browser,
     })

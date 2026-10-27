@@ -13,6 +13,7 @@ export interface Viewport {
 }
 export interface ShotEntry {
   name: string
+  note?: string
   spec: string
   file: string
   viewport: Viewport | null
@@ -256,6 +257,7 @@ function validateSidecar(value: unknown, index: number, final: Map<string, numbe
     )
       invalid('invalid durationMs')
     if (typeof sidecar.checked !== 'boolean') invalid('invalid checked')
+    if (sidecar.note !== undefined && typeof sidecar.note !== 'string') invalid('invalid note')
   } else {
     if (typeof sidecar.contentType !== 'string' || !sidecar.contentType)
       invalid('invalid contentType')

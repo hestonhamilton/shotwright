@@ -67,6 +67,20 @@ describe('assembleManifest', () => {
     expect(assembleManifest(input([])).shots).toEqual([])
   })
 
+  it('copies a supplied note and leaves an absent note absent', () => {
+    const shots = assembleManifest(
+      input([sidecar({ name: 'plain' }), sidecar({ name: 'noted', note: 'row A' })]),
+    ).shots
+    expect(shots.find((shot) => shot.name === 'plain')).not.toHaveProperty('note')
+    expect(shots.find((shot) => shot.name === 'noted')).toHaveProperty('note', 'row A')
+  })
+
+  it('rejects a non-string present sidecar note', () => {
+    expect(() => assembleManifest(input([sidecar({ note: 42 as unknown as string })]))).toThrow(
+      /invalid note/,
+    )
+  })
+
   it('sorts by (spec, capturedAt), not capture order', () => {
     const shots = assembleManifest(
       input([

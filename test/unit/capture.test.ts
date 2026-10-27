@@ -234,6 +234,25 @@ describe('shot', () => {
     }
   })
 
+  it('writes notes only when supplied, including an empty note', async () => {
+    const { runDir, page } = fixture()
+    try {
+      await shot(page, 'plain')
+      await shot(page, 'noted', { note: '<row>\n' + 'longword'.repeat(1000) })
+      await shot(page, 'empty', { note: '' })
+      const sidecars = readSidecars(runDir).filter((item) => item.kind === 'shot')
+      expect(sidecars.map((item) => item.name).sort()).toEqual(['empty', 'noted', 'plain'])
+      expect(sidecars.find((item) => item.name === 'empty')).toHaveProperty('note', '')
+      expect(sidecars.find((item) => item.name === 'noted')).toHaveProperty(
+        'note',
+        '<row>\n' + 'longword'.repeat(1000),
+      )
+      expect(sidecars.find((item) => item.name === 'plain')).not.toHaveProperty('note')
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
+
   it('propagates a filtered check failure without writing a capture', async () => {
     const { runDir, page, screenshot, png } = fixture()
     try {
