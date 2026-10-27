@@ -196,7 +196,7 @@ describe('real Playwright contract consumer', () => {
     expect(fs.existsSync(path.join(dir, '.sidecar'))).toBe(false)
     expect(fs.readlinkSync(path.join(out, 'latest'))).toBe(prior)
   })
-  it('no-op check records checked, filtered and thrown callbacks write nothing, and fullPage bytes match', () => {
+  it('no-op check records checked, filtered and thrown callbacks fail without capture, and fullPage bytes match', () => {
     const good = run(['--grep', 'no-op check'], { SHOTWRIGHT_ONLY: 'tall' })
     expect(good.status, good.stdout + good.stderr).toBe(0)
     const { dir, manifest } = newest()
@@ -209,8 +209,11 @@ describe('real Playwright contract consumer', () => {
       ['utf8.txt', 6],
     ])
     const filtered = run(['--grep', 'filtered callback'], { SHOTWRIGHT_ONLY: 'tall' })
-    expect(filtered.status, filtered.stderr).toBe(0)
-    expect(newest().manifest.shots).toEqual([])
+    expect(filtered.status).not.toBe(0)
+    expect(filtered.stdout + filtered.stderr).toContain('filtered callback executed')
+    const filteredRun = newest()
+    expect(filteredRun.manifest.shots).toEqual([])
+    expect(fs.existsSync(path.join(filteredRun.dir, 'shots/check/excluded.png'))).toBe(false)
     const thrown = run(['--grep', 'thrown callback'])
     expect(thrown.status).not.toBe(0)
     expect(newest().manifest.shots).toEqual([])

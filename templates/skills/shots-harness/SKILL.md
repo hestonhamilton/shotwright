@@ -23,6 +23,9 @@ pnpm shots --only home
 ```
 
 The walkthrough still runs; `--only` gates which `shot()` calls write artifacts.
+Each `check` still runs, with all its work and side effects, and can fail the
+test. A filtered shot writes no PNG or sidecar, so checks must not depend on an
+earlier shot filtered out by `--only`.
 
 Capture video and trace artifacts:
 

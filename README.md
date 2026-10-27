@@ -176,6 +176,10 @@ shotwright init     [--dry-run] [--package-manager npm|pnpm|yarn]
   `--only` takes **substrings**, and filters *writes*, not execution — the whole
   walkthrough still runs, and only matching shots are saved. That is deliberate:
   a flow that half-runs produces screenshots of a state the app never reaches.
+  Every `check` runs before selection, so a failed check fails the test even
+  for a filtered shot, which writes no PNG or sidecar. If a later check reads an
+  earlier shot's PNG, filtering out the earlier shot makes that check fail, so
+  keep checks independent of capture files that `--only` may omit.
 - **`gallery`** builds a single self-contained HTML file and serves it. `--lan`
   binds it so another device on the network can open it. Trace downloads on a
   non-loopback bind require `--include-traces`.
@@ -250,9 +254,29 @@ export default defineShotsConfig({
   deviceScaleFactor: 2,
   webServer: { command: 'pnpm dev', url: 'http://localhost:5173' },
   use: { baseURL: 'http://localhost:5173' },      // harness invariants still win
-  projects: [ /* replaces the default single 'shots' Desktop Chrome project */ ],
 })
 ```
+
+This uses the default `shots` project. To use explicit `projects` instead,
+put `viewport` and `deviceScaleFactor` in each `project.use`; supplying either
+harness top-level setting with `projects` now raises a config error. In 0.4.0,
+move those settings from the harness top level into each `project.use` if your
+config previously combined them: the combination was silently ignored.
+
+When adapting a Playwright base config, `use: base.use` transfers only its
+`use` settings. Pass `projects: base.projects` to retain project-level
+`grep`/`grepInvert`, or set a deliberate top-level `grep`/`grepInvert` on the
+shots config. The default `shots` project's viewport and scale override
+`use.viewport` and `use.deviceScaleFactor` carried by `use: base.use`; set the
+harness top-level `viewport`/`deviceScaleFactor` for the default project, or
+use explicit `project.use` values with `projects`.
+
+For 0.4.0: checks now run even when their own shot is filtered out, which
+reverses 0.3.0, where `--only` skipped them. A filtered check still does all its
+work, including slow waits, requests and anything that changes page state, so
+audit expensive or state-changing checks before relying on `--only` for speed.
+Update checks that read earlier shot PNGs so they do not depend on captures
+excluded by `--only`.
 
 ## CI
 
