@@ -30,9 +30,14 @@ config and its own `*.shots.ts` specs.
 
 ## Install
 
-Requires **Node ≥ 20**. CommonJS `require()` of this ESM package needs Node
-`^20.19.0 || >=22.12.0` with `require(esm)` enabled. `@playwright/test` is a
-peer dependency — you install it, so you control the version.
+Requires **Node ≥ 22.12.0**. Node 20 and Node 22.0–22.11 are no longer
+supported; upgrade those runtimes before moving to 0.4.0. npm warns by default
+when a dependency's `engines.node` does not match, and refuses installation only
+with [`engine-strict`](https://docs.npmjs.com/cli/v11/using-npm/config/#engine-strict)
+enabled. This remains an ESM package. Synchronous CommonJS `require()` can load
+its ESM exports from Node 22.12.0 when the module graph has no top-level
+`await`; a future top-level `await` would prevent that loading. `@playwright/test`
+is a peer dependency — you install it, so you control the version.
 
 ```sh
 pnpm add -D shotwright @playwright/test
@@ -279,7 +284,9 @@ export default defineShotsConfig({
 
 This uses the default `shots` project. To use explicit `projects` instead,
 put `viewport` and `deviceScaleFactor` in each `project.use`; supplying either
-harness top-level setting with `projects` now raises a config error. In 0.4.0,
+harness top-level setting with `projects` now raises a config error in
+`shotwright run` and `--list`; `runs`, `gallery` and `compare` still read
+existing runs from such a config. In 0.4.0,
 move those settings from the harness top level into each `project.use` if your
 config previously combined them: the combination was silently ignored.
 

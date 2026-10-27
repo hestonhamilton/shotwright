@@ -156,11 +156,15 @@ and data can still contain sensitive material. Set access and retention to
 match the captured content. A separate upload-traces switch was declined in
 favor of recording control and uploading the complete invocation directory.
 
-The package still declares `engines.node: >=20` for ESM consumers. Loading its
-ESM exports with CommonJS `require('shotwright')` or
+At the 0.2.0 release, the package still declared `engines.node: >=20` for ESM
+consumers. Loading its ESM exports with CommonJS `require('shotwright')` or
 `require('shotwright/capture')` needs Node `^20.19.0 || >=22.12.0` with
 `require(esm)` enabled. A separate CommonJS build was declined. The
 `@playwright/test` dependency remains consumer supplied.
+
+For 0.4.0, the current `engines.node` floor is `>=22.12.0`: Node 20 and
+Node 22.0–22.11 are no longer supported. See the [current install guidance](../README.md#install)
+before upgrading.
 
 ## G1–G13 disposition
 
