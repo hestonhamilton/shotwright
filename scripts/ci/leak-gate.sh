@@ -45,8 +45,11 @@ source "$root/scripts/ci/gitleaks-pin.sh"
 # On 2026-10-22, shotwright-746.28.12 refreshed the baseline after
 # shotwright-746.28.4 added dist/gallery/pixels.js and pixels.d.ts to the
 # packed package. The gate reports tarball size with `du -h`.
-BASELINE_FILES=49
-BASELINE_PACKED="76K"
+# On 2026-10-27, shotwright-746.37 refreshed the baseline after the E11
+# provenance modules (dist/provenance.* and dist/gallery/provenance.*) shipped
+# in 0.3.0/0.4.0. shotwright-746.32.8/.9 admitted all four to the allowlist.
+BASELINE_FILES=53
+BASELINE_PACKED="92K"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
