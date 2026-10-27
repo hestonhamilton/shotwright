@@ -400,8 +400,8 @@ irreversible one. Check before you click:
       for **this run** is green and the packed file set in its log matches the
       check below. Approval is the last point at which nothing has happened.
 - [ ] The packed file set in the run log is what you expect — baseline is
-      **49 files, 76K packed** (since `dist/gallery/pixels.js` shipped,
-      `shotwright-746.28.4`; refreshed by `shotwright-746.28.12`), and
+      **53 files, 92K packed** (after the E11 provenance modules shipped in
+      0.3.0/0.4.0; refreshed by `shotwright-746.37`), and
       `scripts/ci/expected-files.txt` lists every one of them. The
       authoritative figures are `BASELINE_FILES` and `BASELINE_PACKED` in
       `scripts/ci/leak-gate.sh`, which the gate prints; if this line disagrees
