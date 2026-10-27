@@ -106,7 +106,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
       `<p class="provenance">Render environment provenance incomplete: ${summary.provenance.unavailable.join('; ')}</p>`,
     )
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"7325fe0d3561f2011b292e42b595ffce1e13ae347f0b76af9559416795ae35f8"`,
+      `"fd84ce16ea221b99f9a39f34d219bd1ed198365ceff5bcfd3f19f4995571d929"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
@@ -123,6 +123,8 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
       expect(html).toContain(`state-${state}`)
     expect(model.pairs[0]?.state).toBe('changed')
     expect(html).toContain('Gate:')
+    expect(html).toContain('@media (prefers-color-scheme: dark)')
+    expect(html).toContain('.pair.state-similar.gated{border-left-color:var(--state-gated)}')
     expect(html).toContain('A run: failed · B run: passed')
     expect(html).toContain('data:image/png;base64,')
     expect(html).toContain('fail-on-change on')
