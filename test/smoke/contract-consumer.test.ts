@@ -196,6 +196,17 @@ describe('real Playwright contract consumer', () => {
     expect(fs.existsSync(path.join(dir, '.sidecar'))).toBe(false)
     expect(fs.readlinkSync(path.join(out, 'latest'))).toBe(prior)
   })
+  it('publishes a scratch file after external reading on a failed run and removes .pw', () => {
+    const result = run(['--grep', 'scratch source survives external reading'])
+    expect(result.status).not.toBe(0)
+    const { dir, manifest } = newest()
+    expect(manifest.status).toBe('failed')
+    expect(manifest.artifacts).toMatchObject([{ name: 'report.txt', bytes: 14 }])
+    expect(fs.readFileSync(path.join(dir, manifest.artifacts[0]!.file), 'utf8')).toBe(
+      'scratch report',
+    )
+    expect(fs.existsSync(path.join(dir, '.pw'))).toBe(false)
+  })
   it('no-op check records checked, filtered and thrown callbacks fail without capture, and fullPage bytes match', () => {
     const good = run(['--grep', 'no-op check'], { SHOTWRIGHT_ONLY: 'tall' })
     expect(good.status, good.stdout + good.stderr).toBe(0)

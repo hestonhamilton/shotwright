@@ -251,31 +251,81 @@ export async function artifact(name: string, opts: ArtifactOptions): Promise<voi
   const spec = loadedSpec(info)
   const file = `data/${storageSpec(spec)}/${name}`
   const dest = path.join(runDir, file)
-  const bytes =
+  const body =
     'body' in opts
       ? typeof opts.body === 'string'
         ? Buffer.from(opts.body)
         : opts.body
-      : fs.readFileSync(opts.path!)
-  if (!bytes) throw new Error('shotwright: artifact body is missing')
-  safeParent(runDir, file)
-  if (fs.existsSync(dest)) {
-    const previous = readSidecars(runDir).filter(
-      (s) => s.kind === 'artifact' && s.spec === spec && s.name === name,
-    )
-    if (!previous.length || previous.some((s) => s.testId !== info.testId || s.retry >= info.retry))
-      throw new Error(`shotwright: duplicate artifact name "${name}" in ${spec}`)
-    safeParent(runDir, file)
-    const prior = fs.lstatSync(dest)
-    if (!prior.isFile() || prior.isSymbolicLink())
-      throw new Error('shotwright: unsafe prior artifact claim')
-    fs.unlinkSync(dest)
-  }
-  const fd = openWrite(runDir, file)
+      : undefined
+  if ('body' in opts && !body) throw new Error('shotwright: artifact body is missing')
+  let reader: fs.ReadStream | undefined
+  let fd: number | undefined
+  let claimed: fs.Stats | undefined
+  let completed = false
+  let byteCount = 0
   try {
-    fs.writeFileSync(fd, bytes)
+    if ('path' in opts) {
+      reader = fs.createReadStream(opts.path!)
+      let sourceFd: number | undefined
+      await new Promise<void>((resolve, reject) => {
+        reader!.once('open', (openedFd) => {
+          sourceFd = openedFd
+          resolve()
+        })
+        reader!.once('error', reject)
+      })
+      if (!fs.fstatSync(sourceFd!).isFile())
+        throw new Error('shotwright: artifact source is not a regular file')
+    }
+    safeParent(runDir, file)
+    if (fs.existsSync(dest)) {
+      const previous = readSidecars(runDir).filter(
+        (s) => s.kind === 'artifact' && s.spec === spec && s.name === name,
+      )
+      if (
+        !previous.length ||
+        previous.some((s) => s.testId !== info.testId || s.retry >= info.retry)
+      )
+        throw new Error(`shotwright: duplicate artifact name "${name}" in ${spec}`)
+      safeParent(runDir, file)
+      const prior = fs.lstatSync(dest)
+      if (!prior.isFile() || prior.isSymbolicLink())
+        throw new Error('shotwright: unsafe prior artifact claim')
+      fs.unlinkSync(dest)
+    }
+    fd = openWrite(runDir, file)
+    if (body) {
+      fs.writeFileSync(fd, body)
+      byteCount = body.length
+    } else {
+      claimed = fs.fstatSync(fd)
+      for await (const chunk of reader!) {
+        let offset = 0
+        while (offset < chunk.length) {
+          const written = fs.writeSync(fd, chunk, offset, chunk.length - offset)
+          if (written === 0) throw new Error('shotwright: artifact copy made no progress')
+          offset += written
+          byteCount += written
+        }
+      }
+    }
+    completed = true
   } finally {
-    fs.closeSync(fd)
+    reader?.destroy()
+    try {
+      if (fd !== undefined) fs.closeSync(fd)
+    } finally {
+      if (!completed && claimed) {
+        try {
+          const current = fs.lstatSync(dest)
+          if (current.isFile() && current.dev === claimed.dev && current.ino === claimed.ino)
+            fs.unlinkSync(dest)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+            console.error('shotwright: failed to remove incomplete artifact claim')
+        }
+      }
+    }
   }
   writeSidecar(runDir, {
     kind: 'artifact',
@@ -283,7 +333,7 @@ export async function artifact(name: string, opts: ArtifactOptions): Promise<voi
     spec,
     file,
     contentType: opts.contentType,
-    bytes: bytes.length,
+    bytes: byteCount,
     testId: info.testId,
     retry: info.retry,
   })

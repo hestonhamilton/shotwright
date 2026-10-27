@@ -49,6 +49,13 @@ that pair in passthrough for Playwright.
 Do not run these specs with bare `playwright test`. `shot()` expects the
 environment contract created by `shotwright run`.
 
+For generated files, write to
+`const source = test.info().outputPath('report.pdf')`, inspect that same scratch
+path with an external reader, then publish a copy with
+`await artifact('report.pdf', { path: source, contentType: 'application/pdf' })`.
+The run's `.pw` scratch directory is removed on ordinary pass or fail exit;
+inspect and publish before the test ends. A hard kill has no cleanup promise.
+
 ## Gallery
 
 Build and serve the latest successful run:
