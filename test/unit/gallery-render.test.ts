@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { GALLERY_SCRIPT } from '../../src/gallery/assets.js'
+import { GALLERY_CSS, GALLERY_SCRIPT } from '../../src/gallery/assets.js'
 import { generateGallery } from '../../src/gallery/generate.js'
 import { loadGalleryModel } from '../../src/gallery/model.js'
 import { renderGallery } from '../../src/gallery/render.js'
@@ -189,6 +189,27 @@ describe('gallery rendering', () => {
     const html = renderGallery(loadGalleryModel(runDir))
     expect(html).toContain('<p class="test-title">Old leaf</p>')
     expect(html).toContain('data-search="first flow.shots.ts old leaf"')
+  })
+
+  it('escapes and searches the full note with an accessible shot-specific label', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    const note = '<script> & "quote"\n' + 'longword'.repeat(1000)
+    writeRun(runDir, manifest('run', [shot('name "quoted"', 'flow.shots.ts', 0, { note })]))
+    const html = renderGallery(loadGalleryModel(runDir))
+    expect(html).toContain('aria-label="Note for name &quot;quoted&quot;"')
+    expect(html).toContain(
+      `role="group" aria-label="Note for name &quot;quoted&quot;">&lt;script&gt; &amp; &quot;quote&quot;\n${'longword'.repeat(1000)}</div>`,
+    )
+    expect(html).toContain(
+      `&lt;script&gt; &amp; &quot;quote&quot;\n${'longword'.repeat(1000)}" data-tags=`,
+    )
+    expect(html).not.toContain('<script> &')
+    expect(html).toMatch(/<div class="shot-note" tabindex="0" role="group" aria-label="[^"]+">/)
+    expect(html).not.toMatch(/<div class="shot-note"[^>]*style=/)
+    expect(GALLERY_CSS).toMatch(/\.shot-note\.more-below\s*\{[^}]*box-shadow:/)
+    expect(GALLERY_CSS).toMatch(/\.shot-note\.more-above\s*\{[^}]*box-shadow:/)
+    expect(GALLERY_CSS).toMatch(/\.shot-note\.more-above\.more-below\s*\{[^}]*box-shadow:/)
+    expect(GALLERY_CSS).not.toMatch(/background-attachment:/)
   })
 
   it('renders the five-shot fixture in manifest/spec order with complete metadata and one URI per shot', () => {

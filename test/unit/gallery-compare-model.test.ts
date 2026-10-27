@@ -98,6 +98,27 @@ function runV1(
 }
 
 describe('seven-state compare model', () => {
+  it('pairs identical pixels despite changed descriptive notes', () => {
+    const base = root()
+    const rows = [{ spec: 'home.shots.ts', name: 'row', png: png(42) }]
+    const a = run(base, 'run-a', rows)
+    const b = run(base, 'run-b', rows)
+    for (const [dir, note] of [
+      [a, 'before'],
+      [b, 'after'],
+    ] as const) {
+      const file = path.join(dir, 'manifest.json')
+      const value = JSON.parse(fs.readFileSync(file, 'utf8'))
+      value.shots[0].note = note
+      fs.writeFileSync(file, JSON.stringify(value))
+    }
+    const model = buildCompareModel(loadGalleryModel(a), loadGalleryModel(b), {
+      aRunDir: a,
+      bRunDir: b,
+    })
+    expect(model.pairs).toHaveLength(1)
+    expect(model.pairs[0]).toMatchObject({ name: 'row', state: 'identical' })
+  })
   it('pins decoded byte equality, similar threshold, changed counts, dimensions and unreadable decoding', () => {
     const a = png(0),
       identical = withTextChunk(a),

@@ -98,7 +98,9 @@ walkthrough('checkout', async ({ page }) => {
 
 `shot(page, name, opts?)` writes `<runDir>/shots/<spec>/<name>.png` and records a
 manifest entry. Options: `fullPage` (default true unless `clip` or `locator` is
-given), `clip`, `locator`, `animations`, `caret`, `mask`, `style`, and `check`.
+given), `clip`, `locator`, `animations`, `caret`, `mask`, `style`, `check`, and
+`note`. An optional note adds descriptive context to that shot's gallery card
+and search. It does not affect shot identity or comparison.
 The four screenshot options pass through to Playwright for both page and locator
 captures: `animations` controls animation handling, `caret` controls text caret
 visibility, `mask` takes locators to cover, and `style` applies screenshot-only

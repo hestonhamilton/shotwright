@@ -114,6 +114,7 @@ function shot(value: unknown, index: number, version: 1 | 2): ShotEntry {
   const candidate = record(value, label)
   return {
     name: string(candidate.name, `${label}.name`),
+    ...(candidate.note !== undefined && { note: string(candidate.note, `${label}.note`) }),
     spec: string(candidate.spec, `${label}.spec`),
     file: string(candidate.file, `${label}.file`),
     viewport: viewport(candidate.viewport, `${label}.viewport`),

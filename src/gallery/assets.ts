@@ -95,6 +95,16 @@ kbd { padding: 1px 5px; border: 1px solid var(--line); border-bottom-width: 2px;
 .card-title { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
 .card-title h3 { margin: 0; overflow-wrap: anywhere; font-size: 18px; }
 .test-title { margin: 8px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+.shot-note {
+  margin: 8px 0 0; padding: 4px; color: var(--text); white-space: pre-wrap;
+  overflow-wrap: anywhere; max-height: 8rem; overflow: auto;
+}
+.shot-note.more-below { box-shadow: inset 0 -10px 8px -8px color-mix(in srgb, var(--text) 22%, transparent); }
+.shot-note.more-above { box-shadow: inset 0 10px 8px -8px color-mix(in srgb, var(--text) 22%, transparent); }
+.shot-note.more-above.more-below {
+  box-shadow: inset 0 10px 8px -8px color-mix(in srgb, var(--text) 22%, transparent),
+    inset 0 -10px 8px -8px color-mix(in srgb, var(--text) 22%, transparent);
+}
 .kind { color: var(--muted); white-space: nowrap; font-size: 12px; }
 .meta { margin: 10px 0; }
 .meta span { padding: 4px 7px; border-radius: 6px; background: var(--panel-2); font-size: 12px; }
@@ -175,6 +185,20 @@ export const GALLERY_SCRIPT = `
   let activeFilter = 'all';
   let returnFocus = null;
   let reconcile = () => {};
+
+  const notes = document.querySelectorAll('.shot-note');
+  const updateNote = (note) => {
+    note.classList.toggle('more-above', note.scrollTop > 0);
+    note.classList.toggle('more-below', note.scrollTop + note.clientHeight < note.scrollHeight - 1);
+  };
+  const noteObserver = new ResizeObserver((entries) => {
+    entries.forEach((entry) => updateNote(entry.target));
+  });
+  notes.forEach((note) => {
+    updateNote(note);
+    note.addEventListener('scroll', () => updateNote(note), { passive: true });
+    noteObserver.observe(note);
+  });
 
   const sourceFor = (card) => card.querySelector('[data-original]');
   const unload = (card) => {

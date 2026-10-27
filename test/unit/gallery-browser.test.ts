@@ -179,6 +179,7 @@ beforeAll(async () => {
         durationMs: index,
         video: null,
         trace: null,
+        ...(index === 0 && { note: 'Unique note-only phrase\n' + 'longword'.repeat(1000) }),
       }),
     )
   }
@@ -206,6 +207,61 @@ afterAll(async () => {
 })
 
 describe('gallery browser behavior', () => {
+  it('searches notes and scrolls a bounded note by keyboard at narrow width', async () => {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      colorScheme: 'dark',
+    })
+    const page = await context.newPage()
+    await page.goto(galleryUrl)
+    await page.locator('#search').fill('unique note-only phrase')
+    expect(await page.locator('.card:not(.hidden)').count()).toBe(1)
+    const note = page.getByRole('group', { name: 'Note for <script>inert</script>' })
+    expect(await note.isVisible()).toBe(true)
+    const before = await note.evaluate((element) => ({
+      height: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      width: element.getBoundingClientRect().width,
+    }))
+    expect(before.height).toBeLessThan(before.scrollHeight)
+    expect(before.height).toBeLessThanOrEqual(128)
+    expect(before.width).toBeLessThanOrEqual(390)
+    expect(await note.evaluate((element) => element.classList.contains('more-below'))).toBe(true)
+    expect(await note.evaluate((element) => element.classList.contains('more-above'))).toBe(false)
+    await page.locator('#search').focus()
+    for (let index = 0; index < 12; index++) {
+      if (await note.evaluate((element) => element.ownerDocument.activeElement === element)) break
+      await page.keyboard.press('Tab')
+    }
+    await expectFocus(page, note)
+    await page.keyboard.press('PageDown')
+    await page.waitForFunction(
+      (target) => target.scrollTop > 0 && target.classList.contains('more-above'),
+      await note.elementHandle(),
+    )
+    expect(await note.evaluate((element) => element.classList.contains('more-above'))).toBe(true)
+    await note.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+    })
+    await page.waitForFunction(
+      (target) => !target.classList.contains('more-below'),
+      await note.elementHandle(),
+    )
+    expect(await note.evaluate((element) => element.classList.contains('more-above'))).toBe(true)
+    await note.evaluate((element) => {
+      element.textContent = 'Short note.'
+    })
+    await page.waitForFunction(
+      (target) => !target.classList.contains('more-above'),
+      await note.elementHandle(),
+    )
+    expect(await note.evaluate((element) => element.classList.contains('more-below'))).toBe(false)
+    expect(
+      await page.evaluate<boolean>('document.documentElement.scrollWidth <= window.innerWidth'),
+    ).toBe(true)
+    await context.close()
+  })
+
   it('keeps 60-shot overview decode bounded and supports keyboard-complete inspection at 390px', async () => {
     const context = await browser.newContext({
       viewport: { width: 390, height: 844 },

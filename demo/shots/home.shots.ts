@@ -5,7 +5,7 @@ walkthrough('home states', async ({ page }) => {
 
   await page.getByLabel('Project name').fill('Shotwright demo')
   await page.getByLabel('Review focus').fill('Modal and dark theme states')
-  await shot(page, 'form-filled')
+  await shot(page, 'form-filled', { note: 'Project form with the review focus filled in.' })
 
   await page.getByRole('button', { name: 'Review summary' }).click()
   const dialog = page.getByRole('dialog')

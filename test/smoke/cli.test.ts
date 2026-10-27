@@ -621,7 +621,7 @@ function expectFiveShotGallery(): void {
     const title = test!.titlePath?.join(' › ') ?? test!.title
     expect(card).toContain(`<p class="test-title">${title}</p>`)
     expect(card).toContain(
-      `data-search="${shot.name.toLowerCase()} ${shot.spec.toLowerCase()} ${title.toLowerCase()}"`,
+      `data-search="${shot.name.toLowerCase()} ${shot.spec.toLowerCase()} ${title.toLowerCase()}${shot.note ? ` ${shot.note.toLowerCase()}` : ''}"`,
     )
     if (shot.viewport === null) {
       expect(card).toContain('Viewport unavailable')

@@ -117,7 +117,9 @@ function renderCard(
   const entry = shot.entry
   const tags = `${viewportKey}${entry.fullPage ? '' : ' cropped'}`
   const title = test?.titlePath?.join(' › ') ?? test?.title
-  const search = `${entry.name} ${entry.spec} ${title ?? ''}`.toLowerCase()
+  const search = `${entry.name} ${entry.spec} ${title ?? ''} ${entry.note ?? ''}`
+    .trim()
+    .toLowerCase()
   const kind = entry.fullPage ? 'full page' : 'not full page'
   const image = shot.image
   const media =
@@ -149,6 +151,7 @@ function renderCard(
           <div class="card-body">
             <div class="card-title"><h3>${escapeHtml(entry.name)}</h3><span class="kind">${kind}</span><span class="badge test-status-${escapeHtml(testStatus)}">test: ${escapeHtml(testStatus)}</span>${entry.checked ? '<span class="badge">checked</span>' : ''}</div>
             ${title === undefined ? '' : `<p class="test-title">${escapeHtml(title)}</p>`}
+            ${entry.note === undefined ? '' : `<div class="shot-note" tabindex="0" role="group" aria-label="${escapeHtml(`Note for ${entry.name}`)}">${escapeHtml(entry.note)}</div>`}
             <div class="meta"><span>${escapeHtml(viewportLabel(shot))}</span><span>${escapeHtml(deviceScaleFactorLabel(shot))}</span><span>${number(entry.durationMs)} ms</span>${derived}</div>
             ${actions}
             <details>

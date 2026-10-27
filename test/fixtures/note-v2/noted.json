@@ -1,0 +1,46 @@
+{
+  "manifestVersion": 2,
+  "runId": "run",
+  "startedAt": "2026-07-29T00:00:00.000Z",
+  "finishedAt": "2026-07-29T00:00:01.000Z",
+  "shotwrightVersion": "0.3.0",
+  "playwrightVersion": "1.64.1",
+  "flags": {
+    "only": [],
+    "video": false,
+    "trace": false
+  },
+  "status": "passed",
+  "publication": {
+    "gallery": {
+      "ok": true
+    },
+    "evidence": {
+      "ok": true
+    }
+  },
+  "tests": [],
+  "shots": [
+    {
+      "name": "row",
+      "spec": "home.shots.ts",
+      "file": "shots/home/row.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "deviceScaleFactor": 1,
+      "fullPage": true,
+      "capturedAt": "2026-07-29T00:00:00.000Z",
+      "durationMs": 10,
+      "video": null,
+      "trace": null,
+      "testId": null,
+      "checked": false,
+      "retry": 0,
+      "note": "Row A <script> & review\nlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongwordlongword"
+    }
+  ],
+  "artifacts": [],
+  "failures": []
+}
