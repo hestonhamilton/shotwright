@@ -75,3 +75,8 @@ bd.db
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default
 # since no pattern above ignores them.
+
+# Added by hand for bd 1.3.x (shotwright-746.39): the patterns bd doctor
+# reports missing. doctor --fix is not run in this repo.
+*.gate.lock*
+dolt-server-config.yaml
