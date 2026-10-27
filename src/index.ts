@@ -46,6 +46,16 @@ export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTest
       testMatch: [],
     })
   }
+  if (opts.projects !== undefined) {
+    const conflicting = [
+      opts.viewport !== undefined && 'viewport',
+      opts.deviceScaleFactor !== undefined && 'deviceScaleFactor',
+    ].filter(Boolean)
+    if (conflicting.length)
+      throw new Error(
+        `shotwright: ${conflicting.join(' and ')} cannot be used with projects; set them in each project.use`,
+      )
+  }
   if (process.env.SHOTWRIGHT_RUN !== '1' && !process.argv.includes('--list')) {
     throw new Error('shotwright: use `shotwright run` to execute capture specs')
   }

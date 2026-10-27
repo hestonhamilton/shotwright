@@ -11,7 +11,7 @@ test('no-op check and fullPage bytes', async ({page}) => {
   const source=path.join(runDir,'source.txt');fs.writeFileSync(source,'from path')
   await artifact('path.txt',{path:source,contentType:'text/plain'})
 })
-test('filtered callback does not execute', async ({page}) => {
+test('filtered callback fails without capture', async ({page}) => {
   await shot(page,'excluded',{check:()=>{throw new Error('filtered callback executed')}})
 })
 test('thrown callback writes no capture', async ({page}) => {

@@ -64,6 +64,63 @@ describe('defineShotsConfig', () => {
     expect(defineShotsConfig().use?.launchOptions).toBeUndefined()
     expect(defineShotsConfig().projects?.[0]?.use?.launchOptions).toBeUndefined()
   })
+  it.each([
+    [{ viewport: { width: 800, height: 600 } }, /shotwright: viewport.*project\.use/],
+    [{ deviceScaleFactor: 1 }, /shotwright: deviceScaleFactor.*project\.use/],
+    [
+      { viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 },
+      /shotwright: viewport and deviceScaleFactor.*project\.use/,
+    ],
+  ])(
+    'rejects explicit projects with top-level device settings before creating a run',
+    (device, error) => {
+      const out = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-conflict-'))
+      try {
+        expect(() =>
+          defineShotsConfig({ outputDir: out, projects: [{ name: 'mobile' }], ...device }),
+        ).toThrow(error)
+        expect(process.env.SHOTWRIGHT_RUN_DIR).toBeUndefined()
+        expect(fs.readdirSync(out)).toEqual([])
+      } finally {
+        fs.rmSync(out, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('preserves explicit project use and project grep, plus top-level grep filters', () => {
+    const config = defineShotsConfig({
+      grep: /safe/,
+      grepInvert: /blocked/,
+      projects: [
+        {
+          name: 'mobile',
+          grep: /mobile-safe/,
+          grepInvert: /mobile-blocked/,
+          use: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 },
+        },
+      ],
+    })
+    expect(config.grep).toEqual(/safe/)
+    expect(config.grepInvert).toEqual(/blocked/)
+    expect(config.projects?.[0]?.grep).toEqual(/mobile-safe/)
+    expect(config.projects?.[0]?.grepInvert).toEqual(/mobile-blocked/)
+    expect(config.projects?.[0]?.use).toMatchObject({
+      viewport: { width: 390, height: 844 },
+      deviceScaleFactor: 3,
+    })
+  })
+
+  it('sets default-project device values above values carried by global use', () => {
+    const config = defineShotsConfig({
+      use: { viewport: { width: 320, height: 480 }, deviceScaleFactor: 1 },
+      viewport: { width: 1280, height: 720 },
+      deviceScaleFactor: 2,
+    })
+    expect(config.use?.viewport).toEqual({ width: 320, height: 480 })
+    expect(config.use?.deviceScaleFactor).toBe(1)
+    expect(config.projects?.[0]?.use?.viewport).toEqual({ width: 1280, height: 720 })
+    expect(config.projects?.[0]?.use?.deviceScaleFactor).toBe(2)
+  })
   it('guard refuses bare config evaluation before run directory creation', () => {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-guard-'))
     try {
@@ -171,6 +228,27 @@ describe('defineShotsConfig', () => {
       expect(fs.readdirSync(root)).toEqual(['probe-output'])
     } finally {
       process.chdir(priorCwd)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('probes a conflicting config without allocating a run', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-conflict-probe-'))
+    const probeFile = path.join(root, 'probe-output')
+    try {
+      vi.stubEnv('SHOTWRIGHT_CONFIG_PROBE_FILE', probeFile)
+      expect(() =>
+        defineShotsConfig({
+          outputDir: path.join(root, 'runs'),
+          projects: [{ name: 'mobile' }],
+          viewport: { width: 800, height: 600 },
+          deviceScaleFactor: 1,
+        }),
+      ).not.toThrow()
+      expect(fs.readFileSync(probeFile, 'utf8')).toBe(path.join(root, 'runs'))
+      expect(process.env.SHOTWRIGHT_RUN_DIR).toBeUndefined()
+      expect(fs.readdirSync(root)).toEqual(['probe-output'])
+    } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
   })

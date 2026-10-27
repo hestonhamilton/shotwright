@@ -162,13 +162,13 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
     )
   }
   validateShotName(name)
+  if (opts.check) await opts.check()
   if (!shouldCapture(name, parseOnly(process.env.SHOTWRIGHT_ONLY))) return
 
   const info = test.info()
   const spec = loadedSpec(info)
   const file = `shots/${storageSpec(spec)}/${name}.png`
   const abs = path.join(runDir, file)
-  if (opts.check) await opts.check()
   const fullPage = opts.fullPage ?? (opts.clip === undefined && opts.locator === undefined)
   const started = Date.now()
   const fd = claimShot(runDir, file, spec, name, info.testId, info.retry)
