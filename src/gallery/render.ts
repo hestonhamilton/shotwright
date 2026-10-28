@@ -128,7 +128,7 @@ function renderCard(
       ? `<div class="media broken"><div><strong>Screenshot unavailable</strong><p>${escapeHtml(entry.file)}</p><p>${escapeHtml(shot.imageError ?? 'Referenced PNG is unavailable')}</p></div></div>`
       : `<button class="media viewer-open" type="button" disabled data-viewer-open="download-${index}" aria-label="View full screenshot: ${escapeHtml(entry.name)}">
             <div class="placeholder" style="aspect-ratio:${image.width}/${image.height}">
-              <div class="placeholder-copy">Original queued · ${number(image.width)}×${number(image.height)} intrinsic pixels</div>
+              <div class="placeholder-copy">Original available to download · ${number(image.width)}×${number(image.height)} intrinsic pixels</div>
             </div>
           </button>`
   const actions =
@@ -366,15 +366,15 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
   const croppedCount = manifest.shots.filter((shot) => !shot.fullPage).length
   const { filters, keyFor } = viewportFilters(model)
   const chips = [
-    `<button class="chip" type="button" data-filter="all" aria-pressed="true">All · ${shotCount}</button>`,
+    `<button class="chip" type="button" data-filter="all" aria-pressed="true" disabled>All · ${shotCount}</button>`,
     ...filters.map(
       (filter) =>
-        `<button class="chip" type="button" data-filter="${filter.key}" aria-pressed="false">${escapeHtml(filter.label)} · ${filter.count}</button>`,
+        `<button class="chip" type="button" data-filter="${filter.key}" aria-pressed="false" disabled>${escapeHtml(filter.label)} · ${filter.count}</button>`,
     ),
     ...(croppedCount === 0
       ? []
       : [
-          `<button class="chip" type="button" data-filter="cropped" aria-pressed="false">Not full page · ${croppedCount}</button>`,
+          `<button class="chip" type="button" data-filter="cropped" aria-pressed="false" disabled>Not full page · ${croppedCount}</button>`,
         ]),
   ].join('\n')
   let shotIndex = 0
@@ -464,7 +464,9 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
         <span class="badge">${hasArtifacts ? 'Sibling artifacts grouped by identical manifest path' : 'Video and trace absent in this run'}</span>
       </div>
       ${manifest.runError ? `<p class="artifact-warning" role="alert">${escapeHtml(manifest.runError.message)}</p>` : ''}
-      <dl class="runfacts">
+      <details class="run-facts-disclosure">
+        <summary>Run facts</summary>
+        <dl class="runfacts">
         <div><dt>Started</dt><dd>${escapeHtml(manifest.startedAt)}</dd></div>
         <div><dt>Finished</dt><dd>${escapeHtml(manifest.finishedAt)}</dd></div>
         <div><dt>Elapsed</dt><dd>${elapsed(manifest.startedAt, manifest.finishedAt)}</dd></div>
@@ -475,13 +477,23 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
         <div><dt>Video flag</dt><dd>${manifest.flags.video ? 'On' : 'Off'}</dd></div>
         <div><dt>Trace flag</dt><dd>${manifest.flags.trace ? 'On' : 'Off'}</dd></div>
         <div><dt>Manifest</dt><dd>v${manifest.manifestVersion} · ${number(model.manifestByteLength)} bytes</dd></div>
-      </dl>
+        </dl>
+      </details>
+      <script>
+        (() => {
+          const facts = document.querySelector('.run-facts-disclosure');
+          const mobile = matchMedia('(max-width: 760px)');
+          facts.open = !mobile.matches;
+          mobile.addEventListener('change', (event) => { facts.open = !event.matches; });
+          document.documentElement.classList.add('run-facts-ready');
+        })();
+      </script>
     </header>
     <section class="controls" aria-label="Gallery filters">
-      <label><span class="eyebrow">Find a shot</span><input id="search" class="search" type="search" placeholder="Shot, spec, or test title; press / to focus"></label>
+      <label><span class="eyebrow">Find a shot</span><input id="search" class="search" type="search" placeholder="Shot, spec, or test title" disabled></label>
       <div class="chips" aria-label="Viewport filters">${chips}</div>
       <p id="result-count" class="result-count" role="status">${shotCount} of ${shotCount} shots shown</p>
-      <div class="keyboard"><kbd>/</kbd> search · <kbd>Esc</kbd> clear · <kbd>Tab</kbd> actions. Every touch target is at least 44 px high.</div>
+      <div class="keyboard" hidden><kbd>/</kbd> search · <kbd>Esc</kbd> clear · <kbd>Tab</kbd> actions. Every touch target is at least 44 px high.</div>
     </section>
     <noscript><p class="artifact-warning"><strong>JavaScript is off.</strong> Screenshot metadata and original download links remain available; overview loading, filters, and the screenshot viewer require JavaScript.</p></noscript>
     <section id="no-match" class="empty hidden" aria-live="polite"><h2>No matching screenshots</h2><p>Try another search or viewport filter.</p><button class="action" type="button" data-clear-search>Clear search</button> <button class="action" type="button" data-clear-filter>Clear filter</button></section>

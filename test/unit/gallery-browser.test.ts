@@ -247,6 +247,130 @@ afterAll(async () => {
 })
 
 describe('gallery browser behavior', () => {
+  it('keeps run facts reachable while showing screenshot media in the first mobile viewport', async () => {
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 320, height: 640 },
+      { width: 1280, height: 800 },
+    ]) {
+      const context = await browser.newContext({ viewport })
+      const page = await context.newPage()
+      await page.goto(galleryUrl)
+      const facts = page.locator('.run-facts-disclosure')
+      const summary = facts.locator('summary')
+      expect(await page.locator('.status .badge').count()).toBe(4)
+      expect(await page.locator('#search').isEnabled()).toBe(true)
+      expect(await page.locator('#search').getAttribute('placeholder')).toContain(
+        'press / to focus',
+      )
+      expect(await page.locator('.keyboard').isVisible()).toBe(viewport.width > 760)
+      expect(await page.locator('[data-filter]').first().isEnabled()).toBe(true)
+      if (viewport.width <= 760) {
+        expect(await facts.evaluate((element) => element.hasAttribute('open'))).toBe(false)
+        const media = await page.locator('.card').first().locator('.media').boundingBox()
+        expect(media).not.toBeNull()
+        expect(
+          Math.min(media!.y + media!.height, viewport.height) - Math.max(media!.y, 0),
+        ).toBeGreaterThanOrEqual(120)
+        await page.keyboard.press('Tab')
+        await page.keyboard.press('Tab')
+        await expectFocus(page, summary)
+        await page.keyboard.press('Enter')
+        expect(await facts.evaluate((element) => element.hasAttribute('open'))).toBe(true)
+        expect(await facts.locator('dt:visible').count()).toBe(10)
+        await page.keyboard.press('Space')
+        expect(await facts.evaluate((element) => element.hasAttribute('open'))).toBe(false)
+        if (viewport.width === 390) {
+          await page.setViewportSize({ width: 700, height: 844 })
+          expect(await facts.evaluate((element) => element.hasAttribute('open'))).toBe(false)
+          await page.setViewportSize({ width: 1280, height: 800 })
+          await page.waitForFunction(
+            (element) => element.hasAttribute('open'),
+            await facts.elementHandle(),
+          )
+          await page.setViewportSize(viewport)
+          await page.waitForFunction(
+            (element) => !element.hasAttribute('open'),
+            await facts.elementHandle(),
+          )
+        }
+      } else {
+        expect(await facts.evaluate((element) => element.hasAttribute('open'))).toBe(true)
+        expect(
+          await summary.evaluate(
+            (element) => element.ownerDocument.defaultView!.getComputedStyle(element).display,
+          ),
+        ).toBe('none')
+        expect(await facts.locator('dt:visible').count()).toBe(10)
+        expect(await facts.evaluate((element) => element.closest('.topbar') !== null)).toBe(true)
+        expect(
+          await facts
+            .locator('.runfacts')
+            .evaluate(
+              (element) =>
+                element.ownerDocument
+                  .defaultView!.getComputedStyle(element)
+                  .gridTemplateColumns.split(' ').length,
+            ),
+        ).toBe(4)
+      }
+      await context.close()
+    }
+
+    for (const viewport of [
+      { width: 320, height: 640 },
+      { width: 1280, height: 800 },
+    ]) {
+      const context = await browser.newContext({ viewport, javaScriptEnabled: false })
+      const page = await context.newPage()
+      await page.goto(galleryUrl)
+      const facts = page.locator('.run-facts-disclosure')
+      expect(await facts.evaluate((element) => element.hasAttribute('open'))).toBe(false)
+      expect(await page.locator('#search').isDisabled()).toBe(true)
+      expect(await page.locator('#search').getAttribute('placeholder')).toBe(
+        'Shot, spec, or test title',
+      )
+      expect(await page.locator('.keyboard').isHidden()).toBe(true)
+      expect(await page.locator('body').innerText()).not.toContain('Original queued')
+      expect(await page.locator('.placeholder-copy').first().textContent()).toContain(
+        'Original available to download',
+      )
+      expect(await page.locator('[data-filter]:enabled').count()).toBe(0)
+      await page.keyboard.press('Tab')
+      await page.keyboard.press('Tab')
+      await expectFocus(page, facts.locator('summary'))
+      await page.keyboard.press(viewport.width === 320 ? 'Enter' : 'Space')
+      expect(await facts.locator('dt:visible').count()).toBe(10)
+      await context.close()
+    }
+  })
+
+  it('keeps a long mobile result count clear of the search label and input', async () => {
+    const context = await browser.newContext({ viewport: { width: 320, height: 640 } })
+    const page = await context.newPage()
+    try {
+      await page.goto(galleryUrl)
+      await page.locator('#result-count').evaluate((element) => {
+        element.textContent = '1234 of 1234 shots shown'
+      })
+      const count = await page.locator('#result-count').boundingBox()
+      const label = await page.locator('.controls label .eyebrow').boundingBox()
+      const input = await page.locator('#search').boundingBox()
+      expect(count).not.toBeNull()
+      expect(label).not.toBeNull()
+      expect(input).not.toBeNull()
+      const overlaps = (left: NonNullable<typeof count>, right: NonNullable<typeof count>) =>
+        left.x < right.x + right.width &&
+        left.x + left.width > right.x &&
+        left.y < right.y + right.height &&
+        left.y + left.height > right.y
+      expect(overlaps(count!, label!)).toBe(false)
+      expect(overlaps(count!, input!)).toBe(false)
+    } finally {
+      await context.close()
+    }
+  })
+
   it('centers a small image and offers zoom only after the viewport makes it necessary', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 844 } })
     const page = await context.newPage()
@@ -796,7 +920,7 @@ describe('gallery browser behavior', () => {
     })
     expect(await mediaTextState(noScriptTallCard.locator('.media'))).toEqual({
       placeholderVisibility: 'visible',
-      visibleText: ['Original queued · 24×96 intrinsic pixels'],
+      visibleText: ['Original available to download · 24×96 intrinsic pixels'],
       visibleTextIntersectingImage: 0,
     })
     expect(await noScriptTallCard.locator('a[data-original]').getAttribute('download')).toBe(

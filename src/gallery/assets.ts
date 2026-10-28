@@ -50,6 +50,8 @@ h1 { margin: 0; overflow-wrap: anywhere; font-size: clamp(22px, 4vw, 34px); line
   display: grid; grid-template-columns: repeat(4, minmax(110px, 1fr));
   gap: 10px; margin: 18px 0 0;
 }
+.run-facts-disclosure { margin-top: 10px; }
+.run-facts-disclosure summary { min-height: 44px; }
 .runfacts div { min-width: 0; padding: 10px; border-left: 2px solid var(--line); }
 dt { color: var(--muted); font-size: 12px; }
 dd { margin: 2px 0 0; overflow-wrap: anywhere; font-weight: 650; }
@@ -64,9 +66,11 @@ dd { margin: 2px 0 0; overflow-wrap: anywhere; font-weight: 650; }
   padding: 0 13px; background: var(--panel); color: var(--text);
 }
 .chip { min-height: 44px; cursor: pointer; }
+.chip:disabled { cursor: default; opacity: .65; }
 .chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .keyboard, .muted { color: var(--muted); }
 .keyboard { grid-column: 1 / -1; font-size: 12px; }
+.keyboard[hidden] { display: none; }
 kbd { padding: 1px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--panel-2); }
 .spec {
   margin: 18px 0 28px; overflow: clip; border: 1px solid var(--line);
@@ -148,20 +152,32 @@ video { display: block; width: 100%; min-height: 44px; aspect-ratio: 16 / 9; bac
 footer { margin: 26px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); }
 footer .source { margin: 8px 0 0; font-size: .9em; overflow-wrap: anywhere; }
 @media (max-width: 760px) {
-  .shell { padding: 10px; }
-  .topbar { padding: 16px; }
+  .shell { padding: 8px; }
+  .topbar { padding: 8px; }
+  .status { margin-top: 6px; gap: 4px; }
+  .badge { padding: 3px 6px; font-size: 12px; }
+  .run-facts-disclosure { margin-top: 4px; }
   .runfacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .controls { grid-template-columns: minmax(0, 1fr); }
-  .chips { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; padding-bottom: 2px; }
+  .controls { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin: 6px 0; padding: 8px; }
+  .controls label { grid-column: 1 / -1; }
+  .result-count { align-self: center; margin: 0; font-size: 12px; white-space: nowrap; }
+  .controls .keyboard { display: none; }
+  .chips { flex-wrap: nowrap; min-width: 0; max-width: 100%; overflow-x: auto; padding-bottom: 2px; }
   .chip { flex: 0 0 auto; }
-  .cards { grid-template-columns: minmax(0, 1fr); padding: 10px; }
+  .cards { grid-template-columns: minmax(0, 1fr); padding: 6px; }
   .card:last-child:nth-child(odd) { grid-column: auto; }
-  .spec-head { flex-wrap: wrap; align-items: start; }
+  .spec { margin: 8px 0 20px; }
+  .spec-head { flex-wrap: wrap; align-items: start; gap: 6px; padding: 6px; }
+  .spec-head p { display: none; }
   .media { min-height: 160px; padding: 10px; }
   .detailgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .actions .action { flex: 1 1 130px; }
   .artifacts { margin: 0 10px 10px; }
   .video-layout { grid-template-columns: minmax(0, 1fr); }
+}
+@media (min-width: 761px) {
+  .run-facts-ready .run-facts-disclosure[open] { margin-top: 0; }
+  .run-facts-ready .run-facts-disclosure[open] > summary { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
@@ -253,6 +269,10 @@ export const GALLERY_SCRIPT = `
     apply();
   });
   search.addEventListener('input', apply);
+  search.disabled = false;
+  document.querySelectorAll('.placeholder-copy').forEach((copy) => {
+    copy.textContent = copy.textContent.replace('Original available to download', 'Original queued');
+  });
   document.querySelectorAll('[data-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       activeFilter = button.dataset.filter;
@@ -261,6 +281,7 @@ export const GALLERY_SCRIPT = `
       });
       apply();
     });
+    button.disabled = false;
   });
   document.querySelectorAll('.load-action').forEach((button) => {
     button.addEventListener('click', () => load(button.closest('.card')));
@@ -321,6 +342,8 @@ export const GALLERY_SCRIPT = `
       search.blur();
     }
   });
+  search.placeholder += '; press / to focus';
+  document.querySelector('.keyboard').hidden = false;
 
   const debug = document.querySelector('#debug-overlay');
   const updateDebug = () => {
