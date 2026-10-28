@@ -132,20 +132,21 @@ export const VIEWER_SCRIPT = `
     void ready(token, anchor);
   };
   window.addEventListener('resize', refresh);
-  let watchingDpr = false;
-  let lastDpr = dpr();
+  let unwatchDpr = () => {};
   const watchDpr = () => {
-    if (watchingDpr) return;
-    watchingDpr = true;
-    lastDpr = dpr();
-    const tick = () => {
-      if (!dialog.open) { watchingDpr = false; return; }
-      if (dpr() !== lastDpr) { lastDpr = dpr(); refresh(); }
-      requestAnimationFrame(tick);
+    unwatchDpr();
+    const query = window.matchMedia('(resolution: ' + dpr() + 'dppx)');
+    const onChange = () => {
+      if (!dialog.open) return;
+      watchDpr();
+      refresh();
     };
-    requestAnimationFrame(tick);
+    query.addEventListener('change', onChange);
+    unwatchDpr = () => query.removeEventListener('change', onChange);
   };
   dialog.addEventListener('close', () => {
+    if (dialog.open) return;
+    unwatchDpr();
     ++generation;
     dialog.removeAttribute('data-viewer-state');
     surface.replaceChildren();

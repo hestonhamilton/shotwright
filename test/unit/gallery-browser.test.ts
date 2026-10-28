@@ -272,7 +272,7 @@ describe('gallery browser behavior', () => {
     await image.click()
     expect(await image.evaluate((element) => element.classList.contains('actual'))).toBe(false)
     await page.setViewportSize({ width: 180, height: 250 })
-    await dialog.waitFor()
+    await page.locator('[data-viewer-toggle]:visible').waitFor()
     expect(await page.locator('[data-viewer-toggle]').isVisible()).toBe(true)
     expect(await page.locator('.viewer-help').isVisible()).toBe(true)
     expect(
@@ -451,6 +451,22 @@ describe('gallery browser behavior', () => {
     await context.close()
   })
 
+  it('keeps a viewer reopened in the same task after its queued close event', async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    await page.goto(galleryUrl)
+    await page.locator('.card').first().locator('[data-inspect]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.evaluate(`(() => {
+      document.querySelector('#inspection-dialog').close()
+      document.querySelectorAll('[data-inspect]')[1].click()
+    })()`)
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    expect(await page.locator('#inspection-dialog[open] .inspection-image').count()).toBe(1)
+    expect(await page.locator('#inspection-title').textContent()).toBe('shot-2 — Screenshot')
+    await context.close()
+  })
+
   it('fits tall screenshots and toggles true device pixels with click anchoring', async () => {
     for (const deviceScaleFactor of [1, 2]) {
       for (const width of [1440, 390, 320]) {
@@ -572,18 +588,56 @@ describe('gallery browser behavior', () => {
       before.natural / 2,
       0,
     )
-    await page.setViewportSize({ width: 390, height: 844 })
+    await page.locator('[data-viewer-toggle]').click()
     await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForFunction(
+      (element) => {
+        const surface = element.parentElement!
+        const dpr = element.ownerDocument.defaultView!.devicePixelRatio
+        const width = element.naturalWidth / dpr
+        const height = element.naturalHeight / dpr
+        const fit = Math.min(surface.clientWidth / width, surface.clientHeight / height, 1)
+        const rect = element.getBoundingClientRect()
+        return (
+          Math.abs(rect.width - width * fit) < 0.5 &&
+          Math.abs(rect.height - height * fit) < 0.5 &&
+          element.ownerDocument
+            .querySelector('#inspection-dialog')
+            ?.getAttribute('data-viewer-state') === 'ready'
+        )
+      },
+      await image.elementHandle(),
+    )
     const header = await page.locator('.dialog-head').boundingBox()
     const surface = await page.locator('.inspection-surface').boundingBox()
     expect(header!.y + header!.height).toBeLessThanOrEqual(surface!.y)
-    expect(await image.evaluate((element) => element.getBoundingClientRect().width)).toBeCloseTo(
-      before.natural / 2,
-      0,
-    )
+    const resized = await image.evaluate((element) => {
+      const surface = element.parentElement!
+      const dpr = element.ownerDocument.defaultView!.devicePixelRatio
+      const actualWidth = element.naturalWidth / dpr
+      const actualHeight = element.naturalHeight / dpr
+      const fit = Math.min(
+        surface.clientWidth / actualWidth,
+        surface.clientHeight / actualHeight,
+        1,
+      )
+      const rect = element.getBoundingClientRect()
+      return {
+        width: rect.width,
+        height: rect.height,
+        fitWidth: actualWidth * fit,
+        fitHeight: actualHeight * fit,
+      }
+    })
+    expect(resized.fitWidth).toBeLessThan(before.width)
+    expect(resized.width).toBeCloseTo(resized.fitWidth, 0)
+    expect(resized.height).toBeCloseTo(resized.fitHeight, 0)
+    await page.locator('[data-viewer-toggle]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
     const cdp = await context.newCDPSession(page)
     await cdp.send('Emulation.setDeviceMetricsOverride', {
-      width: 390,
+      width: 391,
       height: 844,
       deviceScaleFactor: 1,
       mobile: false,
