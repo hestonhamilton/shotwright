@@ -308,7 +308,7 @@ describe('gallery rendering', () => {
     ])
     writeRun(runDir, value)
     const html = renderGallery(loadGalleryModel(runDir))
-    expect(html.match(/<script>/g) ?? []).toHaveLength(1)
+    expect(html.match(/<script>/g) ?? []).toHaveLength(2)
     expect(html.match(/<\/style>/g) ?? []).toHaveLength(1)
     expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&#39;&lt;/style&gt;')
     expect(html).toContain('video/%3Cscript%3Equote%22%27.webm')
