@@ -260,6 +260,10 @@ describe('gallery browser behavior', () => {
       const summary = facts.locator('summary')
       expect(await page.locator('.status .badge').count()).toBe(4)
       expect(await page.locator('#search').isEnabled()).toBe(true)
+      expect(await page.locator('#search').getAttribute('placeholder')).toContain(
+        'press / to focus',
+      )
+      expect(await page.locator('.keyboard').isVisible()).toBe(viewport.width > 760)
       expect(await page.locator('[data-filter]').first().isEnabled()).toBe(true)
       if (viewport.width <= 760) {
         expect(await facts.evaluate((element) => element.hasAttribute('open'))).toBe(false)
@@ -323,12 +327,46 @@ describe('gallery browser behavior', () => {
       const facts = page.locator('.run-facts-disclosure')
       expect(await facts.evaluate((element) => element.hasAttribute('open'))).toBe(false)
       expect(await page.locator('#search').isDisabled()).toBe(true)
+      expect(await page.locator('#search').getAttribute('placeholder')).toBe(
+        'Shot, spec, or test title',
+      )
+      expect(await page.locator('.keyboard').isHidden()).toBe(true)
+      expect(await page.locator('body').innerText()).not.toContain('Original queued')
+      expect(await page.locator('.placeholder-copy').first().textContent()).toContain(
+        'Original available to download',
+      )
       expect(await page.locator('[data-filter]:enabled').count()).toBe(0)
       await page.keyboard.press('Tab')
       await page.keyboard.press('Tab')
       await expectFocus(page, facts.locator('summary'))
       await page.keyboard.press(viewport.width === 320 ? 'Enter' : 'Space')
       expect(await facts.locator('dt:visible').count()).toBe(10)
+      await context.close()
+    }
+  })
+
+  it('keeps a long mobile result count clear of the search label and input', async () => {
+    const context = await browser.newContext({ viewport: { width: 320, height: 640 } })
+    const page = await context.newPage()
+    try {
+      await page.goto(galleryUrl)
+      await page.locator('#result-count').evaluate((element) => {
+        element.textContent = '1234 of 1234 shots shown'
+      })
+      const count = await page.locator('#result-count').boundingBox()
+      const label = await page.locator('.controls label .eyebrow').boundingBox()
+      const input = await page.locator('#search').boundingBox()
+      expect(count).not.toBeNull()
+      expect(label).not.toBeNull()
+      expect(input).not.toBeNull()
+      const overlaps = (left: NonNullable<typeof count>, right: NonNullable<typeof count>) =>
+        left.x < right.x + right.width &&
+        left.x + left.width > right.x &&
+        left.y < right.y + right.height &&
+        left.y + left.height > right.y
+      expect(overlaps(count!, label!)).toBe(false)
+      expect(overlaps(count!, input!)).toBe(false)
+    } finally {
       await context.close()
     }
   })
@@ -882,7 +920,7 @@ describe('gallery browser behavior', () => {
     })
     expect(await mediaTextState(noScriptTallCard.locator('.media'))).toEqual({
       placeholderVisibility: 'visible',
-      visibleText: ['Original queued · 24×96 intrinsic pixels'],
+      visibleText: ['Original available to download · 24×96 intrinsic pixels'],
       visibleTextIntersectingImage: 0,
     })
     expect(await noScriptTallCard.locator('a[data-original]').getAttribute('download')).toBe(

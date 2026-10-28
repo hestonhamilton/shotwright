@@ -70,6 +70,7 @@ dd { margin: 2px 0 0; overflow-wrap: anywhere; font-weight: 650; }
 .chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .keyboard, .muted { color: var(--muted); }
 .keyboard { grid-column: 1 / -1; font-size: 12px; }
+.keyboard[hidden] { display: none; }
 kbd { padding: 1px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--panel-2); }
 .spec {
   margin: 18px 0 28px; overflow: clip; border: 1px solid var(--line);
@@ -157,10 +158,11 @@ footer .source { margin: 8px 0 0; font-size: .9em; overflow-wrap: anywhere; }
   .badge { padding: 3px 6px; font-size: 12px; }
   .run-facts-disclosure { margin-top: 4px; }
   .runfacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .controls { grid-template-columns: minmax(0, 1fr); gap: 6px; margin: 6px 0; padding: 8px; }
-  .result-count { position: absolute; top: 8px; right: 8px; margin: 0; font-size: 12px; }
+  .controls { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin: 6px 0; padding: 8px; }
+  .controls label { grid-column: 1 / -1; }
+  .result-count { align-self: center; margin: 0; font-size: 12px; white-space: nowrap; }
   .controls .keyboard { display: none; }
-  .chips { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; padding-bottom: 2px; }
+  .chips { flex-wrap: nowrap; min-width: 0; max-width: 100%; overflow-x: auto; padding-bottom: 2px; }
   .chip { flex: 0 0 auto; }
   .cards { grid-template-columns: minmax(0, 1fr); padding: 6px; }
   .card:last-child:nth-child(odd) { grid-column: auto; }
@@ -185,7 +187,6 @@ footer .source { margin: 8px 0 0; font-size: .9em; overflow-wrap: anywhere; }
 export const GALLERY_SCRIPT = `
 (() => {
   const search = document.querySelector('#search');
-  search.disabled = false;
   const cards = Array.from(document.querySelectorAll('.card[data-search]'));
   const live = [];
   let activeFilter = 'all';
@@ -268,6 +269,10 @@ export const GALLERY_SCRIPT = `
     apply();
   });
   search.addEventListener('input', apply);
+  search.disabled = false;
+  document.querySelectorAll('.placeholder-copy').forEach((copy) => {
+    copy.textContent = copy.textContent.replace('Original available to download', 'Original queued');
+  });
   document.querySelectorAll('[data-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       activeFilter = button.dataset.filter;
@@ -337,6 +342,8 @@ export const GALLERY_SCRIPT = `
       search.blur();
     }
   });
+  search.placeholder += '; press / to focus';
+  document.querySelector('.keyboard').hidden = false;
 
   const debug = document.querySelector('#debug-overlay');
   const updateDebug = () => {
