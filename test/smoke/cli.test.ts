@@ -629,7 +629,9 @@ function expectFiveShotGallery(): void {
       expect(card).toContain(`${shot.viewport.width}×${shot.viewport.height}`)
     }
     expect(card).toContain(
-      shot.deviceScaleFactor === null ? 'DSF unavailable' : `DSF ${shot.deviceScaleFactor}`,
+      shot.deviceScaleFactor === null
+        ? 'Device scale factor unavailable'
+        : `Device scale factor ${shot.deviceScaleFactor}`,
     )
     expect(card).toContain(
       `<span class="kind">${shot.fullPage ? 'full page' : 'not full page'}</span>`,
@@ -824,6 +826,7 @@ function expectPackInventory(): void {
       'dist/gallery/render.js',
       'dist/gallery/resolve.js',
       'dist/gallery/server.js',
+      'dist/gallery/viewer.js',
     ])
     expect(packed.files).toEqual(
       expect.arrayContaining([

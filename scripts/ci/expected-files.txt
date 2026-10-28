@@ -68,6 +68,8 @@ dist/gallery/resolve.d.ts
 dist/gallery/resolve.js
 dist/gallery/server.d.ts
 dist/gallery/server.js
+dist/gallery/viewer.d.ts
+dist/gallery/viewer.js
 dist/index.d.ts
 dist/index.js
 dist/init.d.ts

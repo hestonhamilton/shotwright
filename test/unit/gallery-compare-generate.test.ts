@@ -211,6 +211,7 @@ it('marks a disappeared original unreadable in the final JSON, HTML, counts and 
     ],
   })
   expect(html).toContain('unreadable: 1')
+  expect(html).not.toContain('data-viewer-open="pair-0-b"')
   expect(html).toContain(reason)
   expect(html).toContain('home.shots.ts / two')
 })

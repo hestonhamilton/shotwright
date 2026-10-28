@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { GALLERY_CSS, GALLERY_SCRIPT } from '../../src/gallery/assets.js'
+import { VIEWER_SCRIPT } from '../../src/gallery/viewer.js'
 import { generateGallery } from '../../src/gallery/generate.js'
 import { loadGalleryModel } from '../../src/gallery/model.js'
 import { renderGallery } from '../../src/gallery/render.js'
@@ -217,6 +218,11 @@ describe('gallery rendering', () => {
     writeRun(runDir, manifest('run', fiveShots()))
     const html = renderGallery(loadGalleryModel(runDir))
     expect(html.match(/data:image\/png;base64,/g) ?? []).toHaveLength(5)
+    expect(html.match(/class="media viewer-open" type="button" disabled/g) ?? []).toHaveLength(5)
+    expect(html.match(/data-inspect="download-/g) ?? []).toHaveLength(5)
+    expect(html).toContain('View full screenshot')
+    expect(html).toContain('data-viewer-state')
+    expect(html).toContain('Screenshot viewer')
     expect(html.match(/<article class="card/g) ?? []).toHaveLength(5)
     expect(html.indexOf('about.shots.ts')).toBeLessThan(html.indexOf('home.shots.ts'))
     for (const entry of fiveShots()) {
@@ -318,6 +324,8 @@ describe('gallery rendering', () => {
     const html = renderGallery(loadGalleryModel(runDir))
     expect(html).toContain('No screenshots in this run')
     expect(html).toContain('shots: []')
+    expect(html).not.toContain('check the active filter')
+    expect(html).toContain('0 of 0 shots shown')
     expect(html).not.toContain('<article class="card')
   })
 
@@ -333,10 +341,13 @@ describe('gallery rendering', () => {
       ]),
     )
     const html = renderGallery(loadGalleryModel(runDir))
-    expect(html).toContain('Viewport unavailable · DSF 2')
-    expect(html).toContain('<div class="meta"><span>Viewport unavailable</span><span>DSF 2</span>')
+    expect(html).toContain('Viewport unavailable · Device scale factor 2')
+    expect(html).toContain(
+      '<div class="meta"><span>Viewport unavailable</span><span>Device scale factor 2</span>',
+    )
     expect(html).toContain('<dt>Logical viewport</dt><dd>Viewport unavailable</dd>')
     expect(html).toContain('<dt>Device scale factor</dt><dd>2</dd>')
+    expect(html).not.toContain('DSF 2')
   })
 
   it('publishes a partial gallery and path-specific diagnostics for missing and corrupt PNGs', () => {
@@ -404,12 +415,25 @@ describe('gallery rendering', () => {
     expect(html).toContain('Video and trace absent in this run')
   })
 
+  it('spells out unavailable device scale when viewport and scale are absent', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    writeRun(
+      runDir,
+      manifest('run', [
+        shot('unknown-scale', 'home.shots.ts', 0, { viewport: null, deviceScaleFactor: null }),
+      ]),
+    )
+    const html = renderGallery(loadGalleryModel(runDir))
+    expect(html).toContain('Viewport unavailable · Device scale factor unavailable')
+    expect(html).toContain('<span>Device scale factor unavailable</span>')
+  })
+
   it('keeps the browser image-window and focus-management seams explicit', () => {
     expect(GALLERY_SCRIPT).toContain('while (live.length > 3)')
     expect(GALLERY_SCRIPT).toContain('getBoundingClientRect()')
     expect(GALLERY_SCRIPT).toContain("'IntersectionObserver' in window")
     expect(GALLERY_SCRIPT).toContain('load(cards.find')
-    expect(GALLERY_SCRIPT).toContain('returnFocus?.focus()')
+    expect(VIEWER_SCRIPT).toContain('returnFocus?.focus()')
     expect(GALLERY_SCRIPT).toContain("location.hash === '#debug'")
     expect(GALLERY_SCRIPT).toContain("querySelectorAll('.overview-image').length")
   })
