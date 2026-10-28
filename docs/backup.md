@@ -22,7 +22,7 @@ Nothing in this repo reads it. Use `scripts/backup-verify.sh`.
 | | |
 |---|---|
 | `scripts/backup-push.sh` | Makes a backup, **restores it and counts it**, sends it over ssh, reads the destination back. One database per run. |
-| `scripts/backup-verify.sh` | Goes and looks at the destination. Answers "is there a real, current, non-empty copy of this board off this machine". Fails closed. |
+| `scripts/backup-verify.sh` | Goes and looks at the destination. Checks for a real, recent, non-empty copy of the committed board off this machine. While `shotwright-2sr.6` is open, a green check does not prove uncommitted working-set rows are in that copy. Fails closed. |
 | `scripts/backup-verify-selftest.sh` | Proves the checker can fail. Runs in `scripts/ci/verify.sh`; needs no NAS and no bd. |
 | `scripts/backup-install.sh` | Installs the systemd user timer that runs the push. |
 
@@ -93,11 +93,19 @@ dependency edges, 369 commits, zero rows differing in either direction.
 
 - **Off-site — deliberately, see ADR 0017.** This is a decision, not an
   oversight: ADR 0013's layer D was weighed and dropped.
-- **A second database.** Currently empty (0 issues), and its automatic backup
-  destination points at *shotwright's* backup directory — the bd defect behind
-  the empty-backup incident. Not fixed here. `shotwright-2sr.5`.
-- **`.beads/backup/`.** Written by bd, read by nothing here. Do not add anything
-  that trusts it.
+- **A second database.** On 2026-10-27, `beads_global` had no `backup_export`
+  registration after the scoped removal and the listed shared-server workspace
+  checks. This is a dated registration result, not a guarantee about future
+  clients or a claim about that database's contents. `shotwright-2sr.5`.
+- **`.beads/backup/`.** Historical, untrusted material from bd's automatic
+  backup path. Its current archive contents are not proven. Nothing here reads
+  it; do not use it as a restore source or publish it without a separate content
+  and retention review.
+
+As measured on 2026-10-27, shotwright's own `backup_export` registration remains
+in place but is dormant, because bd 1.3.x's server-mode default keeps auto-backup
+off and nothing here sets `backup.enabled`. Its manual `default` registration
+was unchanged.
 
 ## Why `bd dolt push` no longer reaches GitHub
 
