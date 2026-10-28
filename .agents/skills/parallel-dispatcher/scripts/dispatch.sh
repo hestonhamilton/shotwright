@@ -88,7 +88,7 @@ if ! have_bd; then
   branch:  $branch
   actor:   $actor
   base:    $BASE_CHECKOUT
-  # bd worktree create $bead_id --branch $branch
+  # bd worktree create worktrees/$bead_id --branch $branch
   # BEADS_ACTOR=$actor bd update $bead_id --claim
 EOF
   exit 0
@@ -101,8 +101,9 @@ fi
 
 # --- Create the worktree+branch, then claim as this actor --------------------
 # Use `bd worktree create` (NOT raw `git worktree add`): it shares the base bd
-# DB with the new worktree; a hook denies the raw form.
-if ! bd worktree create "$bead_id" --branch "$branch"; then
+# DB with the new worktree; a hook denies the raw form. Under worktrees/, which
+# .gitignore already covers, so bd does not append a per-worktree ignore line.
+if ! bd worktree create "worktrees/$bead_id" --branch "$branch"; then
   die "bd worktree create failed for $bead_id ($branch)"
 fi
 

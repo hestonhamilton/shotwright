@@ -51,6 +51,6 @@ local/
 # becomes redundant rather than wrong.
 .beads/dolt-backup.json
 .beads/dolt-backup-state.json
-# Bead worktrees (`bd worktree create worktrees/<bead-id>`). bd still appends a
-# per-worktree line here on create; this rule makes those redundant.
+# Bead worktrees (`bd worktree create worktrees/<bead-id>`). bd >=1.3 skips its
+# per-worktree .gitignore append when the path is already ignored, as here.
 worktrees/
