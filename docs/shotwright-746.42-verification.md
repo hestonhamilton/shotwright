@@ -68,3 +68,7 @@ The first fixture CLI attempt exited 2 because the scratch artifact had a null `
 ## Sign-off
 
 **Overall verdict: PASS.** All six amended plan criteria pass. The real demo capture verifies the built package and gallery path; the mixed-state fixture rendered through the built CLI supplies the states the unchanged demo cannot produce. No source or test edits, git commit, or `bd` write occurred in V.
+
+## Orchestrator addendum — smoke suite
+
+The verification command (`pnpm run test`) runs only `test/unit`. On review, `pnpm run smoke` failed one assertion: `test/smoke/cli.test.ts` still expected `aria-label="Verdict counts"`, the badge row removed in review. The assertion now targets `aria-label="Compare filters"`. After that change, `pnpm run smoke` passes: 56 tests.
