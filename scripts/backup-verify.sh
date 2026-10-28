@@ -50,6 +50,8 @@
 #                                                 passed every other check here
 #   5. its timestamp is inside the threshold    — the backup can be genuine and
 #                                                 still be from last month
+#   6. destination archive bytes match the      — the readback hashes every
+#      producer's proven snapshot                 manifest-referenced archive
 #
 # Check 3 is the one that would be easy to leave out and is the reason a
 # corrupted-or-swapped destination cannot pass: a commit hash that this database
@@ -94,6 +96,9 @@ state_file=''
 commit_known=''
 darc_count=''
 now_epoch=''
+digest_dir=''
+list_dir=''
+remote_digest=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -110,6 +115,9 @@ while [[ $# -gt 0 ]]; do
     --commit-known) commit_known="${2:?--commit-known needs a value}"; shift 2 ;;
     --darc-count)   darc_count="${2:?--darc-count needs a value}"; shift 2 ;;
     --now)          now_epoch="${2:?--now needs a value}"; shift 2 ;;
+    --digest)       mode='digest'; digest_dir="${2:?--digest needs a value}"; shift 2 ;;
+    --list-archives) mode='list'; list_dir="${2:?--list-archives needs a value}"; shift 2 ;;
+    --remote-digest) remote_digest="${2:?--remote-digest needs a value}"; shift 2 ;;
     -h|--help)      sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)              echo "backup-verify: unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -123,11 +131,119 @@ note() { echo "backup-verify: $*"; }
 # script that is not under local control.
 is_commit_hash() { [[ "$1" =~ ^[0-9a-v]{32}$ ]]; }
 
+# This is the sole archive-tree encoder. The push calls --digest locally; the
+# verifier sends this exact function body over ssh to read destination bytes.
+archive_tree_digest() {
+  command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1 \
+    || { echo 'python3 >= 3.8 is required' >&2; return 1; }
+  python3 - "$1" "${2:-digest}" <<'PY'
+import hashlib
+import os
+import re
+import stat
+import struct
+import sys
+
+root = sys.argv[1]
+mode = sys.argv[2]
+entries = {entry.name: entry for entry in os.scandir(root)}
+if 'manifest' not in entries or not stat.S_ISREG(entries['manifest'].stat(follow_symlinks=False).st_mode):
+    sys.exit('invalid archive tree: missing or non-regular manifest')
+with open(os.path.join(root, 'manifest'), 'rb') as stream:
+    fields = stream.read().strip().split(b':')
+if len(fields) < 7 or (len(fields) - 5) % 2:
+    sys.exit('invalid archive tree: malformed manifest')
+names = []
+for position in range(5, len(fields), 2):
+    field = fields[position]
+    if not re.fullmatch(rb'[0-9]+', fields[position + 1]):
+        sys.exit('invalid archive tree: malformed manifest')
+    for archive in field.split(b','):
+        if not re.fullmatch(rb'[0-9a-v]{32}', archive):
+            sys.exit('invalid archive tree: malformed archive reference')
+        names.append(archive.decode('ascii') + '.darc')
+if not names or len(set(names)) != len(names):
+    sys.exit('invalid archive tree: missing or duplicate archive references')
+expected = set(names) | {'manifest'}
+actual = set(entries) - {'shotwright-backup-state.json'}
+if mode == 'digest' and actual != expected:
+    sys.exit('invalid archive tree: missing or extra entries')
+for name in expected:
+    if name not in entries:
+        sys.exit('invalid archive tree: missing referenced archive')
+    if not stat.S_ISREG(entries[name].stat(follow_symlinks=False).st_mode):
+        sys.exit('invalid archive tree: non-regular entry')
+if mode == 'list':
+    for name in sorted(names):
+        sys.stdout.buffer.write(name.encode('ascii') + b'\0')
+    sys.exit(0)
+digest = hashlib.sha256()
+for name in sorted(expected, key=lambda item: item.encode('utf-8')):
+    encoded = name.encode('utf-8')
+    size = entries[name].stat(follow_symlinks=False).st_size
+    digest.update(struct.pack('>Q', len(encoded)))
+    digest.update(encoded)
+    digest.update(struct.pack('>Q', size))
+    read = 0
+    with open(os.path.join(root, name), 'rb') as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+            read += len(chunk)
+    if read != size:
+        sys.exit('invalid archive tree: file changed during read')
+print(digest.hexdigest())
+PY
+}
+
+if [[ "$mode" == 'digest' ]]; then
+  archive_tree_digest "$digest_dir"
+  exit
+fi
+if [[ "$mode" == 'list' ]]; then
+  archive_tree_digest "$list_dir" list
+  exit
+fi
+
+command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1 \
+  || fail 'python3 >= 3.8 is required'
+
+proof_fields() {
+  python3 - "$1" <<'PY'
+import json
+import re
+import sys
+
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate state field')
+        result[key] = value
+    return result
+
+try:
+    with open(sys.argv[1], encoding='utf-8') as stream:
+        state = json.load(stream, object_pairs_hook=unique)
+    if not isinstance(state, dict):
+        raise ValueError('state is not an object')
+    marker = state.get('working_set_proof')
+    digest = state.get('archive_tree_sha256')
+    if 'working_set_proof' not in state and 'archive_tree_sha256' not in state:
+        print('legacy')
+    elif marker == 'restore-matched' and isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest):
+        print(digest)
+    else:
+        raise ValueError('malformed working-set proof')
+except (OSError, ValueError, UnicodeError) as error:
+    sys.exit('invalid backup state: ' + str(error))
+PY
+}
+
 # ---------------------------------------------------------------------------
 # The rules. Everything above this point gathers facts; this decides.
 # ---------------------------------------------------------------------------
 compare() {
-  local head="$1" state="$2" known="$3" darcs="$4" now="$5" limit="$6"
+  local head="$1" state="$2" known="$3" darcs="$4" now="$5" limit="$6" actual_digest="$7"
 
   [[ -n "$head" ]] || fail 'the local database head commit could not be read, so there is nothing to compare the destination against'
 
@@ -181,18 +297,27 @@ compare() {
   (( age <= limit )) \
     || fail "the destination copy is ${age}s old, past the ${limit}s threshold — the push has been failing quietly"
 
+  local expected_digest
+  expected_digest="$(proof_fields "$state")" || fail 'malformed new proof or unreadable backup state'
+  if [[ "$expected_digest" == 'legacy' ]]; then
+    note 'legacy copy: working-set coverage unproven'
+    return 0
+  fi
+  [[ "$actual_digest" == "$expected_digest" ]] \
+    || fail 'destination archive-tree digest differs from the proven snapshot'
+
   if [[ "$remote_commit" == "$head" ]]; then
-    note "OK — destination is current at $remote_commit (${age}s old, $darcs archives, $remote_issues issues / $remote_commits commits)"
+    note "OK — destination is current at $remote_commit (${age}s old, $darcs archives, $remote_issues issues / $remote_commits commits); checked-out branch WORKING root and status matched a disposable restore; destination bytes match that snapshot"
   else
     # Behind but genuine and inside the window: the board moves between runs, so
     # this is the ordinary healthy state, not a warning.
-    note "OK — destination is at $remote_commit, a real earlier state of this database (${age}s old, $darcs archives, $remote_issues issues / $remote_commits commits); local head is $head"
+    note "OK — destination is at $remote_commit, a real earlier state of this database (${age}s old, $darcs archives, $remote_issues issues / $remote_commits commits); checked-out branch WORKING root and status matched a disposable restore; destination bytes match that snapshot; local head is $head"
   fi
 }
 
 if [[ "$mode" == 'compare' ]]; then
   compare "$local_head" "$state_file" "$commit_known" "$darc_count" \
-          "${now_epoch:-$(date -u +%s)}" "$max_age"
+          "${now_epoch:-$(date -u +%s)}" "$max_age" "$remote_digest"
   exit 0
 fi
 
@@ -267,6 +392,30 @@ if is_commit_hash "${remote_commit:-}"; then
   grep -q '"n"' <<<"$known_json" || commit_known=0
 fi
 
+proof="$(proof_fields "$work/state.json")" || fail 'malformed new proof or unreadable backup state'
+remote_digest=''
+if [[ "$proof" != 'legacy' ]]; then
+  ssh_cmd="${SHOTWRIGHT_BACKUP_SSH:-ssh -o BatchMode=yes -o ConnectTimeout=10}"
+  dest_host="${SHOTWRIGHT_BACKUP_DEST%%:*}"
+  remote_dir="${SHOTWRIGHT_BACKUP_DEST#*:}/$name"
+  printf -v quoted_dir '%q' "$remote_dir"
+  remote_digest="$($ssh_cmd "$dest_host" "$(declare -f archive_tree_digest); archive_tree_digest $quoted_dir" 2>"$work/err.txt")" \
+    || { cat "$work/err.txt" >&2; fail 'could not read and hash the destination archive tree'; }
+fi
+
 note "destination: $name at ${SHOTWRIGHT_BACKUP_DEST%%:*} (path not logged — public-facing)"
 compare "$local_head" "$work/state.json" "$commit_known" "${darc_count:-0}" \
-        "$(date -u +%s)" "$max_age"
+        "$(date -u +%s)" "$max_age" "$remote_digest" >"$work/compare.txt"
+
+if [[ "$proof" != 'legacy' ]]; then
+  status_json="$(bd -C "$project" sql --json -q 'select table_name, staged, status from dolt_status;' 2>/dev/null)" \
+    || fail 'could not read the current local Dolt working set'
+  status_count="$(python3 -c 'import json,sys; rows=json.load(sys.stdin); assert isinstance(rows,list); print(len(rows))' <<<"$status_json")" \
+    || fail 'could not parse the current local Dolt working set'
+fi
+cat "$work/compare.txt"
+if [[ "$proof" != 'legacy' ]]; then
+  if (( status_count > 0 )); then
+    echo 'backup-verify: WARNING — local Dolt working set is dirty now; this check proves the recorded snapshot, which may differ from the current working set.' >&2
+  fi
+fi

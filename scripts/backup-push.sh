@@ -7,8 +7,8 @@
 #
 # Requires SHOTWRIGHT_BACKUP_DEST=<host>:<absolute-path> in the environment.
 # Run on a schedule by the systemd user timer scripts/backup-install.sh writes.
-# Safe to run by hand at any time: it reads the database and writes only to its
-# own staging directory and to the destination.
+# Safe to run by hand at any time: it observes the database, refreshes its own
+# staging directory, and publishes only after a disposable restore proof.
 #
 # ---------------------------------------------------------------------------
 # WHY THIS SHAPE (shotwright-2sr.3, owner decision 2026-08-02)
@@ -54,9 +54,8 @@
 # Every check that does not read the CONTENT passes on that empty backup: file
 # count, byte size, freshness, and bd's own `backup_state.json`, whose
 # `last_dolt_commit` named the live head on one push and the empty database's
-# own commit on the next. So each run clones the staging copy and counts issues,
-# dependencies and commits against the live database before a byte is sent. It
-# costs a few seconds and it is the only check that would have caught this.
+# own commit on the next. Each run restores a snapshot and compares its WORKING
+# root and status with one post-sync source observation before a byte is sent.
 #
 # WHY THE COPY IS SNAPSHOTTED BEFORE IT IS SENT
 #
@@ -107,8 +106,12 @@ staging_root="${SHOTWRIGHT_BACKUP_STAGING:-${XDG_STATE_HOME:-$HOME/.local/state}
 staging="$staging_root/$name"
 readonly STATE_FILE='shotwright-backup-state.json'
 
+command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1 \
+  || die 'python3 >= 3.8 is required'
 command -v dolt >/dev/null 2>&1 \
   || die 'dolt is not on PATH, and without it the content of a backup cannot be proven before it is sent'
+command -v sha256sum >/dev/null 2>&1 \
+  || die 'sha256sum is not on PATH, and without it the staging manifest cannot be checked for changes'
 
 # --- ask the live database what it holds ---------------------------------
 # `bd sql` is the sanctioned path (CLAUDE.md forbids raw `dolt` against the
@@ -144,46 +147,74 @@ bd -C "$project" backup sync >/dev/null \
   || die "bd backup sync failed for '$name'"
 [[ -f "$staging/manifest" ]] || die "bd backup sync reported success and wrote no manifest to the staging directory for '$name'"
 
-# --- prove the staging copy actually contains the board -------------------
+# --- one post-sync observation, including an empty status result ----------
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-dolt clone "file://$staging" "$work/proof" >/dev/null 2>&1 \
-  || die "the staged backup for '$name' could NOT be cloned — it is not restorable, and nothing was sent"
+proof_query='SELECT active_branch() AS branch, dolt_hashof_db() AS working_root,
+  (SELECT COUNT(*) FROM issues) AS issues,
+  (SELECT COUNT(*) FROM dependencies) AS deps,
+  (SELECT COUNT(*) FROM dolt_log("--all")) AS commits,
+  (SELECT commit_hash FROM dolt_log ORDER BY date DESC LIMIT 1) AS head,
+  s.table_name, s.staged, s.status
+  FROM (SELECT 1) AS one_row LEFT JOIN dolt_status AS s ON TRUE
+  ORDER BY s.table_name, s.staged, s.status'
+bd -C "$project" sql --json -q "$proof_query" >"$work/source.json" 2>/dev/null \
+  || die 'could not observe the source after sync'
 
-got="$(cd "$work/proof" && dolt sql -r csv -q \
-  'select (select count(*) from issues) as issues,
-          (select count(*) from dependencies) as deps,
-          (select count(*) from dolt_log("--all")) as commits;' 2>/dev/null | tail -1 || true)"
-IFS=, read -r got_issues got_deps got_commits <<<"$got"
+normalize_observation() {
+  python3 - "$1" <<'PY'
+import json
+import re
+import sys
 
-[[ "$got_issues" =~ ^[0-9]+$ ]] \
-  || die "could not read the restored copy of '$name' — the backup cloned but its tables did not answer"
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate field')
+        result[key] = value
+    return result
 
-# The board can move between the live query and the sync, so the restored copy
-# may legitimately be AHEAD. It may never be behind, and it may never be empty:
-# that is the measured failure this check exists for.
-(( got_issues > 0 )) \
-  || die "the staged backup for '$name' restores to ZERO issues while the live database has $live_issues. This is the 2026-08-02 empty-backup failure. NOTHING WAS SENT."
-(( got_issues >= live_issues && got_commits >= live_commits )) \
-  || die "the staged backup for '$name' restores to $got_issues issues / $got_commits commits, BEHIND the live $live_issues / $live_commits. The sync did not capture the current database. Nothing was sent."
-
-log "restore proof: $got_issues issues, $got_deps dependencies, $got_commits commits — matches live"
-
-# Our own state file. bd's `backup_state.json` is written by the automatic path
-# and was measured naming a commit its own content did not contain, so what the
-# destination gets is what THIS script verified, one line per fact.
-cat > "$work/$STATE_FILE" <<JSON
-{
-  "database": "$name",
-  "last_dolt_commit": "$live_head",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "issues": $got_issues,
-  "dependencies": $got_deps,
-  "commits": $got_commits,
-  "proved_by": "clone-and-count before push (scripts/backup-push.sh)"
+try:
+    with open(sys.argv[1], encoding='utf-8') as stream:
+        rows = json.load(stream, object_pairs_hook=unique)
+    if isinstance(rows, dict) and set(rows) == {'rows'}:
+        rows = rows['rows']
+    if not isinstance(rows, list) or not rows:
+        raise ValueError('missing observation rows')
+    scalars = ('branch', 'working_root', 'issues', 'deps', 'commits', 'head')
+    first = tuple(rows[0][key] for key in scalars)
+    if not isinstance(first[0], str) or not first[0] or not re.fullmatch(r'[0-9a-v]{32}', first[1]):
+        raise ValueError('missing branch or WORKING root')
+    if any(type(value) is not int or value < 0 for value in first[2:5]) or not re.fullmatch(r'[0-9a-v]{32}', first[5]):
+        raise ValueError('malformed counts')
+    tuples = []
+    status_fields = {'table_name', 'staged', 'status'}
+    for row in rows:
+        fields = set(row)
+        if fields not in (set(scalars), set(scalars) | status_fields):
+            raise ValueError('missing or extra field')
+        if tuple(row[key] for key in scalars) != first:
+            raise ValueError('disagreeing scalar fields')
+        # The Dolt CLI omits all three null columns on a clean LEFT JOIN row;
+        # bd SQL includes them. Only the complete omission means empty status.
+        item = (tuple(row[key] for key in ('table_name', 'staged', 'status'))
+                if status_fields <= fields else (None, None, None))
+        if item == (None, None, None):
+            if len(rows) != 1:
+                raise ValueError('mixed empty status')
+        elif not isinstance(item[0], str) or not item[0] or type(item[1]) is not int or item[1] not in (0, 1) or not isinstance(item[2], str) or not item[2]:
+            raise ValueError('malformed status tuple')
+        else:
+            tuples.append(item)
+    print(json.dumps({'branch': first[0], 'working_root': first[1], 'issues': first[2], 'deps': first[3], 'commits': first[4], 'head': first[5], 'status': sorted(tuples)}, sort_keys=True))
+except (OSError, ValueError, KeyError, TypeError, UnicodeError) as error:
+    sys.exit('invalid observation: ' + str(error))
+PY
 }
-JSON
+normalize_observation "$work/source.json" >"$work/source.normal" 2>/dev/null \
+  || die 'could not validate the post-sync source observation'
 
 # --- snapshot: content first, pointers last ------------------------------
 snap="$work/snapshot"
@@ -192,17 +223,22 @@ mkdir -p "$snap"
 snapshot_taken=0
 for attempt in 1 2 3; do
   before="$(sha256sum "$staging/manifest" | cut -d' ' -f1)"
+  # --list-archives uses the verifier's manifest parser and checks referenced
+  # files. Staging can contain Dolt metadata that is not part of the backup.
+  "$root/scripts/backup-verify.sh" --list-archives "$staging" >"$work/files" \
+    || die 'staging manifest or referenced archive is incomplete or malformed — nothing was sent'
+  rm -rf "$snap"
+  mkdir -p "$snap"
   # --link-dest hardlinks when the snapshot lands on the same filesystem as the
   # staging copy and silently falls back to copying when it does not. Both
   # happen here: by hand the temp dir is usually co-located, under the systemd
   # timer it is not.
-  rsync -a --delete --link-dest="$staging" \
-    --exclude manifest --exclude LOCK --exclude "$STATE_FILE" \
-    "$staging/" "$snap/"
+  rsync -a --from0 --files-from="$work/files" --link-dest="$staging" \
+    "$staging/" "$snap/" \
+    || die 'could not snapshot the referenced archive files — nothing was sent'
   after="$(sha256sum "$staging/manifest" | cut -d' ' -f1)"
   if [[ "$before" == "$after" ]]; then
     cp "$staging/manifest" "$snap/manifest"
-    cp "$work/$STATE_FILE" "$snap/$STATE_FILE"
     snapshot_taken=1
     break
   fi
@@ -213,6 +249,56 @@ done
 
 archives="$(find "$snap" -name '*.darc' | wc -l)"
 (( archives > 0 )) || die 'the snapshot contains no archives — refusing to push a manifest with no content behind it'
+
+# Dolt restore creates an oldgen directory in its input archive. Read a byte
+# checked disposable copy so the publishable snapshot stays a canonical tree.
+archive_digest="$("$root/scripts/backup-verify.sh" --digest "$snap")" \
+  || die 'the snapshot archive tree is incomplete or malformed — nothing was sent'
+rsync -a "$snap/" "$work/restore-source/" \
+  || die 'could not copy the snapshot for restore — nothing was sent'
+restore_digest="$("$root/scripts/backup-verify.sh" --digest "$work/restore-source")" \
+  || die 'the disposable restore input is incomplete — nothing was sent'
+[[ "$restore_digest" == "$archive_digest" ]] \
+  || die 'the disposable restore input differs from the snapshot — nothing was sent'
+if ! (cd "$work" && dolt backup restore "file://$work/restore-source" proof >/dev/null 2>&1); then
+  die "the snapshot for '$name' could not be restored — nothing was sent"
+fi
+(cd "$work/proof" && dolt sql -r json -q "$proof_query" >"$work/restored.json" 2>/dev/null) \
+  || die 'could not query the restored snapshot — nothing was sent'
+normalize_observation "$work/restored.json" >"$work/restored.normal" 2>/dev/null \
+  || die 'could not validate the restored snapshot observation — nothing was sent'
+cmp -s "$work/source.normal" "$work/restored.normal" \
+  || die 'source changed or backup omitted data'
+
+# Counts are lower bounds from before sync; the WORKING root and status above
+# are exact equality checks from the post-sync observation.
+read -r got_issues got_deps got_commits post_head < <(python3 - "$work/source.normal" <<'PY'
+import json
+import sys
+row = json.load(open(sys.argv[1], encoding='utf-8'))
+print(row['issues'], row['deps'], row['commits'], row['head'])
+PY
+)
+(( got_issues > 0 )) \
+  || die "the staged backup for '$name' restores to ZERO issues while the live database has $live_issues. NOTHING WAS SENT."
+(( got_issues >= live_issues && got_commits >= live_commits )) \
+  || die "the staged backup for '$name' is BEHIND the live issue or commit count. Nothing was sent."
+log "restore proof: $got_issues issues, $got_deps dependencies, $got_commits commits; WORKING root and status match"
+
+# bd's backup_state.json belongs to the automatic path. This producer-authored
+# state describes the exact snapshot just restored and hashed.
+cat > "$snap/$STATE_FILE" <<JSON
+{
+  "database": "$name",
+  "last_dolt_commit": "$post_head",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "issues": $got_issues,
+  "dependencies": $got_deps,
+  "commits": $got_commits,
+  "working_set_proof": "restore-matched",
+  "archive_tree_sha256": "$archive_digest"
+}
+JSON
 
 # --- push: content first, pointers second --------------------------------
 $ssh_cmd "$dest_host" "mkdir -p '$remote_dir'" \

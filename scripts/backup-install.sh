@@ -89,6 +89,12 @@ command -v systemctl >/dev/null 2>&1 || { echo 'backup-install: systemctl not fo
 bd_bin="$(command -v bd || true)"
 [[ -n "$bd_bin" ]] || { echo 'backup-install: bd is not on PATH, so the installed timer could not verify its own pushes' >&2; exit 1; }
 unit_path="$(dirname "$bd_bin"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+for tool in dolt sha256sum python3; do
+  PATH="$unit_path" command -v "$tool" >/dev/null 2>&1 \
+    || { echo "backup-install: $tool is not on the installed timer PATH" >&2; exit 1; }
+done
+PATH="$unit_path" python3 -c 'import sys; sys.exit(sys.version_info < (3, 8))' \
+  || { echo 'backup-install: python3 >= 3.8 is required on the installed timer PATH' >&2; exit 1; }
 
 mkdir -p "$unit_dir"
 

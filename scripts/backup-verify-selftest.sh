@@ -117,6 +117,15 @@ expect_fail() {
   fi
 }
 
+expect_pass_with() {
+  local label="$1" want="$2"; shift 2
+  expect_pass "$label" "$@"
+  if ! grep -Fq -- "$want" "$work/out.txt"; then
+    echo "  FAIL  $label — missing expected output: $want" >&2
+    failures=$((failures + 1))
+  fi
+}
+
 probe() { SHOTWRIGHT_BACKUP_SSH="$1" SHOTWRIGHT_BACKUP_DEST="$2" "$verify" --probe --name shotwright; }
 
 echo '==> backup-verify-selftest: the probe half — can it tell a destination is not there?'
@@ -196,6 +205,290 @@ expect_fail 'C11 the destination restores to ZERO issues (the 2026-08-02 empty b
 printf '{ "last_dolt_commit": "%s", "timestamp": "2026-08-02T00:00:00Z" }\n' "$HEAD_NOW" > "$work/s-uncounted.json"
 expect_fail 'C12 the state carries no counts, so nothing proved its content' 'no issue or commit counts' \
   cmp_case "$work/s-uncounted.json" 1 3
+
+# A real-shaped manifest references exactly one archive. Its field sequence
+# and single archive/size pair were confirmed against a disposable bd backup.
+echo '==> backup-verify-selftest: proven archive trees and legacy rollout'
+tree="$work/proven/shotwright"
+mkdir -p "$tree" "$work/bin"
+archive='cg4djr5shs66anukobq4p366p5mkrif5.darc'
+printf '5:__DOLT__:rq80sggfoo49kg5668thl7p93eckpg4b:dt2f9tunuufhp90fps55k1vuj68a46t4:00000000000000000000000000000000:%s:488\n' "${archive%.darc}" > "$tree/manifest"
+printf 'disposable archive bytes\n' > "$tree/$archive"
+digest="$($verify --digest "$tree")"
+state "$tree/shotwright-backup-state.json" "$HEAD_NOW" 600
+python3 - "$tree/shotwright-backup-state.json" "$digest" <<'PY'
+import json
+import sys
+path = sys.argv[1]
+with open(path, encoding='utf-8') as stream:
+    state = json.load(stream)
+state['working_set_proof'] = 'restore-matched'
+state['archive_tree_sha256'] = sys.argv[2]
+with open(path, 'w', encoding='utf-8') as stream:
+    json.dump(state, stream)
+PY
+expect_pass_with 'D1 clean proven copy' 'WORKING root and status matched a disposable restore' \
+  "$verify" --compare --local-head "$HEAD_NOW" --state "$tree/shotwright-backup-state.json" \
+  --commit-known 1 --darc-count 1 --remote-digest "$digest" --now "$NOW"
+expect_fail 'D2 changed destination bytes' 'digest differs' \
+  "$verify" --compare --local-head "$HEAD_NOW" --state "$tree/shotwright-backup-state.json" \
+  --commit-known 1 --darc-count 1 --remote-digest "$(printf '%064d' 0)" --now "$NOW"
+
+cp "$tree/shotwright-backup-state.json" "$work/proven-state.json"
+python3 - "$tree/shotwright-backup-state.json" <<'PY'
+import json
+import sys
+path = sys.argv[1]
+with open(path, encoding='utf-8') as stream:
+    state = json.load(stream)
+del state['archive_tree_sha256']
+with open(path, 'w', encoding='utf-8') as stream:
+    json.dump(state, stream)
+PY
+expect_fail 'D3 malformed new proof' 'malformed new proof' \
+  "$verify" --compare --local-head "$HEAD_NOW" --state "$tree/shotwright-backup-state.json" \
+  --commit-known 1 --darc-count 1 --now "$NOW"
+cp "$work/proven-state.json" "$tree/shotwright-backup-state.json"
+
+expect_pass_with 'D4 legacy copy passes existing checks with warning' 'legacy copy: working-set coverage unproven' \
+  cmp_case "$work/s-current.json" 1 3
+expect_fail 'D5 legacy copy still fails existing checks' 'ZERO archive files' \
+  cmp_case "$work/s-current.json" 1 0
+
+expect_pass 'D6 canonical tree accepts its manifest and archive' "$verify" --digest "$tree"
+printf 'tamper\n' >> "$tree/$archive"
+changed="$($verify --digest "$tree")"
+[[ "$changed" != "$digest" ]] || { echo '  FAIL  D7 altered archive bytes kept the digest' >&2; failures=$((failures + 1)); }
+echo '  ok    D7 altered archive bytes change the digest'
+cp "$tree/manifest" "$work/manifest-good"
+printf 'disposable archive bytes\n' > "$tree/$archive"
+sed 's/:488$/:489/' "$work/manifest-good" > "$tree/manifest"
+changed_manifest="$($verify --digest "$tree")"
+[[ "$changed_manifest" != "$digest" ]] || { echo '  FAIL  D8 valid manifest change kept the digest' >&2; failures=$((failures + 1)); }
+echo '  ok    D8 valid manifest change changes the digest'
+cp "$work/manifest-good" "$tree/manifest"
+rm "$tree/$archive"
+expect_fail 'D9 missing archive' 'missing or extra entries' "$verify" --digest "$tree"
+printf 'disposable archive bytes\n' > "$tree/$archive"
+printf 'extra' > "$tree/extra.darc"
+expect_fail 'D10 extra archive' 'missing or extra entries' "$verify" --digest "$tree"
+rm "$tree/extra.darc"
+rm "$tree/$archive"
+ln -s manifest "$tree/$archive"
+expect_fail 'D11 non-regular archive' 'non-regular entry' "$verify" --digest "$tree"
+
+# Drive the exact observation parser used by push. The clean fixtures below
+# preserve the field sets and envelopes captured from real bd SQL and a real
+# restored Dolt CLI query; only the hashes have been replaced.
+push="$root/scripts/backup-push.sh"
+source <(sed -n '/^normalize_observation() {/,/^}/p' "$push")
+cat > "$work/clean-bd.json" <<'JSON'
+[{"branch":"main","commits":984,"deps":247,"head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","issues":162,"staged":null,"status":null,"table_name":null,"working_root":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]
+JSON
+cat > "$work/clean-cli.json" <<'JSON'
+{"rows":[{"branch":"main","commits":984,"deps":247,"head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","issues":162,"working_root":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}
+JSON
+normalize_observation "$work/clean-bd.json" > "$work/clean-bd.normal"
+normalize_observation "$work/clean-cli.json" > "$work/clean-cli.normal"
+if ! cmp -s "$work/clean-bd.normal" "$work/clean-cli.normal"; then
+  echo '  FAIL  D12a real-shaped clean bd and CLI rows normalize differently' >&2
+  failures=$((failures + 1))
+else
+  echo '  ok    D12a real-shaped clean bd and CLI rows normalize identically'
+fi
+python3 - "$work/clean-cli.json" "$work/partial-status.json" "$work/extra-field.json" <<'PY'
+import json,sys
+row=json.load(open(sys.argv[1],encoding='utf-8'))['rows'][0]
+partial=dict(row,table_name=None)
+extra=dict(row,unexpected=None)
+for path,value in ((sys.argv[2],partial),(sys.argv[3],extra)):
+    with open(path,'w',encoding='utf-8') as stream: json.dump({'rows':[value]},stream)
+PY
+if normalize_observation "$work/partial-status.json" >"$work/partial.normal" 2>&1; then
+  echo '  FAIL  D12b partially missing status fields were accepted' >&2
+  failures=$((failures + 1))
+else
+  echo '  ok    D12b partially missing status fields are rejected'
+fi
+if normalize_observation "$work/extra-field.json" >"$work/extra.normal" 2>&1; then
+  echo '  FAIL  D12c unknown extra field was accepted' >&2
+  failures=$((failures + 1))
+else
+  echo '  ok    D12c unknown extra field is rejected'
+fi
+# Disposable bd SQL and a restored Dolt CLI both emitted (config, 0, modified).
+# These next rows deliberately vary one value at a time to test inequality.
+observation() { # observation <file> <root> <table-or-null> <status-or-null>
+  python3 - "$@" <<'PY'
+import json,sys
+path,root,table,status=sys.argv[1:]
+row={'branch':'main','working_root':root,'issues':1,'deps':0,'commits':77,
+     'head':'lnk7jagsjrbl4e37ch545qfohfasg54a','table_name':None if table=='null' else table,
+     'staged':None if table=='null' else 0,'status':None if status=='null' else status}
+with open(path,'w',encoding='utf-8') as stream: json.dump([row],stream)
+PY
+}
+observation "$work/source.json" "$HEAD_NOW" config modified
+normalize_observation "$work/source.json" > "$work/source.normal"
+observation "$work/omitted.json" "$HEAD_OLD" null null
+normalize_observation "$work/omitted.json" > "$work/omitted.normal"
+[[ "$(cat "$work/source.normal")" != "$(cat "$work/omitted.normal")" ]] \
+  || { echo '  FAIL  D12 omitted working row/root passed observation equality' >&2; failures=$((failures + 1)); }
+observation "$work/changed-root.json" "$HEAD_OLD" config modified
+normalize_observation "$work/changed-root.json" > "$work/changed-root.normal"
+[[ "$(cat "$work/source.normal")" != "$(cat "$work/changed-root.normal")" ]] \
+  || { echo '  FAIL  D13 changed WORKING root passed observation equality' >&2; failures=$((failures + 1)); }
+observation "$work/changed-status.json" "$HEAD_NOW" config added
+normalize_observation "$work/changed-status.json" > "$work/changed-status.normal"
+[[ "$(cat "$work/source.normal")" != "$(cat "$work/changed-status.normal")" ]] \
+  || { echo '  FAIL  D14 changed status passed observation equality' >&2; failures=$((failures + 1)); }
+echo '  ok    D12–D14 omitted row, changed root, and changed status break the push equality gate'
+
+# Full checker path, still hermetic: bd and ssh are both stubs. The bd JSON
+# envelopes and fields below were checked against disposable bd SQL output.
+# It exercises the post-proof local-status warning and remote digest round trip.
+cat > "$work/bin/bd" <<'BDSTUB'
+#!/usr/bin/env bash
+case "$*" in
+  *'from dolt_log where commit_hash'*) echo '[{"n":1}]' ;;
+  *'from dolt_log order by date'*) echo '[{"commit_hash":"lnk7jagsjrbl4e37ch545qfohfasg54a"}]' ;;
+  *'from dolt_status'*)
+    [[ "${FAKE_STATUS_FAIL:-0}" == 0 ]] || exit 1
+    if [[ "${FAKE_DIRTY:-0}" == 1 ]]; then
+      echo '[{"table_name":"config","staged":0,"status":"modified"}]'
+    else
+      echo '[]'
+    fi ;;
+  *) exit 1 ;;
+esac
+BDSTUB
+chmod +x "$work/bin/bd"
+unlink "$tree/$archive"
+printf 'disposable archive bytes\n' > "$tree/$archive"
+printf '%s:%s:488\n' "$(cat "$work/manifest-good")" "${archive%.darc}" > "$tree/manifest"
+expect_fail 'D11a duplicate archive reference' 'duplicate archive references' "$verify" --digest "$tree"
+cp "$work/manifest-good" "$tree/manifest"
+mkdir "$tree/extra-directory"
+expect_fail 'D11b extra directory' 'missing or extra entries' "$verify" --digest "$tree"
+rmdir "$tree/extra-directory"
+full_check() {
+  PATH="$work/bin:$PATH" FAKE_DIRTY="$1" SHOTWRIGHT_BACKUP_SSH="$work/ssh-ok" \
+    SHOTWRIGHT_BACKUP_DEST="nas:$work/proven" \
+    "$verify" --project "$work/fakeproject" --name shotwright --max-age 99999999
+}
+expect_pass_with 'D15 full clean proven copy' 'destination bytes match that snapshot' full_check 0
+sed 's/:488$/:489/' "$work/manifest-good" > "$tree/manifest"
+expect_fail 'D15a full verifier rejects a valid changed manifest' 'digest differs' full_check 0
+cp "$work/manifest-good" "$tree/manifest"
+if grep -Fq 'WARNING — local Dolt working set is dirty now' "$work/out.txt"; then
+  echo '  FAIL  D15 clean local status emitted the dirty warning' >&2
+  failures=$((failures + 1))
+fi
+expect_pass_with 'D16 full dirty proven copy warns with exit 0' \
+  'backup-verify: WARNING — local Dolt working set is dirty now; this check proves the recorded snapshot, which may differ from the current working set.' full_check 1
+unreadable_check() { FAKE_STATUS_FAIL=1 full_check 0; }
+expect_fail 'D16a unreadable local status fails before an OK claim' 'could not read the current local' unreadable_check
+if grep -Fq 'backup-verify: OK' "$work/out.txt"; then
+  echo '  FAIL  D16a emitted OK before discovering unreadable local status' >&2
+  failures=$((failures + 1))
+fi
+printf tamper >> "$tree/$archive"
+expect_fail 'D17 full checker rejects altered destination bytes' 'digest differs' full_check 0
+expect_fail 'D18 full checker fails on transport loss' 'could not be reached' \
+  env PATH="$work/bin:$PATH" SHOTWRIGHT_BACKUP_SSH="$work/ssh-down" \
+    SHOTWRIGHT_BACKUP_DEST="nas:$work/proven" \
+    "$verify" --project "$work/fakeproject" --name shotwright --max-age 99999999
+mkdir -p "$work/remote-no-python"
+cat > "$work/remote-no-python/python3" <<'NO_PYTHON'
+#!/usr/bin/env bash
+exit 127
+NO_PYTHON
+cat > "$work/ssh-no-python" <<'SSH_NO_PYTHON'
+#!/usr/bin/env bash
+shift
+export PATH="$REMOTE_NO_PY:$PATH"
+exec bash -c "$*"
+SSH_NO_PYTHON
+chmod +x "$work/remote-no-python/python3" "$work/ssh-no-python"
+expect_fail 'D18a remote Python preflight gives a clear diagnostic' 'python3 >= 3.8 is required' \
+  env PATH="$work/bin:$PATH" REMOTE_NO_PY="$work/remote-no-python" \
+    SHOTWRIGHT_BACKUP_SSH="$work/ssh-no-python" SHOTWRIGHT_BACKUP_DEST="nas:$work/proven" \
+    "$verify" --project "$work/fakeproject" --name shotwright --max-age 99999999
+
+# Exercise the real producer gate. These command stubs are the seam: bd never
+# starts or connects to a server, Dolt only creates a disposable proof directory,
+# and rsync/ssh can reach only $work. No production override is needed.
+echo '==> backup-verify-selftest: hermetic push publication gate'
+pbin="$work/push-bin"
+pstage="$work/push-staging/disposable"
+pdest="$work/push-dest"
+mkdir -p "$pbin" "$pstage" "$work/push-tmp" "$work/push-project"
+cp "$work/manifest-good" "$pstage/manifest"
+printf 'disposable archive bytes\n' > "$pstage/$archive"
+printf 'future staging metadata\n' > "$pstage/future-metadata"
+cp "$work/clean-bd.json" "$work/push-source.json"
+cp "$work/clean-cli.json" "$work/push-restored.json"
+cat > "$pbin/bd" <<'BDPUSH'
+#!/usr/bin/env bash
+case "$*" in
+  *'backup status'*) echo "$PUSH_STAGE" ;;
+  *'backup sync'*) : ;;
+  *'dolt_hashof_db()'*) cat "$PUSH_SOURCE" ;;
+  *'select (select count(*) from issues)'*) echo '[{"issues":162,"deps":247,"commits":984,"head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]' ;;
+  *'from dolt_log where commit_hash'*) echo '[{"n":1}]' ;;
+  *'select commit_hash from dolt_log order by date'*) echo '[{"commit_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]' ;;
+  *'select table_name, staged, status from dolt_status'*) echo '[]' ;;
+  *) echo "unexpected bd call: $*" >&2; exit 1 ;;
+esac
+BDPUSH
+cat > "$pbin/dolt" <<'DOLTPUSH'
+#!/usr/bin/env bash
+case "$1" in
+  backup)
+    [[ "$2" == restore ]] || exit 1
+    mkdir -p "$PWD/$4" ;;
+  sql)
+    if [[ "${PUSH_MISMATCH:-0}" == 1 ]]; then
+      sed 's/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/00000000000000000000000000000000/' "$PUSH_RESTORED"
+    else
+      cat "$PUSH_RESTORED"
+    fi ;;
+  *) exit 1 ;;
+esac
+DOLTPUSH
+cat > "$pbin/rsync" <<'RSYNCPUSH'
+#!/usr/bin/env bash
+args=()
+while (($#)); do
+  if [[ "$1" == -e ]]; then shift 2; continue; fi
+  if [[ "$1" == nas:* ]]; then args+=("${1#nas:}"); else args+=("$1"); fi
+  shift
+done
+/usr/bin/rsync "${args[@]}"
+RSYNCPUSH
+chmod +x "$pbin/bd" "$pbin/dolt" "$pbin/rsync"
+push_case() {
+  env PATH="$pbin:$PATH" TMPDIR="$work/push-tmp" \
+    PUSH_STAGE="$pstage" PUSH_SOURCE="$work/push-source.json" \
+    PUSH_RESTORED="$work/push-restored.json" PUSH_MISMATCH="$1" \
+    SHOTWRIGHT_BACKUP_STAGING="$work/push-staging" \
+    SHOTWRIGHT_BACKUP_DEST="nas:$pdest" SHOTWRIGHT_BACKUP_SSH="$work/ssh-ok" \
+    "$push" --project "$work/push-project" --name disposable
+}
+expect_fail 'D19 mismatched restore blocks the real push' 'source changed or backup omitted data' push_case 1
+if [[ -e "$pdest/disposable" || -e "$pstage/shotwright-backup-state.json" ]]; then
+  echo '  FAIL  D19 created state or published after a mismatched restore' >&2
+  failures=$((failures + 1))
+else
+  echo '  ok    D19 no new state and no publication'
+fi
+expect_pass_with 'D20 unknown staging metadata does not block a push' 'destination bytes match that snapshot' push_case 0
+if [[ ! -f "$pdest/disposable/shotwright-backup-state.json" || -e "$pdest/disposable/future-metadata" ]]; then
+  echo '  FAIL  D20 did not publish the selected archive tree' >&2
+  failures=$((failures + 1))
+else
+  echo '  ok    D20 published only manifest and referenced archives'
+fi
 
 if [[ $failures -gt 0 ]]; then
   echo >&2
