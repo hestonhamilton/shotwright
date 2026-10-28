@@ -15,6 +15,7 @@ let browser: Browser
 let root: string
 let galleryUrl: string
 let largeGalleryUrl: string
+let brokenGalleryUrl: string
 
 function crc32(contents: Buffer): number {
   let crc = 0xffffffff
@@ -235,6 +236,18 @@ beforeAll(async () => {
     JSON.stringify(makeManifest({ runId: 'large', shots: largeShots })),
   )
   largeGalleryUrl = pathToFileURL(generateGallery(largeDir).galleryPath).href
+  const brokenDir = path.join(root, 'broken')
+  fs.mkdirSync(path.join(brokenDir, 'shots'), { recursive: true })
+  const brokenShots = ['first', 'missing', 'last'].map((name) => {
+    const file = `shots/${name}.png`
+    if (name !== 'missing') fs.writeFileSync(path.join(brokenDir, file), uniquePng(42))
+    return makeShot({ name, spec: 'broken.shots.ts', file })
+  })
+  fs.writeFileSync(
+    path.join(brokenDir, 'manifest.json'),
+    JSON.stringify(makeManifest({ runId: 'broken', shots: brokenShots })),
+  )
+  brokenGalleryUrl = pathToFileURL(generateGallery(brokenDir).galleryPath).href
   // 120s, not 30s: this is a wall-clock budget, not an assertion. Building 60
   // PNGs and launching Chromium takes ~1s on a dev machine and far longer in a
   // 4-CPU CI container, where Playwright round-trips measured ~25x slower
@@ -264,9 +277,24 @@ describe('gallery browser behavior', () => {
       await ready.waitFor()
       expect(await page.locator('[data-viewer-position]').textContent()).toBe(`1 of ${count}`)
       expect(await page.locator('[data-viewer-prev]').isDisabled()).toBe(true)
+      expect(await page.locator('.viewer-navigation-help').innerText()).toContain(
+        'While fitted, Left and Right move between shots',
+      )
+      await page.locator('[data-viewer-position]').evaluate((element) => {
+        element.setAttribute('data-mutations', '0')
+        new element.ownerDocument.defaultView!.MutationObserver((records: unknown[]) => {
+          element.setAttribute(
+            'data-mutations',
+            String(Number(element.getAttribute('data-mutations')) + records.length),
+          )
+        }).observe(element, { childList: true, characterData: true, subtree: true })
+      })
+      await page.keyboard.press('ArrowLeft')
+      expect(await page.locator('[data-viewer-position]').getAttribute('data-mutations')).toBe('0')
       await second.evaluate((card) => card.querySelector('.overview-image')?.remove())
       await page.keyboard.press('ArrowRight')
       await ready.waitFor()
+      await page.locator('[data-viewer-position][data-mutations="1"]').waitFor()
       expect(await page.locator('[data-viewer-position]').textContent()).toBe(`2 of ${count}`)
       expect(await page.locator('#inspection-title').textContent()).toBe(
         `${await second.locator('h3').textContent()} — Screenshot`,
@@ -301,6 +329,35 @@ describe('gallery browser behavior', () => {
       await context.close()
     }
   }, 60_000)
+
+  it('skips a broken screenshot and excludes it from the viewer position', async () => {
+    const page = await browser.newPage()
+    await page.goto(brokenGalleryUrl)
+    expect(await page.locator('.card').count()).toBe(3)
+    expect(await page.locator('.card.broken-reference').count()).toBe(1)
+    await page.locator('.card').first().locator('.media').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    expect(await page.locator('[data-viewer-position]').textContent()).toBe('1 of 2')
+    await page.locator('[data-viewer-next]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    expect(await page.locator('#inspection-title').textContent()).toBe('last — Screenshot')
+    expect(await page.locator('[data-viewer-position]').textContent()).toBe('2 of 2')
+    expect(await page.locator('[data-viewer-next]').isDisabled()).toBe(true)
+    await page.close()
+  })
+
+  it('hides the gallery keyboard hint for coarse pointers at narrow and wide widths', async () => {
+    for (const width of [320, 1280]) {
+      const context = await browser.newContext({ viewport: { width, height: 800 }, hasTouch: true })
+      const page = await context.newPage()
+      await page.goto(largeGalleryUrl)
+      await page.locator('.card').first().locator('.media').click()
+      await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+      expect(await page.locator('.viewer-navigation-help').isHidden()).toBe(true)
+      expect(await page.locator('.viewer-help').isVisible()).toBe(true)
+      await context.close()
+    }
+  })
 
   it('keeps the newest navigation when image decode is pending and zoomed arrows do not navigate', async () => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } })

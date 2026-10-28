@@ -58,6 +58,10 @@ it('opens A, B, and Diff without CSP violations or network requests and leaves n
         expect(await page.locator('[data-viewer-prev]').isHidden()).toBe(true)
         expect(await page.locator('[data-viewer-next]').isHidden()).toBe(true)
         expect(await page.locator('[data-viewer-position]').isHidden()).toBe(true)
+        expect(await page.locator('.viewer-navigation-help').textContent()).toBe('')
+        expect(await page.locator('.viewer-help').innerText()).not.toContain(
+          'While fitted, Left and Right move between shots',
+        )
         expect(await page.locator('.inspection-image').getAttribute('src')).toBe(
           await page.locator(`#pair-0-${side}`).getAttribute('src'),
         )

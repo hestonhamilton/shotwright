@@ -15,6 +15,7 @@ export const VIEWER_CSS = `
 .dialog-head h2 { flex: 1 1 180px; margin: 0; overflow-wrap: anywhere; font-size: 18px; }
 .dialog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .viewer-help { margin: 0; padding: 4px 14px; color: var(--muted); font-size: 12px; }
+@media (pointer: coarse) { .viewer-navigation-help { display: none; } }
 .inspection-surface { display: flex; flex: 1 1 auto; min-height: 0; width: 100%; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; background: var(--panel-2); }
 .inspection-image { display: block; flex: none; max-width: none; max-height: none; margin: auto; outline: 1px solid var(--line); cursor: default; }
 .inspection-image.zoomable { cursor: zoom-in; }
@@ -23,7 +24,7 @@ export const VIEWER_CSS = `
 
 export const VIEWER_DIALOG = `<dialog class="viewer-dialog" id="inspection-dialog" aria-labelledby="inspection-title">
   <div class="dialog-head"><h2 id="inspection-title">Screenshot viewer</h2><div class="dialog-actions"><button class="action" type="button" data-viewer-prev hidden disabled>Previous</button><span data-viewer-position role="status" aria-live="polite" hidden></span><button class="action" type="button" data-viewer-next hidden disabled>Next</button><button class="action" type="button" data-viewer-toggle>Actual pixels</button><form method="dialog"><button class="action" type="submit" data-close>Close</button></form></div></div>
-  <p class="viewer-help">Actual pixels shows one image pixel per viewing device pixel. Click the image to zoom at that point. While fitted, Left and Right move between shots; in actual pixels, focus the image to pan with arrow keys.</p>
+  <p class="viewer-help">Actual pixels shows one image pixel per viewing device pixel. Click the image to zoom at that point. <span class="viewer-navigation-help" hidden></span></p>
   <div class="inspection-surface" tabindex="0"></div>
 </dialog>`
 
@@ -37,6 +38,7 @@ export const VIEWER_SCRIPT = `
   const nextButton = dialog.querySelector('[data-viewer-next]');
   const position = dialog.querySelector('[data-viewer-position]');
   const help = dialog.querySelector('.viewer-help');
+  const navigationHelp = dialog.querySelector('.viewer-navigation-help');
   let image = null;
   let returnFocus = null;
   let initialOpener = null;
@@ -107,14 +109,16 @@ export const VIEWER_SCRIPT = `
     : '.media[data-viewer-open]:not(:disabled)');
   const updateNavigation = () => {
     const gallery = currentCard !== null;
-    previousButton.hidden = nextButton.hidden = position.hidden = !gallery;
+    previousButton.hidden = nextButton.hidden = position.hidden = navigationHelp.hidden = !gallery;
+    navigationHelp.textContent = gallery ? 'While fitted, Left and Right move between shots; in actual pixels, focus the image to pan with arrow keys.' : '';
     if (!gallery) {
       previousButton.disabled = nextButton.disabled = true;
       return;
     }
     const cards = eligibleCards();
     const index = cards.indexOf(currentCard);
-    position.textContent = index < 0 ? '' : (index + 1) + ' of ' + cards.length;
+    const nextPosition = index < 0 ? '' : (index + 1) + ' of ' + cards.length;
+    if (position.textContent !== nextPosition) position.textContent = nextPosition;
     previousButton.disabled = index <= 0;
     nextButton.disabled = index < 0 || index >= cards.length - 1;
   };
@@ -151,7 +155,6 @@ export const VIEWER_SCRIPT = `
     const cards = eligibleCards();
     const index = cards.indexOf(currentCard);
     const target = index < 0 ? null : cards[index + offset];
-    updateNavigation();
     if (!target) return;
     const opener = matchingOpener(target);
     const source = target.querySelector('[data-original]');
