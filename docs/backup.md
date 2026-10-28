@@ -102,9 +102,10 @@ dependency edges, 369 commits, zero rows differing in either direction.
   it; do not use it as a restore source or publish it without a separate content
   and retention review.
 
-Shotwright's own `backup_export` registration remains in place but is dormant
-under the current server-mode default; its manual `default` registration is
-unchanged.
+As measured on 2026-10-27, shotwright's own `backup_export` registration remains
+in place but is dormant, because bd 1.3.x's server-mode default keeps auto-backup
+off and nothing here sets `backup.enabled`. Its manual `default` registration
+was unchanged.
 
 ## Why `bd dolt push` no longer reaches GitHub
 
