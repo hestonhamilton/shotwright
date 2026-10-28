@@ -22,7 +22,7 @@ Nothing in this repo reads it. Use `scripts/backup-verify.sh`.
 | | |
 |---|---|
 | `scripts/backup-push.sh` | Makes a backup, **restores it and counts it**, sends it over ssh, reads the destination back. One database per run. |
-| `scripts/backup-verify.sh` | Goes and looks at the destination. Checks for a real, recent, non-empty copy of the committed board off this machine. While `shotwright-2sr.6` is open, a green check does not prove uncommitted working-set rows are in that copy. Fails closed. |
+| `scripts/backup-verify.sh` | Goes and looks at the destination. Checks a recent, non-empty board and reads back the complete archive-tree digest against the snapshot whose checked-out WORKING root and status matched a disposable restore. For a newly proven copy, OK means destination bytes match that snapshot; it does not claim all branches were inspected. Warns with exit 0 when the local working set is dirty now. A legacy copy can pass the existing checks with exit 0, but reports ‘legacy copy: working-set coverage unproven’ separately. Fails closed on failed checks or malformed new proof. |
 | `scripts/backup-verify-selftest.sh` | Proves the checker can fail. Runs in `scripts/ci/verify.sh`; needs no NAS and no bd. |
 | `scripts/backup-install.sh` | Installs the systemd user timer that runs the push. |
 
@@ -31,6 +31,8 @@ this repository and must not be** — the repo is public-facing and a NAS addres
 is exactly the shape of string the leak gate does not catch
 (`shotwright-746.18.3`). The systemd unit carries it and is generated at install
 time.
+
+Python 3.8+ on both hosts is required for the archive-tree digest.
 
 ## Checking it by hand
 
@@ -43,11 +45,19 @@ scripts/backup-verify.sh --project <path-to-consumer-checkout>
 Green looks like:
 
 ```
-backup-verify: OK — destination is current at qk4ve6tv7i5v… (2s old, 1 archives, 68 issues / 369 commits)
+backup-verify: OK — destination is current at qk4ve6tv7i5v… (2s old, 1 archives, 68 issues / 369 commits); checked-out branch WORKING root and status matched a disposable restore; destination bytes match that snapshot
 ```
 
-The issue and commit counts are the part that matters. Everything else in that
-line was also true of the empty backup.
+The counts rule out the historical empty backup; the restore and readback prove
+the recorded checked-out branch's working set and destination bytes.
+
+The published archive tree contains the `manifest`, the `.darc` files it
+references, and the producer's proof state. `dolt backup restore` reads the
+manifest and referenced archives; it does not need unrelated staging metadata.
+The push selects those files before its disposable restore, then restores that
+selected tree. A disposable Dolt run restored both dirty and clean snapshots
+with an unknown extra staging file present; the extra file was absent from the
+published tree.
 
 ## Checking the timer
 
@@ -79,10 +89,13 @@ than "the backup". `--uninstall` removes all three units. Requires
 The drill, and what to do for real. Never restore onto the live database.
 
 ```sh
-rsync -a <host>:<path>/shotwright/ /tmp/restore-src/
-dolt clone file:///tmp/restore-src /tmp/restored
-cd /tmp/restored
+scratch="$(mktemp -d "$TMPDIR/shotwright-restore-XXXXXX")"
+rsync -a <host>:<path>/shotwright/ "$scratch/restore-src/"
+(cd "$scratch" && dolt backup restore "file://$scratch/restore-src" restored)
+cd "$scratch/restored"
 dolt sql -q "select count(*) from issues;"
+cd - >/dev/null
+rm -rf "$scratch"
 ```
 
 Recorded drill, 2026-08-02, from the NAS destination into a fresh database:
