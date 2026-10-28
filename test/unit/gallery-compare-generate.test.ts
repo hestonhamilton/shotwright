@@ -201,7 +201,9 @@ it('marks a disappeared original unreadable in the final JSON, HTML, counts and 
     nonParity: 1,
     failOnChange: false,
   })
-  expect(html).toContain('Gate: measured non-parity 1 · ignored non-parity 0 · gated pairs 1')
+  expect(html).toContain(
+    'Gate: measured non-parity 1 · ignored non-parity 0 · pairs that would count toward the gate 1',
+  )
   expect(summary).toMatchObject({
     counts: { identical: 1, unreadable: 1 },
     gate: { measuredNonParity: 1, ignoredNonParity: 0, nonParity: 1, failOnChange: false },
@@ -210,7 +212,22 @@ it('marks a disappeared original unreadable in the final JSON, HTML, counts and 
       { state: 'identical' },
     ],
   })
-  expect(html).toContain('unreadable: 1')
+  expect(html).toContain(
+    'data-compare-filter="unreadable" aria-pressed="false" disabled>Unreadable 1</button>',
+  )
+  expect(html).toContain('1 pair would count toward the gate')
+  expect(
+    [...html.matchAll(/<li data-compare-jump><a href="#(pair-\d+)">([^<]+)<\/a><\/li>/g)].map(
+      (match) => [match[1], match[2]],
+    ),
+  ).toEqual([
+    ['pair-0', 'home.shots.ts / one · Unreadable'],
+    ['pair-1', 'home.shots.ts / two · Identical'],
+  ])
+  expect(
+    [...html.matchAll(/<article class="pair [^>]+" id="(pair-\d+)"/g)].map((match) => match[1]),
+  ).toEqual(['pair-0', 'pair-1'])
+  expect(html).toContain('data-compare-filter="unreadable"')
   expect(html).not.toContain('data-viewer-open="pair-0-b"')
   expect(html).toContain(reason)
   expect(html).toContain('home.shots.ts / two')

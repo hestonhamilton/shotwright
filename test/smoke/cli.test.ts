@@ -411,9 +411,9 @@ function expectCompareGallery(): void {
     expect(html).toContain(videoRun.manifest.runId)
     expect(html).toContain('Pairing key: spec + name · threshold 0.1 · includeAA false')
     expect(html).toMatch(
-      /Gate: measured non-parity \d+ · ignored non-parity 0 · gated pairs \d+ · fail-on-change off/,
+      /Gate: measured non-parity \d+ · ignored non-parity 0 · pairs that would count toward the gate \d+ · fail-on-change off/,
     )
-    expect(html).toContain('aria-label="Verdict counts"')
+    expect(html).toContain('aria-label="Compare filters"')
     expect(html).toContain('form-filled')
     expect(html).toContain('about-desktop')
     // Each present side embeds its PNG once in the image; each diff embeds once.
