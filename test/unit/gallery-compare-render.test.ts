@@ -107,7 +107,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     )
     expect(page).toContain('<p class="provenance-status">Render environment details incomplete</p>')
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"6f3d48147412470dd505613de39005311f0adc54ee3329b0bec50769006237e7"`,
+      `"73289ca41eb59d4cf95154c9f9e5edca1e0fe44f30b9937d7225152b60d3cad1"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
@@ -134,7 +134,9 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     expect(html.match(/<script\b/gi)).toHaveLength(1)
     expect(html).not.toContain('<script src=')
     expect(html.match(/data-viewer-open="pair-\d+-(?:a|b|diff)"/g)?.length).toBeGreaterThan(0)
-    expect(html.match(/data:image\/png;base64,/g)).toHaveLength((html.match(/<img /g) ?? []).length)
+    expect(html.match(/data:image\/png;base64,/g)).toHaveLength(
+      (html.match(/<img\b/gi) ?? []).length,
+    )
     expect(html).toContain('fail-on-change on')
     expect(html).toContain('pairs counted by gate · Changed')
     expect(html).toContain('aria-pressed="true" disabled>All 8</button>')
@@ -144,9 +146,9 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     )
     expect(html).toContain('<p id="compare-result-count" role="status">')
     expect(html).not.toContain('class="counts"')
-    expect(html.match(/<li data-compare-jump>/g)).toHaveLength(model.pairs.length)
+    expect(html.match(/<li\b data-compare-jump>/gi)).toHaveLength(model.pairs.length)
     const hrefs = [
-      ...html.matchAll(/<li data-compare-jump><a href="#(pair-\d+)">([^<]+)<\/a><\/li>/g),
+      ...html.matchAll(/<li\b data-compare-jump><a\b href="#(pair-\d+)">([^<]+)<\/a\b><\/li\b>/gi),
     ]
     expect(hrefs.map((match) => match[1])).toEqual(model.pairs.map((_, index) => `pair-${index}`))
     expect(new Set(hrefs.map((match) => match[1])).size).toBe(model.pairs.length)
@@ -156,14 +158,14 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
           `${pair.spec} / ${pair.name} · ${pair.state === 'size-changed' ? 'Size changed' : pair.state[0]!.toUpperCase() + pair.state.slice(1)}`,
       ),
     )
-    expect(html.match(/<span class="badge">[^<]+: 0<\/span>/g)).toBeNull()
+    expect(html.match(/<span\b class="badge">[^<]+: 0<\/span\b>/gi)).toBeNull()
     expect(html).toContain(
       '<a href="../a/shots/identical.png" download="identical.png">Download A</a>',
     )
     expect(html).toContain(
       '<a href="../b/shots/identical.png" download="identical.png">Download B</a>',
     )
-    expect(html.match(/Sibling-file warning:/g)).toHaveLength(model.pairs.length)
+    expect(html.match(/File location:/g)).toHaveLength(model.pairs.length)
     const custom = renderCompare(model, true, { aBase: '../run a', bBase: '../run b' })
     expect(custom).toContain(
       '<a href="../run%20a/shots/identical.png" download="identical.png">Download A</a>',
@@ -212,9 +214,9 @@ it('links Download A / Download B to the sibling files for text, JSON and binary
     })
     expect(model.pairs.map((pair) => pair.state)).toEqual(['changed', 'changed', 'changed'])
     const links = (html: string): string[] =>
-      [...html.matchAll(/<a class="download" href="([^"]+)" download>(Download [AB])<\/a>/g)].map(
-        (match) => `${match[2]} ${match[1]}`,
-      )
+      [
+        ...html.matchAll(/<a\b class="download" href="([^"]+)" download>(Download [AB])<\/a\b>/gi),
+      ].map((match) => `${match[2]} ${match[1]}`)
     // Default layout: the page lives in <outputDir>/compare/ beside the run directories.
     const html = renderCompare(model)
     expect(links(html)).toEqual([
@@ -225,9 +227,9 @@ it('links Download A / Download B to the sibling files for text, JSON and binary
       'Download A ../run-a/data/book%20of%20sheets.xlsx',
       'Download B ../run-b/data/book%20of%20sheets.xlsx',
     ])
-    expect(html.match(/Sibling-file warning:/g)).toHaveLength(3)
+    expect(html.match(/File location:/g)).toHaveLength(3)
     expect(html).toContain(
-      'Each download link requires this gallery beside the run directory for its side.',
+      'Keep this comparison page in the same position relative to the run folders it links to, so the download links work.',
     )
     // A caller-chosen output file gets paths relative to where it was written.
     fs.mkdirSync(path.join(root, 'review'))
@@ -238,6 +240,51 @@ it('links Download A / Download B to the sibling files for text, JSON and binary
       'Download A ../run-a/data/page.html',
       'Download B ../run-b/data/page.html',
     ])
+    expect(fs.readFileSync(generated.outputFile, 'utf8')).toContain(
+      'Keep this comparison page in the same position relative to the run folders it links to, so the download links work.',
+    )
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+it('keeps the location warning accurate for a one-sided pair at a custom output location', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-one-side-'))
+  try {
+    const a = path.join(root, 'run-a')
+    const b = path.join(root, 'run-b')
+    fs.mkdirSync(path.join(a, 'shots'), { recursive: true })
+    fs.mkdirSync(b)
+    const image = new PNG({ width: 2, height: 2 })
+    image.data.fill(100)
+    fs.writeFileSync(path.join(a, 'shots', 'only.png'), PNG.sync.write(image))
+    fs.writeFileSync(
+      path.join(a, 'manifest.json'),
+      JSON.stringify(
+        makeManifest({
+          runId: 'run-a',
+          shots: [makeShot({ name: 'only', spec: 'one.shots.ts', file: 'shots/only.png' })],
+        }),
+      ),
+    )
+    fs.writeFileSync(
+      path.join(b, 'manifest.json'),
+      JSON.stringify(makeManifest({ runId: 'run-b', shots: [] })),
+    )
+    const outputFile = path.join(root, 'review', 'compare.html')
+    fs.mkdirSync(path.dirname(outputFile))
+    const generated = generateCompareGallery(a, b, { outputFile })
+    const html = fs.readFileSync(generated.outputFile, 'utf8')
+    const pair = html.match(
+      /<article\b[^>]*data-compare-state="removed"[^>]*>[\s\S]*?<\/article\b>/i,
+    )?.[0]
+    expect(pair).toBeDefined()
+    expect(pair).toContain('Download A')
+    expect(pair).toContain('href="../run-a/shots/only.png"')
+    expect(pair).not.toContain('Download B')
+    expect(pair).toContain(
+      'File location:</strong> Keep this comparison page in the same position relative to the run folders it links to, so the download links work.',
+    )
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

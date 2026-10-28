@@ -260,6 +260,51 @@ afterAll(async () => {
 })
 
 describe('gallery browser behavior', () => {
+  it('renders native video markup and visible artifact download actions', async () => {
+    const runDir = path.join(root, 'artifacts')
+    fs.mkdirSync(path.join(runDir, 'shots'), { recursive: true })
+    fs.mkdirSync(path.join(runDir, 'video'), { recursive: true })
+    fs.mkdirSync(path.join(runDir, 'trace'), { recursive: true })
+    fs.writeFileSync(path.join(runDir, 'shots', 'one.png'), uniquePng(42))
+    fs.writeFileSync(path.join(runDir, 'video', 'one.webm'), 'video fixture')
+    fs.writeFileSync(path.join(runDir, 'trace', 'one.zip'), 'trace fixture')
+    fs.writeFileSync(
+      path.join(runDir, 'manifest.json'),
+      JSON.stringify(
+        makeManifest({
+          runId: 'artifacts',
+          shots: [
+            makeShot({
+              name: 'one',
+              spec: 'artifacts.shots.ts',
+              file: 'shots/one.png',
+              video: 'video/one.webm',
+              trace: 'trace/one.zip',
+            }),
+          ],
+        }),
+      ),
+    )
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+    try {
+      await page.goto(pathToFileURL(generateGallery(runDir).galleryPath).href)
+      const section = page.locator('aside.artifacts')
+      expect(await section.getAttribute('aria-label')).toBe(
+        'Videos and traces for artifacts.shots.ts',
+      )
+      expect(await section.locator('h3').textContent()).toBe('Videos and traces')
+      expect(await section.getByText('Referenced by 1 shot in this spec').isVisible()).toBe(true)
+      const video = section.locator('video')
+      expect(await video.isVisible()).toBe(true)
+      expect(await video.getAttribute('controls')).not.toBeNull()
+      expect(await video.getAttribute('aria-label')).toBe('Recorded video')
+      expect(await section.getByRole('link', { name: 'Download video' }).isVisible()).toBe(true)
+      expect(await section.getByRole('link', { name: 'Download trace' }).isVisible()).toBe(true)
+    } finally {
+      await page.close()
+    }
+  })
+
   it('navigates filtered shots in card order with boundaries and matching opener focus', async () => {
     for (const width of [1280, 320]) {
       const context = await browser.newContext({ viewport: { width, height: 800 } })
