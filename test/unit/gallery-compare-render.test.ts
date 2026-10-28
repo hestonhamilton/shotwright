@@ -107,7 +107,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     )
     expect(page).toContain('<p class="provenance-status">Render environment details incomplete</p>')
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"a35576cf04309c7c1cd37df694b42bad7c465f076f6d9fbca3b24666cc9efc56"`,
+      `"a624e3ad03df7916a8091a75029a67d307cad9ced12746cc0ff4e0686cdac1ed"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
@@ -163,7 +163,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     expect(html).toContain(
       '<a href="../b/shots/identical.png" download="identical.png">Download B</a>',
     )
-    expect(html.match(/Sibling-file warning:/g)).toHaveLength(model.pairs.length)
+    expect(html.match(/File location:/g)).toHaveLength(model.pairs.length)
     const custom = renderCompare(model, true, { aBase: '../run a', bBase: '../run b' })
     expect(custom).toContain(
       '<a href="../run%20a/shots/identical.png" download="identical.png">Download A</a>',
@@ -225,9 +225,9 @@ it('links Download A / Download B to the sibling files for text, JSON and binary
       'Download A ../run-a/data/book%20of%20sheets.xlsx',
       'Download B ../run-b/data/book%20of%20sheets.xlsx',
     ])
-    expect(html.match(/Sibling-file warning:/g)).toHaveLength(3)
+    expect(html.match(/File location:/g)).toHaveLength(3)
     expect(html).toContain(
-      'Each download link requires this gallery beside the run directory for its side.',
+      'Keep this comparison page and both run folders in their current relative locations to use download links.',
     )
     // A caller-chosen output file gets paths relative to where it was written.
     fs.mkdirSync(path.join(root, 'review'))
@@ -238,6 +238,9 @@ it('links Download A / Download B to the sibling files for text, JSON and binary
       'Download A ../run-a/data/page.html',
       'Download B ../run-b/data/page.html',
     ])
+    expect(fs.readFileSync(generated.outputFile, 'utf8')).toContain(
+      'Keep this comparison page and both run folders in their current relative locations to use download links.',
+    )
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

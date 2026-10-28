@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { parseRunArgs } from '../../src/cli.js'
 import { GALLERY_CSS, GALLERY_SCRIPT } from '../../src/gallery/assets.js'
 import { VIEWER_SCRIPT } from '../../src/gallery/viewer.js'
 import { generateGallery } from '../../src/gallery/generate.js'
@@ -378,12 +379,38 @@ describe('gallery rendering', () => {
     ]
     writeRun(runDir, manifest('run', shots))
     const html = renderGallery(loadGalleryModel(runDir))
-    expect(html.match(/<video /g) ?? []).toHaveLength(1)
-    expect(
-      html.match(/shared by 3 shots by identical manifest path; test title unavailable/g) ?? [],
-    ).toHaveLength(1)
-    expect(html.match(/Download sibling trace/g) ?? []).toHaveLength(1)
-    expect(html).toContain('requires this gallery beside the run directory')
+    expect(html.match(/<video\b/gi) ?? []).toHaveLength(1)
+    expect(html.match(/Referenced by 3 shots in this spec/g) ?? []).toHaveLength(1)
+    expect(html.match(/Download video/g) ?? []).toHaveLength(1)
+    expect(html.match(/Download trace/g) ?? []).toHaveLength(1)
+    expect(html).toContain(
+      'keep this gallery in its run folder so available video and trace links work.',
+    )
+  })
+
+  it('counts manifest shots even when a PNG is missing and the view is filtered', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    const pair = { video: 'video/shared.webm', trace: 'trace/shared.zip' }
+    const shots = [shot('one', 'home.shots.ts', 0, pair), shot('two', 'home.shots.ts', 1, pair)]
+    const value = manifest('run', shots)
+    value.flags.only = ['one']
+    writeRun(runDir, value, { omit: [shots[1]!.file] })
+    const html = renderGallery(loadGalleryModel(runDir))
+    expect(html).toContain('Referenced by 2 shots in this spec')
+    expect(html).toContain('<dt>Only filter</dt><dd>one</dd>')
+    expect(html).toContain('Screenshot unavailable')
+  })
+
+  it('keeps Shotwright flags distinct from Playwright trace passthrough', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    const args = parseRunArgs(['--', '--trace', 'retain-on-failure'])
+    expect(args.passthrough).toEqual(['--trace', 'retain-on-failure'])
+    const value = manifest('run', [shot('one', 'home.shots.ts', 0)])
+    value.flags.trace = args.trace
+    writeRun(runDir, value)
+    const html = renderGallery(loadGalleryModel(runDir))
+    expect(html).toContain('<dt>Shotwright trace flag</dt><dd>Off</dd>')
+    expect(html).toContain('No videos or traces linked to screenshots')
   })
 
   it('renders a typed broken artifact affordance and reports its relative path', () => {
@@ -395,8 +422,10 @@ describe('gallery rendering', () => {
     fs.rmSync(path.join(runDir, 'video/missing.webm'))
     const generated = generateGallery(runDir)
     const html = fs.readFileSync(generated.galleryPath, 'utf8')
-    expect(html).toContain('Broken video reference: video/missing.webm')
+    expect(html).toContain('Video file unavailable: video/missing.webm')
     expect(html).toContain('Video unavailable: video/missing.webm')
+    expect(html).toContain('Video or trace references in this run')
+    expect(html).toContain('Referenced by 1 shot in this spec')
     expect(generated.diagnostics).toEqual([
       {
         path: 'video/missing.webm',
@@ -409,10 +438,10 @@ describe('gallery rendering', () => {
     const runDir = path.join(tmpDir(), 'run')
     writeRun(runDir, manifest('run', fiveShots().slice(0, 2)))
     const html = renderGallery(loadGalleryModel(runDir))
-    expect(html.match(/Video not captured/g) ?? []).toHaveLength(1)
-    expect(html.match(/Trace not captured/g) ?? []).toHaveLength(1)
-    expect(html).not.toContain('<video ')
-    expect(html).toContain('Video and trace absent in this run')
+    expect(html.match(/No video linked to these screenshots/g) ?? []).toHaveLength(1)
+    expect(html.match(/No trace linked to these screenshots/g) ?? []).toHaveLength(1)
+    expect(html).not.toMatch(/<video\b/i)
+    expect(html).toContain('No videos or traces linked to screenshots')
   })
 
   it('spells out unavailable device scale when viewport and scale are absent', () => {

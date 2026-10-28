@@ -2,7 +2,7 @@
 import type { ArtifactEntry } from '../manifest.js'
 import { isGatedPair, type ComparePair, type GalleryCompareModel } from './compare-model.js'
 import type { CompareGenerationResult, GalleryShot } from './model.js'
-import { escapeHtml, siblingHref, siblingWarning, sourceLine } from './render.js'
+import { escapeHtml, siblingHref, sourceLine } from './render.js'
 import { VIEWER_CSS, VIEWER_DIALOG, VIEWER_SCRIPT } from './viewer.js'
 import { compareProvenance, provenanceBanner, type CompareProvenance } from './provenance.js'
 
@@ -91,7 +91,7 @@ function artifactDownloads(
   return `<p class="downloads">${anchors.join(' · ')}</p>${pairWarning()}`
 }
 function pairWarning(): string {
-  return `<p class="artifact-warning"><strong>Sibling-file warning:</strong> Each download link ${siblingWarning} for its side.</p>`
+  return '<p class="artifact-warning"><strong>File location:</strong> Keep this comparison page and both run folders in their current relative locations to use download links.</p>'
 }
 function renderPair(
   pair: ComparePair,

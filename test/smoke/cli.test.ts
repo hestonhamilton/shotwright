@@ -603,11 +603,11 @@ function expectFiveShotGallery(): void {
     `shotwright ${unfilteredRun.manifest.shotwrightVersion} · Playwright ${unfilteredRun.manifest.playwrightVersion}`,
   )
   expect(html).toContain('<dt>Only filter</dt><dd>None</dd>')
-  expect(html).toContain('<dt>Video flag</dt><dd>Off</dd>')
-  expect(html).toContain('<dt>Trace flag</dt><dd>Off</dd>')
+  expect(html).toContain('<dt>Shotwright video flag</dt><dd>Off</dd>')
+  expect(html).toContain('<dt>Shotwright trace flag</dt><dd>Off</dd>')
   expect(html).toContain('<span class="badge">5 shots</span>')
   expect(html).toContain('<span class="badge">2 specs</span>')
-  expect(occurrences(html, 'Video and trace absent in this run')).toBe(1)
+  expect(occurrences(html, 'No videos or traces linked to screenshots')).toBe(1)
   expect(occurrences(html, intrinsicBadge)).toBe(1)
 
   for (const [index, shot] of unfilteredRun.manifest.shots.entries()) {
