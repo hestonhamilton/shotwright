@@ -135,7 +135,7 @@ function renderCard(
     image === null
       ? ''
       : `<div class="actions">
-              <button class="action load-action" type="button">Load screenshot</button>
+              <button class="action load-action" type="button" disabled>Load screenshot</button>
               <button class="action" type="button" disabled data-viewer-open="download-${index}" data-inspect="download-${index}">View full screenshot</button>
               <a class="action" id="download-${index}" data-original
                 data-name="${escapeHtml(entry.name)}"

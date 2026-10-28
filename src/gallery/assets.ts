@@ -264,6 +264,7 @@ export const GALLERY_SCRIPT = `
   });
   document.querySelectorAll('.load-action').forEach((button) => {
     button.addEventListener('click', () => load(button.closest('.card')));
+    button.disabled = false;
   });
 
   if ('IntersectionObserver' in window) {

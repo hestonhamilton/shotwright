@@ -38,6 +38,7 @@ export const VIEWER_SCRIPT = `
   let returnFocus = null;
   let actual = false;
   let generation = 0;
+  let lastPointerUp = null;
   const dpr = () => window.devicePixelRatio > 0 && Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1;
   const clamp = (value, max) => Math.max(0, Math.min(value, max));
   const pointAtCenter = () => {
@@ -118,10 +119,17 @@ export const VIEWER_SCRIPT = `
     });
   });
   toggleButton.addEventListener('click', () => { if (image) toggle(pointAtCenter()); });
+  surface.addEventListener('pointerup', (event) => {
+    lastPointerUp = event.target === image ? { clientX: event.clientX, clientY: event.clientY } : null;
+  });
   surface.addEventListener('click', (event) => {
+    const pointer = event.isTrusted ? lastPointerUp : null;
+    lastPointerUp = null;
     if (event.target !== image || toggleButton.hidden) return;
     const rect = image.getBoundingClientRect();
-    toggle({ x: clamp((event.clientX - rect.left) / rect.width, 1), y: clamp((event.clientY - rect.top) / rect.height, 1), clientX: event.clientX, clientY: event.clientY });
+    const clientX = pointer?.clientX ?? event.clientX;
+    const clientY = pointer?.clientY ?? event.clientY;
+    toggle({ x: clamp((clientX - rect.left) / rect.width, 1), y: clamp((clientY - rect.top) / rect.height, 1), clientX, clientY });
   });
   const refresh = () => {
     if (!image || !dialog.open || !image.naturalWidth) return;

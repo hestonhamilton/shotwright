@@ -203,13 +203,14 @@ beforeAll(async () => {
   const largeDir = path.join(root, 'large')
   fs.mkdirSync(path.join(largeDir, 'shots'), { recursive: true })
   const capture = async (name: string, scale: number): Promise<ShotEntry> => {
+    const wideTall = name === 'wide-tall'
     const context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
+      viewport: { width: wideTall ? 2560 : 1280, height: 800 },
       deviceScaleFactor: scale,
     })
     const page = await context.newPage()
     await page.setContent(
-      `<style>body{margin:0}main{height:${name === 'tall' ? 8000 : 1200}px;background:linear-gradient(#284b88,#e8ad48)}</style><main></main>`,
+      `<style>body{margin:0}main{height:${wideTall ? 16566 : name === 'tall' ? 8000 : 1200}px;background:linear-gradient(#284b88,#e8ad48)}</style><main></main>`,
     )
     await page.screenshot({ path: path.join(largeDir, 'shots', `${name}.png`), fullPage: true })
     await context.close()
@@ -220,11 +221,15 @@ beforeAll(async () => {
           : name,
       spec: 'large.shots.ts',
       file: `shots/${name}.png`,
-      viewport: { width: 1280, height: 800 },
+      viewport: { width: wideTall ? 2560 : 1280, height: 800 },
       deviceScaleFactor: scale,
     })
   }
-  const largeShots = [await capture('tall', 1), await capture('scale-two', 2)]
+  const largeShots = [
+    await capture('tall', 1),
+    await capture('scale-two', 2),
+    await capture('wide-tall', 1),
+  ]
   fs.writeFileSync(
     path.join(largeDir, 'manifest.json'),
     JSON.stringify(makeManifest({ runId: 'large', shots: largeShots })),
@@ -506,7 +511,7 @@ describe('gallery browser behavior', () => {
         const clickY = rect.y + rect.height / 2
         await image.evaluate((element) =>
           element.addEventListener(
-            'click',
+            'pointerup',
             (event: { clientX: number; clientY: number }) => {
               const rect = element.getBoundingClientRect()
               ;(
@@ -565,6 +570,48 @@ describe('gallery browser behavior', () => {
       }
     }
   }, 120_000)
+
+  it('keeps the exact pointer position anchored when a wide, tall image zooms', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    const page = await context.newPage()
+    await page.goto(largeGalleryUrl)
+    await page.locator('.card').filter({ hasText: 'wide-tall' }).locator('.media').click()
+    const ready = page.locator('#inspection-dialog[data-viewer-state="ready"]')
+    await ready.waitFor()
+    const image = page.locator('.inspection-image')
+    for (const [x, y] of [
+      [0.5, 0.5],
+      [0.6, 0.65],
+    ] as const) {
+      const fit = await image.boundingBox()
+      if (!fit) throw new Error('viewer image absent')
+      expect(fit.width / 2560).toBeLessThan(0.1)
+      const point = { clientX: fit.x + fit.width * x, clientY: fit.y + fit.height * y }
+      await page.mouse.click(point.clientX, point.clientY)
+      await ready.waitFor()
+      const actual = await image.evaluate(
+        (element, { x, y, point }) => {
+          const rect = element.getBoundingClientRect()
+          const surface = element.parentElement!
+          return {
+            width: rect.width,
+            scrollWidth: surface.scrollWidth,
+            clientWidth: surface.clientWidth,
+            deltaX: rect.left + rect.width * x - point.clientX,
+            deltaY: rect.top + rect.height * y - point.clientY,
+          }
+        },
+        { x, y, point },
+      )
+      expect(actual.width).toBe(2560)
+      expect(actual.scrollWidth).toBeGreaterThan(actual.clientWidth)
+      expect(Math.abs(actual.deltaX), JSON.stringify({ x, y, actual })).toBeLessThanOrEqual(1)
+      expect(Math.abs(actual.deltaY), JSON.stringify({ x, y, actual })).toBeLessThanOrEqual(1)
+      await page.locator('[data-viewer-toggle]').click()
+      await ready.waitFor()
+    }
+    await context.close()
+  })
 
   it('opens a device-scale-two capture and refits on resize', async () => {
     const context = await browser.newContext({
@@ -741,6 +788,8 @@ describe('gallery browser behavior', () => {
     expect(await noScriptPage.locator('a[data-original]').count()).toBe(60)
     expect(await noScriptPage.locator('noscript').isVisible()).toBe(true)
     expect(await noScriptPage.locator('[data-viewer-open]:not([disabled])').count()).toBe(0)
+    expect(await noScriptPage.locator('.load-action').count()).toBe(60)
+    expect(await noScriptPage.locator('.load-action:not([disabled])').count()).toBe(0)
     expect(await noScriptPage.locator('.overview-image').count()).toBe(0)
     const noScriptTallCard = noScriptPage.locator('.card').filter({
       has: noScriptPage.locator('h3', { hasText: 'tall-aspect' }),
@@ -761,6 +810,7 @@ describe('gallery browser behavior', () => {
     await fallbackPage.goto(galleryUrl)
     expect(await fallbackPage.locator('.overview-image').count()).toBe(1)
     expect(await fallbackPage.locator('.load-action:visible').count()).toBe(60)
+    expect(await fallbackPage.locator('.load-action:not([disabled])').count()).toBe(60)
     await fallbackPage.locator('.card').nth(1).locator('.load-action').click()
     expect(await fallbackPage.locator('.overview-image').count()).toBe(2)
     const fallbackTallCard = fallbackPage.locator('.card').filter({
