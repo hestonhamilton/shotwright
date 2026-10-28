@@ -206,8 +206,8 @@ describe('gallery rendering', () => {
       `&lt;script&gt; &amp; &quot;quote&quot;\n${'longword'.repeat(1000)}" data-tags=`,
     )
     expect(html).not.toContain('<script> &')
-    expect(html).toMatch(/<div class="shot-note" tabindex="0" role="group" aria-label="[^"]+">/)
-    expect(html).not.toMatch(/<div class="shot-note"[^>]*style=/)
+    expect(html).toMatch(/<div\b class="shot-note" tabindex="0" role="group" aria-label="[^"]+">/i)
+    expect(html).not.toMatch(/<div\b class="shot-note"[^>]*style=/i)
     expect(GALLERY_CSS).toMatch(/\.shot-note\.more-below\s*\{[^}]*box-shadow:/)
     expect(GALLERY_CSS).toMatch(/\.shot-note\.more-above\s*\{[^}]*box-shadow:/)
     expect(GALLERY_CSS).toMatch(/\.shot-note\.more-above\.more-below\s*\{[^}]*box-shadow:/)
@@ -224,7 +224,7 @@ describe('gallery rendering', () => {
     expect(html).toContain('View full screenshot')
     expect(html).toContain('data-viewer-state')
     expect(html).toContain('Screenshot viewer')
-    expect(html.match(/<article class="card/g) ?? []).toHaveLength(5)
+    expect(html.match(/<article\b class="card/gi) ?? []).toHaveLength(5)
     expect(html.indexOf('about.shots.ts')).toBeLessThan(html.indexOf('home.shots.ts'))
     for (const entry of fiveShots()) {
       expect(html).toContain(entry.name)
@@ -310,7 +310,7 @@ describe('gallery rendering', () => {
     writeRun(runDir, value)
     const html = renderGallery(loadGalleryModel(runDir))
     expect(html.match(/<script\b/gi) ?? []).toHaveLength(2)
-    expect(html.match(/<\/style>/g) ?? []).toHaveLength(1)
+    expect(html.match(/<\/style\b>/gi) ?? []).toHaveLength(1)
     expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&#39;&lt;/style&gt;')
     expect(html).toContain('video/%3Cscript%3Equote%22%27.webm')
     expect(html).toContain('trace/%3C/style%3E/trace%27.zip')
@@ -384,7 +384,7 @@ describe('gallery rendering', () => {
     expect(html.match(/Download video/g) ?? []).toHaveLength(1)
     expect(html.match(/Download trace/g) ?? []).toHaveLength(1)
     expect(html).toContain(
-      'keep this gallery in its run folder so available video and trace links work.',
+      'Keep this gallery in its run folder so available video and trace links work.',
     )
   })
 
@@ -434,12 +434,12 @@ describe('gallery rendering', () => {
     ])
   })
 
-  it('states the all-null artifact state once for a spec and omits video layout', () => {
+  it('states the all-null artifact state for a single shot and omits video layout', () => {
     const runDir = path.join(tmpDir(), 'run')
-    writeRun(runDir, manifest('run', fiveShots().slice(0, 2)))
+    writeRun(runDir, manifest('run', [shot('one', 'home.shots.ts', 0)]))
     const html = renderGallery(loadGalleryModel(runDir))
-    expect(html.match(/No video linked to these screenshots/g) ?? []).toHaveLength(1)
-    expect(html.match(/No trace linked to these screenshots/g) ?? []).toHaveLength(1)
+    expect(html.match(/No video referenced/g) ?? []).toHaveLength(1)
+    expect(html.match(/No trace referenced/g) ?? []).toHaveLength(1)
     expect(html).not.toMatch(/<video\b/i)
     expect(html).toContain('No videos or traces linked to screenshots')
   })

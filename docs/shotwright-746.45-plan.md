@@ -96,3 +96,10 @@ The section label is "Videos and traces", and the run-facts rename is included, 
    - A test covers the passthrough case.
 5. **The location warning implies availability. Accepted.** It reads "File location: keep this gallery in its run folder so available video and trace links work." The same meaning applies to the footer sentence.
 6. **Extra demo run is disproportionate. Accepted.** Verification uses one focused generated-page browser check and the standard gates. Before shipping, it views one generated gallery with video and trace, as the repo's viewed-UI rule requires.
+
+## Implementation redteam repair (2026-10-28)
+
+- Use count-neutral `No video referenced`, `No trace referenced`, and `Recorded video` for groups containing one or several shots. Pin the null pair with a one-shot test.
+- Use `File location: Keep` on both pages. Compare's sentence refers only to run folders linked by the page, and a one-sided pair with custom output placement pins that claim.
+- The generated-page browser test checks native video markup, controls, accessible name, and visible downloads. Its placeholder `.webm` does not establish playback; playback remains a manual Verify check.
+- HTML-tag regexes in touched tests use a case-insensitive word boundary to satisfy CodeQL's tag-filter rule.

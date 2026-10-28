@@ -203,8 +203,8 @@ function artifactLink(artifact: ArtifactReference, kind: 'video' | 'trace'): str
 function renderArtifactGroup(group: ArtifactGroup): string {
   if (group.video === null && group.trace === null) {
     return `<div class="artifact-group"><div class="artifact-row">
-            <span class="artifact-preview absent">No video linked to these screenshots</span>
-            <span class="artifact-preview absent">No trace linked to these screenshots</span>
+            <span class="artifact-preview absent">No video referenced</span>
+            <span class="artifact-preview absent">No trace referenced</span>
           </div></div>`
   }
   const sharedLabel = `Referenced by ${count(group.shotCount, 'shot')} in this spec`
@@ -213,10 +213,10 @@ function renderArtifactGroup(group: ArtifactGroup): string {
     ...(group.trace === null ? [] : [artifactLink(group.trace, 'trace')]),
   ].join('')
   const warning =
-    '<p class="artifact-warning"><strong>File location:</strong> keep this gallery in its run folder so available video and trace links work.</p>'
+    '<p class="artifact-warning"><strong>File location:</strong> Keep this gallery in its run folder so available video and trace links work.</p>'
   if (group.video !== null) {
     const player = group.video.available
-      ? `<video controls preload="metadata" aria-label="Recorded video for linked screenshots" src="${escapeHtml(siblingHref(group.video.path))}"></video>`
+      ? `<video controls preload="metadata" aria-label="Recorded video" src="${escapeHtml(siblingHref(group.video.path))}"></video>`
       : `<div class="broken">Video unavailable: ${escapeHtml(group.video.path)}</div>`
     return `<figure class="artifact-group video-layout">
             <div class="video-frame">${player}</div>

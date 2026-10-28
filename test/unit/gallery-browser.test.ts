@@ -247,7 +247,7 @@ afterAll(async () => {
 })
 
 describe('gallery browser behavior', () => {
-  it('shows a generated video and trace section with native controls and download links', async () => {
+  it('renders native video markup and visible artifact download actions', async () => {
     const runDir = path.join(root, 'artifacts')
     fs.mkdirSync(path.join(runDir, 'shots'), { recursive: true })
     fs.mkdirSync(path.join(runDir, 'video'), { recursive: true })
@@ -284,7 +284,7 @@ describe('gallery browser behavior', () => {
       const video = section.locator('video')
       expect(await video.isVisible()).toBe(true)
       expect(await video.getAttribute('controls')).not.toBeNull()
-      expect(await video.getAttribute('aria-label')).toBe('Recorded video for linked screenshots')
+      expect(await video.getAttribute('aria-label')).toBe('Recorded video')
       expect(await section.getByRole('link', { name: 'Download video' }).isVisible()).toBe(true)
       expect(await section.getByRole('link', { name: 'Download trace' }).isVisible()).toBe(true)
     } finally {

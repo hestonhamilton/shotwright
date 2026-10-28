@@ -91,7 +91,7 @@ function artifactDownloads(
   return `<p class="downloads">${anchors.join(' · ')}</p>${pairWarning()}`
 }
 function pairWarning(): string {
-  return '<p class="artifact-warning"><strong>File location:</strong> Keep this comparison page and both run folders in their current relative locations to use download links.</p>'
+  return '<p class="artifact-warning"><strong>File location:</strong> Keep this comparison page in the same position relative to the run folders it links to, so the download links work.</p>'
 }
 function renderPair(
   pair: ComparePair,
