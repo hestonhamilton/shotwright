@@ -4,10 +4,10 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { PNG } from 'pngjs'
 import { expect, it } from 'vitest'
-import { buildCompareModel } from '../../src/gallery/compare-model.js'
+import { buildCompareModel, isGatedPair } from '../../src/gallery/compare-model.js'
 import { loadGalleryModel } from '../../src/gallery/model.js'
 import { generateCompareGallery } from '../../src/gallery/generate-compare.js'
-import { renderCompare } from '../../src/gallery/render-compare.js'
+import { renderCompare, renderCompareHeader } from '../../src/gallery/render-compare.js'
 import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
 it('renders all seven verdict labels, gate summary, diff image, and run status', () => {
@@ -107,7 +107,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     )
     expect(page).toContain('<p class="provenance-status">Render environment details incomplete</p>')
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"50b26869720eb8e32fee7ea91c39f62daae862650dbbdcf2ce177587cf07c4a4"`,
+      `"a35576cf04309c7c1cd37df694b42bad7c465f076f6d9fbca3b24666cc9efc56"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
@@ -282,19 +282,18 @@ it('marks exactly the cards the gate counts, derived from the same predicate as 
         .map((card) => card.slice(0, card.indexOf('</header>')))
     const marked = (html: string, label: string): number =>
       (html.match(new RegExp(` · ${label}</span>`, 'g')) ?? []).length
-    const gatedCount = (html: string): number => Number(/gated pairs (\d+)/.exec(html)?.[1])
+    const gatedCount = (html: string): number =>
+      Number(/(?:gated pairs|pairs that would count toward the gate) (\d+)/.exec(html)?.[1])
     const find = (html: string, name: string): string =>
       cards(html).find((card) => card.includes(`/ ${name}</h2>`))!
 
-    const strict = fs.readFileSync(
-      generateCompareGallery(a, b, {
-        strict: true,
-        failOnChange: true,
-        ignore: ['example.shots.ts/noisy'],
-        outputFile: path.join(root, 'strict.html'),
-      }).outputFile,
-      'utf8',
-    )
+    const strictResult = generateCompareGallery(a, b, {
+      strict: true,
+      failOnChange: true,
+      ignore: ['example.shots.ts/noisy'],
+      outputFile: path.join(root, 'strict.html'),
+    })
+    const strict = fs.readFileSync(strictResult.outputFile, 'utf8')
     expect(find(strict, 'tint')).toContain('shot · similar · counted by gate')
     expect(find(strict, 'tint')).toContain('state-similar gated')
     expect(find(strict, 'kept')).toContain('artifact · changed · counted by gate')
@@ -307,13 +306,11 @@ it('marks exactly the cards the gate counts, derived from the same predicate as 
     )
     expect(gatedCount(strict)).toBe(2)
 
-    const lenient = fs.readFileSync(
-      generateCompareGallery(a, b, {
-        ignore: ['example.shots.ts/noisy'],
-        outputFile: path.join(root, 'lenient.html'),
-      }).outputFile,
-      'utf8',
-    )
+    const lenientResult = generateCompareGallery(a, b, {
+      ignore: ['example.shots.ts/noisy'],
+      outputFile: path.join(root, 'lenient.html'),
+    })
+    const lenient = fs.readFileSync(lenientResult.outputFile, 'utf8')
     expect(find(lenient, 'tint')).not.toContain('would count toward gate')
     expect(find(lenient, 'tint')).not.toContain(' gated')
     expect(find(lenient, 'kept')).toContain('artifact · changed · would count toward gate')
@@ -324,6 +321,10 @@ it('marks exactly the cards the gate counts, derived from the same predicate as 
       'data-compare-filter="gated" aria-pressed="false" disabled>Would gate 1</button>',
     )
     expect(strict).toContain('Strict mode: similar pairs count toward the gate unless ignored.')
+    expect(strict).toContain('ignored non-parity 1 · gated pairs 2 · fail-on-change on')
+    expect(lenient).toContain(
+      'ignored non-parity 1 · pairs that would count toward the gate 1 · fail-on-change off',
+    )
 
     // The in-memory renderer takes the same flag and agrees with the generator.
     const model = buildCompareModel(loadGalleryModel(a), loadGalleryModel(b), {
@@ -334,6 +335,24 @@ it('marks exactly the cards the gate counts, derived from the same predicate as 
       const html = renderCompare(model, false, {}, strictFlag)
       expect(marked(html, 'would count toward gate')).toBe(gatedCount(html))
     }
+    expect(renderCompare(model, false, {}, true)).toContain(
+      'Strict mode: similar pairs would count toward the gate unless ignored.',
+    )
+    for (const [result, html, strictFlag] of [
+      [lenientResult, lenient, false],
+      [strictResult, strict, true],
+    ] as const) {
+      const predicateCount = result.model.pairs.filter((pair) =>
+        isGatedPair(pair, strictFlag),
+      ).length
+      expect(result.model.pairs.some((pair) => pair.ignored)).toBe(true)
+      expect(result.gate.nonParity).toBe(predicateCount)
+      expect(gatedCount(html)).toBe(predicateCount)
+      expect((html.match(/data-compare-gated="true"/g) ?? []).length).toBe(predicateCount)
+    }
+    expect(
+      renderCompareHeader(strictResult.model, true, { ...strictResult.gate, nonParity: 99 }, true),
+    ).toContain('Gated 2</button>')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -354,7 +373,7 @@ it('explains an empty comparison without changing verdict totals', () => {
     })
     const html = renderCompare(model)
     expect(html).toContain('No pairs to compare')
-    expect(html).toContain('gated pairs 0')
+    expect(html).toContain('pairs that would count toward the gate 0')
     expect(html).not.toContain('data-compare-filter="gated"')
     expect(html).not.toContain('<li data-compare-jump>')
   } finally {

@@ -201,7 +201,9 @@ it('marks a disappeared original unreadable in the final JSON, HTML, counts and 
     nonParity: 1,
     failOnChange: false,
   })
-  expect(html).toContain('Gate: measured non-parity 1 · ignored non-parity 0 · gated pairs 1')
+  expect(html).toContain(
+    'Gate: measured non-parity 1 · ignored non-parity 0 · pairs that would count toward the gate 1',
+  )
   expect(summary).toMatchObject({
     counts: { identical: 1, unreadable: 1 },
     gate: { measuredNonParity: 1, ignoredNonParity: 0, nonParity: 1, failOnChange: false },

@@ -199,6 +199,22 @@ it('filters final compare pairs and keeps native jump links usable', async () =>
     ).toBe(true)
     await page.locator('[data-compare-filter="similar"]').click()
     expect(new URL(page.url()).hash).toBe('')
+    const hiddenPair = await page.locator('article.pair.state-added').getAttribute('id')
+    expect(await page.locator(`#${hiddenPair}`).isVisible()).toBe(false)
+    await page.evaluate((id) => {
+      ;(globalThis as unknown as { location: { hash: string } }).location.hash = id
+    }, hiddenPair!)
+    await page.locator(`#${hiddenPair}`).waitFor({ state: 'visible' })
+    expect(await page.locator('[data-compare-filter="all"]').getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+    expect(new URL(page.url()).hash).toBe(`#${hiddenPair}`)
+    expect(
+      await page.locator(`#${hiddenPair}`).evaluate((element) => {
+        const bounds = element.getBoundingClientRect()
+        return bounds.top < element.ownerDocument.defaultView!.innerHeight && bounds.bottom > 0
+      }),
+    ).toBe(true)
     await page.locator('[data-compare-filter="all"]').click()
     expect(await visible.count()).toBe(6)
     expect(await jumps.count()).toBe(6)
