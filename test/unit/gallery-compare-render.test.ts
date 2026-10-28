@@ -130,7 +130,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     expect(html).toContain(
       "style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'",
     )
-    expect(html.match(/<script>/g)).toHaveLength(1)
+    expect(html.match(/<script\b/gi)).toHaveLength(1)
     expect(html).not.toContain('<script src=')
     expect(html.match(/data-viewer-open="pair-\d+-(?:a|b|diff)"/g)?.length).toBeGreaterThan(0)
     expect(html.match(/data:image\/png;base64,/g)).toHaveLength((html.match(/<img /g) ?? []).length)
