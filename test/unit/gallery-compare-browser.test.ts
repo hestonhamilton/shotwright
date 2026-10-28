@@ -55,6 +55,9 @@ it('opens A, B, and Diff without CSP violations or network requests and leaves n
         const opener = page.locator(`[data-viewer-open="pair-0-${side}"]`)
         await opener.click()
         await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+        expect(await page.locator('[data-viewer-prev]').isHidden()).toBe(true)
+        expect(await page.locator('[data-viewer-next]').isHidden()).toBe(true)
+        expect(await page.locator('[data-viewer-position]').isHidden()).toBe(true)
         expect(await page.locator('.inspection-image').getAttribute('src')).toBe(
           await page.locator(`#pair-0-${side}`).getAttribute('src'),
         )
@@ -91,6 +94,9 @@ it('opens A, B, and Diff without CSP violations or network requests and leaves n
     const page = await noScript.newPage()
     await page.goto(url)
     expect(await page.locator('[data-viewer-open]:not([disabled])').count()).toBe(0)
+    expect(await page.locator('[data-viewer-prev]').isHidden()).toBe(true)
+    expect(await page.locator('[data-viewer-next]').isHidden()).toBe(true)
+    expect(await page.locator('[data-viewer-position]').isHidden()).toBe(true)
     expect(await page.locator('.images img').count()).toBe(3)
     expect(await page.locator('a[download]').count()).toBe(2)
     await noScript.close()

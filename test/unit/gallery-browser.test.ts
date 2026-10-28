@@ -247,6 +247,94 @@ afterAll(async () => {
 })
 
 describe('gallery browser behavior', () => {
+  it('navigates filtered shots in card order with boundaries and matching opener focus', async () => {
+    for (const width of [1280, 320]) {
+      const context = await browser.newContext({ viewport: { width, height: 800 } })
+      const page = await context.newPage()
+      await page.goto(galleryUrl)
+      await page.locator('#search').fill('shot-')
+      await page.locator('[data-filter="viewport-1"]').click()
+      const cards = page.locator('.card:not(.hidden)')
+      const count = await cards.count()
+      expect(count).toBeGreaterThan(2)
+      const first = cards.first()
+      const second = cards.nth(1)
+      await first.locator('.media').click()
+      const ready = page.locator('#inspection-dialog[data-viewer-state="ready"]')
+      await ready.waitFor()
+      expect(await page.locator('[data-viewer-position]').textContent()).toBe(`1 of ${count}`)
+      expect(await page.locator('[data-viewer-prev]').isDisabled()).toBe(true)
+      await second.evaluate((card) => card.querySelector('.overview-image')?.remove())
+      await page.keyboard.press('ArrowRight')
+      await ready.waitFor()
+      expect(await page.locator('[data-viewer-position]').textContent()).toBe(`2 of ${count}`)
+      expect(await page.locator('#inspection-title').textContent()).toBe(
+        `${await second.locator('h3').textContent()} — Screenshot`,
+      )
+      expect(await page.locator('.inspection-image').getAttribute('src')).toBe(
+        await second.locator('[data-original]').getAttribute('href'),
+      )
+      await page.keyboard.press('Escape')
+      await expectFocus(page, second.locator('.media'))
+      await second.locator('[data-inspect]').click()
+      await ready.waitFor()
+      await page.locator('[data-viewer-next]').click()
+      await ready.waitFor()
+      await page.keyboard.press('Escape')
+      await expectFocus(page, cards.nth(2).locator('[data-inspect]'))
+      await cards.last().locator('.media').click()
+      await ready.waitFor()
+      expect(await page.locator('[data-viewer-position]').textContent()).toBe(
+        `${count} of ${count}`,
+      )
+      expect(await page.locator('[data-viewer-next]').isDisabled()).toBe(true)
+      await page.keyboard.press('Escape')
+      await page.locator('[data-filter="all"]').click()
+      await page.locator('#search').fill('shot-59')
+      const singleton = page.locator('.card:not(.hidden)')
+      expect(await singleton.count()).toBe(1)
+      await singleton.locator('[data-inspect]').click()
+      await ready.waitFor()
+      expect(await page.locator('[data-viewer-position]').textContent()).toBe('1 of 1')
+      expect(await page.locator('[data-viewer-prev]').isDisabled()).toBe(true)
+      expect(await page.locator('[data-viewer-next]').isDisabled()).toBe(true)
+      await context.close()
+    }
+  }, 60_000)
+
+  it('keeps the newest navigation when image decode is pending and zoomed arrows do not navigate', async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    await page.goto(largeGalleryUrl)
+    await page.locator('.card').first().locator('.media').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.evaluate(`(() => {
+      const original = HTMLImageElement.prototype.decode
+      HTMLImageElement.prototype.decode = function () {
+        if (this.alt.includes('scale-two'))
+          return new Promise((resolve) => setTimeout(resolve, 100))
+        return original.call(this)
+      }
+    })()`)
+    await page.locator('[data-viewer-next]').click()
+    await page.locator('[data-viewer-next]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    expect(await page.locator('#inspection-title').textContent()).toBe('wide-tall — Screenshot')
+    await page.waitForTimeout(150)
+    expect(await page.locator('#inspection-title').textContent()).toBe('wide-tall — Screenshot')
+    await page.locator('[data-viewer-toggle]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.keyboard.press('ArrowLeft')
+    expect(await page.locator('#inspection-title').textContent()).toBe('wide-tall — Screenshot')
+    await page.locator('[data-viewer-toggle]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.keyboard.press('ArrowLeft')
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    expect(await page.locator('#inspection-title').textContent()).toContain(
+      'A long screenshot title',
+    )
+    await context.close()
+  })
   it('keeps run facts reachable while showing screenshot media in the first mobile viewport', async () => {
     for (const viewport of [
       { width: 390, height: 844 },
@@ -912,6 +1000,9 @@ describe('gallery browser behavior', () => {
     expect(await noScriptPage.locator('a[data-original]').count()).toBe(60)
     expect(await noScriptPage.locator('noscript').isVisible()).toBe(true)
     expect(await noScriptPage.locator('[data-viewer-open]:not([disabled])').count()).toBe(0)
+    expect(await noScriptPage.locator('[data-viewer-prev]').isHidden()).toBe(true)
+    expect(await noScriptPage.locator('[data-viewer-next]').isHidden()).toBe(true)
+    expect(await noScriptPage.locator('[data-viewer-position]').isHidden()).toBe(true)
     expect(await noScriptPage.locator('.load-action').count()).toBe(60)
     expect(await noScriptPage.locator('.load-action:not([disabled])').count()).toBe(0)
     expect(await noScriptPage.locator('.overview-image').count()).toBe(0)

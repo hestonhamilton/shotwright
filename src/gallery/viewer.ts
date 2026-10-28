@@ -13,7 +13,7 @@ export const VIEWER_CSS = `
 .viewer-dialog::backdrop { background: rgb(0 0 0 / 72%); }
 .dialog-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .dialog-head h2 { flex: 1 1 180px; margin: 0; overflow-wrap: anywhere; font-size: 18px; }
-.dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dialog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .viewer-help { margin: 0; padding: 4px 14px; color: var(--muted); font-size: 12px; }
 .inspection-surface { display: flex; flex: 1 1 auto; min-height: 0; width: 100%; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; background: var(--panel-2); }
 .inspection-image { display: block; flex: none; max-width: none; max-height: none; margin: auto; outline: 1px solid var(--line); cursor: default; }
@@ -22,8 +22,8 @@ export const VIEWER_CSS = `
 `.trim()
 
 export const VIEWER_DIALOG = `<dialog class="viewer-dialog" id="inspection-dialog" aria-labelledby="inspection-title">
-  <div class="dialog-head"><h2 id="inspection-title">Screenshot viewer</h2><div class="dialog-actions"><button class="action" type="button" data-viewer-toggle>Actual pixels</button><form method="dialog"><button class="action" type="submit" data-close>Close</button></form></div></div>
-  <p class="viewer-help">Actual pixels shows one image pixel per viewing device pixel. Click the image to zoom at that point.</p>
+  <div class="dialog-head"><h2 id="inspection-title">Screenshot viewer</h2><div class="dialog-actions"><button class="action" type="button" data-viewer-prev hidden disabled>Previous</button><span data-viewer-position role="status" aria-live="polite" hidden></span><button class="action" type="button" data-viewer-next hidden disabled>Next</button><button class="action" type="button" data-viewer-toggle>Actual pixels</button><form method="dialog"><button class="action" type="submit" data-close>Close</button></form></div></div>
+  <p class="viewer-help">Actual pixels shows one image pixel per viewing device pixel. Click the image to zoom at that point. While fitted, Left and Right move between shots; in actual pixels, focus the image to pan with arrow keys.</p>
   <div class="inspection-surface" tabindex="0"></div>
 </dialog>`
 
@@ -33,9 +33,15 @@ export const VIEWER_SCRIPT = `
   const surface = dialog.querySelector('.inspection-surface');
   const title = dialog.querySelector('#inspection-title');
   const toggleButton = dialog.querySelector('[data-viewer-toggle]');
+  const previousButton = dialog.querySelector('[data-viewer-prev]');
+  const nextButton = dialog.querySelector('[data-viewer-next]');
+  const position = dialog.querySelector('[data-viewer-position]');
   const help = dialog.querySelector('.viewer-help');
   let image = null;
   let returnFocus = null;
+  let initialOpener = null;
+  let currentCard = null;
+  let openerKind = null;
   let actual = false;
   let generation = 0;
   let lastPointerUp = null;
@@ -91,31 +97,83 @@ export const VIEWER_SCRIPT = `
     size(anchor);
     void ready(token, anchor);
   };
+  const eligibleCards = () => Array.from(document.querySelectorAll('.card:not(.hidden)')).filter((card) => {
+    const source = card.querySelector('[data-original]');
+    const opener = card.querySelector('[data-viewer-open]:not(:disabled)');
+    return source && source.href && opener && document.getElementById(opener.dataset.viewerOpen) === source;
+  });
+  const matchingOpener = (card) => card?.querySelector(openerKind === 'text'
+    ? '[data-inspect]:not(:disabled)'
+    : '.media[data-viewer-open]:not(:disabled)');
+  const updateNavigation = () => {
+    const gallery = currentCard !== null;
+    previousButton.hidden = nextButton.hidden = position.hidden = !gallery;
+    if (!gallery) {
+      previousButton.disabled = nextButton.disabled = true;
+      return;
+    }
+    const cards = eligibleCards();
+    const index = cards.indexOf(currentCard);
+    position.textContent = index < 0 ? '' : (index + 1) + ' of ' + cards.length;
+    previousButton.disabled = index <= 0;
+    nextButton.disabled = index < 0 || index >= cards.length - 1;
+  };
+  const showSource = async (source, opener, card, open) => {
+    const uri = source.href || source.src;
+    if (!uri) return;
+    const token = ++generation;
+    dialog.removeAttribute('data-viewer-state');
+    returnFocus = opener;
+    currentCard = card;
+    actual = false;
+    title.textContent = (source.dataset.name || source.alt || 'Screenshot') + ' — Screenshot';
+    surface.replaceChildren();
+    image = document.createElement('img');
+    image.className = 'inspection-image';
+    image.alt = source.dataset.alt || source.alt || 'Screenshot';
+    image.src = uri;
+    surface.append(image);
+    updateNavigation();
+    if (open) {
+      initialOpener = opener;
+      dialog.showModal();
+      watchDpr();
+      dialog.querySelector('[data-close]').focus();
+    }
+    const pending = image;
+    try { await pending.decode(); } catch { return; }
+    if (token !== generation || !dialog.open) return;
+    size();
+    void ready(token);
+  };
+  const navigate = (offset) => {
+    if (!dialog.open || !currentCard || actual) return;
+    const cards = eligibleCards();
+    const index = cards.indexOf(currentCard);
+    const target = index < 0 ? null : cards[index + offset];
+    updateNavigation();
+    if (!target) return;
+    const opener = matchingOpener(target);
+    const source = target.querySelector('[data-original]');
+    if (opener && source) void showSource(source, opener, target, false);
+  };
+  previousButton.addEventListener('click', () => navigate(-1));
+  nextButton.addEventListener('click', () => navigate(1));
+  dialog.addEventListener('keydown', (event) => {
+    if (!currentCard || actual || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+        event.target.closest('input, textarea, select, [contenteditable]')) return;
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    navigate(event.key === 'ArrowLeft' ? -1 : 1);
+  });
   document.querySelectorAll('[data-viewer-open]').forEach((button) => {
     const source = document.getElementById(button.dataset.viewerOpen);
     if (!source) return;
     button.disabled = false;
-    button.addEventListener('click', async () => {
-      const uri = source.href || source.src;
-      if (!uri) return;
-      const token = ++generation;
-      dialog.removeAttribute('data-viewer-state');
-      returnFocus = button;
-      actual = false;
-      title.textContent = (source.dataset.name || source.alt || 'Screenshot') + ' — Screenshot';
-      surface.replaceChildren();
-      image = document.createElement('img');
-      image.className = 'inspection-image';
-      image.alt = source.dataset.alt || source.alt || 'Screenshot';
-      image.src = uri;
-      surface.append(image);
-      dialog.showModal();
-      watchDpr();
-      dialog.querySelector('[data-close]').focus();
-      try { await image.decode(); } catch { return; }
-      if (token !== generation || !dialog.open) return;
-      size();
-      void ready(token);
+    button.addEventListener('click', () => {
+      const card = button.closest('.card');
+      openerKind = button.matches('[data-inspect]') ? 'text' : 'preview';
+      void showSource(source, button, card, true);
     });
   });
   toggleButton.addEventListener('click', () => { if (image) toggle(pointAtCenter()); });
@@ -159,10 +217,12 @@ export const VIEWER_SCRIPT = `
     dialog.removeAttribute('data-viewer-state');
     surface.replaceChildren();
     image = null;
+    currentCard = null;
     // The close event is queued; focus may already have moved elsewhere.
     const active = document.activeElement;
-    if (!active || active === document.body || dialog.contains(active)) returnFocus?.focus();
+    if (!active || active === document.body || active === initialOpener || dialog.contains(active)) returnFocus?.focus();
     returnFocus = null;
+    initialOpener = null;
   });
 })();
 `.trim()
