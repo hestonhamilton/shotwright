@@ -12,7 +12,7 @@ Autonomous within the bead; confirm at branch-name/PR/close boundaries.
 ## Repo facts (do not re-derive)
 
 - Single bd database in the primary repo. `bd` auto-discovers it from any worktree via the git common-dir, so just run `bd <subcommand>` — no `-C` needed.
-- Worktrees live alongside the primary repo; create them with `bd worktree create <name> --branch <BRANCH_PREFIX><bead-id>-<slug>`.
+- Worktrees live under `worktrees/` in the primary repo; create them with `bd worktree create worktrees/<bead-id> --branch <BRANCH_PREFIX><bead-id>-<slug>`. A bare `<name>` lands at the repo root and makes bd append an ignore line to the tracked `.gitignore`.
 
 ## Input
 

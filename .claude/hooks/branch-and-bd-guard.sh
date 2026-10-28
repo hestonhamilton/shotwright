@@ -73,7 +73,7 @@ fi
 
 # --- git worktree add: steer to bd worktree create (beads repos only) ------
 if [ "${BEADS:-on}" = "on" ] && [ "$WORKTREE_GUARD" = "bd" ] && printf '%s' "$cmd" | grep -qE '(^|[^a-z])git[[:space:]]+worktree[[:space:]]+add([[:space:]]|$)'; then
-  respond "Use 'bd worktree create <name> --branch ${BRANCH_PREFIX}<bead-id>-<slug>' instead of 'git worktree add'. The bd command adds the worktree to .gitignore and wires it into the shared beads DB; plain git worktree add skips that setup. (Set WORKTREE_GUARD=off in .claude/scaffold.conf to disable.)"
+  respond "Use 'bd worktree create worktrees/<bead-id> --branch ${BRANCH_PREFIX}<bead-id>-<slug>' instead of 'git worktree add'. The bd command wires the worktree into the shared beads DB; plain git worktree add skips that setup. (Set WORKTREE_GUARD=off in .claude/scaffold.conf to disable.)"
 fi
 
 exit 0
