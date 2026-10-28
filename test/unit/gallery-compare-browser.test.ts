@@ -99,3 +99,141 @@ it('opens A, B, and Diff without CSP violations or network requests and leaves n
     fs.rmSync(root, { recursive: true, force: true })
   }
 }, 30_000)
+
+it('filters final compare pairs and keeps native jump links usable', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-navigation-'))
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const runs = (['a', 'b'] as const).map((side) => {
+      const dir = path.join(root, side)
+      fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+      fs.mkdirSync(path.join(dir, 'data'))
+      const names = side === 'a' ? ['same', 'tint', 'removed'] : ['same', 'tint', 'added']
+      const shots = names.map((name) => {
+        const image = new PNG({ width: 2, height: 2 })
+        image.data.fill(name === 'tint' && side === 'b' ? 1 : 0)
+        fs.writeFileSync(path.join(dir, 'shots', `${name}.png`), PNG.sync.write(image))
+        return makeShot({
+          spec: '<sample>.shots.ts',
+          name: `${name} & more`,
+          file: `shots/${name}.png`,
+        })
+      })
+      for (const name of ['kept', 'ignored'])
+        fs.writeFileSync(path.join(dir, 'data', `${name}.txt`), `${side}-${name}`)
+      const artifacts = ['kept', 'ignored'].map((name) => ({
+        spec: 'notes.shots.ts',
+        name,
+        file: `data/${name}.txt`,
+        contentType: 'text/plain',
+        bytes: 9,
+        testId: 'test-note',
+      }))
+      fs.writeFileSync(
+        path.join(dir, 'manifest.json'),
+        JSON.stringify(makeManifest({ runId: side, shots, artifacts })),
+      )
+      return dir
+    })
+    const outputFile = generateCompareGallery(runs[0]!, runs[1]!, {
+      strict: true,
+      failOnChange: true,
+      ignore: ['notes.shots.ts/ignored'],
+    }).outputFile
+    const lenientFile = path.join(root, 'lenient.html')
+    generateCompareGallery(runs[0]!, runs[1]!, {
+      ignore: ['notes.shots.ts/ignored'],
+      outputFile: lenientFile,
+    })
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    const errors: string[] = []
+    const network: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text())
+    })
+    page.on('request', (request) => {
+      if (/^https?:/.test(request.url())) network.push(request.url())
+    })
+    await page.goto(pathToFileURL(outputFile).href)
+    const cards = page.locator('article.pair')
+    const visible = page.locator('article.pair:visible')
+    const jumps = page.locator('[data-compare-jump]:visible')
+    expect(await cards.count()).toBe(6)
+    expect(await visible.count()).toBe(6)
+    expect(await page.locator('[data-compare-filter="all"]').getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+    expect(await page.locator('[data-compare-filter]:disabled').count()).toBe(0)
+    expect(await page.locator('[data-compare-filter="gated"]').textContent()).toBe('Gated 4')
+    expect(fs.readFileSync(outputFile, 'utf8')).toContain(
+      '&lt;sample&gt;.shots.ts / tint &amp; more · Similar',
+    )
+    await page.locator('.compare-jumps summary').click()
+    await page.locator('[data-compare-filter="changed"]').click()
+    expect(await visible.count()).toBe(2)
+    expect(await jumps.count()).toBe(2)
+    expect(await page.locator('#compare-result-count').textContent()).toBe('2 of 6 pairs shown')
+    expect(await page.locator('#compare-result-count').getAttribute('role')).toBe('status')
+    expect(await page.locator('.counts').count()).toBe(0)
+    await page.locator('[data-compare-filter="gated"]').click()
+    expect(await visible.count()).toBe(4)
+    expect(await jumps.count()).toBe(4)
+    expect(await page.locator('article.pair.state-similar:visible').count()).toBe(1)
+    expect(await page.locator('article.pair.ignored:visible').count()).toBe(0)
+    for (const href of await jumps
+      .locator('a')
+      .evaluateAll((links) => links.map((link) => link.getAttribute('href')))) {
+      expect(await page.locator(href!).isVisible()).toBe(true)
+    }
+    const first = jumps.locator('a').first()
+    const href = await first.getAttribute('href')
+    await first.click()
+    expect(new URL(page.url()).hash).toBe(href)
+    expect(
+      await page.locator(href!).evaluate((element) => {
+        const bounds = element.getBoundingClientRect()
+        return bounds.top < element.ownerDocument.defaultView!.innerHeight && bounds.bottom > 0
+      }),
+    ).toBe(true)
+    await page.locator('[data-compare-filter="similar"]').click()
+    expect(new URL(page.url()).hash).toBe('')
+    await page.locator('[data-compare-filter="all"]').click()
+    expect(await visible.count()).toBe(6)
+    expect(await jumps.count()).toBe(6)
+    expect(
+      await page
+        .locator('html')
+        .evaluate(
+          (element) => element.scrollWidth <= element.ownerDocument.defaultView!.innerWidth,
+        ),
+    ).toBe(true)
+    expect(errors).toEqual([])
+    expect(network).toEqual([])
+    await context.close()
+    const noScript = await browser.newContext({ javaScriptEnabled: false })
+    const plain = await noScript.newPage()
+    await plain.goto(pathToFileURL(outputFile).href)
+    expect(await plain.locator('article.pair:visible').count()).toBe(6)
+    expect(await plain.locator('[data-compare-filter]:disabled').count()).toBe(
+      await plain.locator('[data-compare-filter]').count(),
+    )
+    expect(await plain.locator('[data-compare-filter="gated"]').textContent()).toBe('Gated 4')
+    await plain.locator('.compare-jumps summary').click()
+    expect(await plain.locator('[data-compare-jump]:visible').count()).toBe(6)
+    await noScript.close()
+    const lenient = await browser.newPage()
+    await lenient.goto(pathToFileURL(lenientFile).href)
+    expect(await lenient.locator('[data-compare-filter="gated"]').textContent()).toBe(
+      'Would gate 3',
+    )
+    await lenient.locator('[data-compare-filter="gated"]').click()
+    expect(await lenient.locator('article.pair.state-similar:visible').count()).toBe(0)
+    expect(await lenient.locator('article.pair:visible').count()).toBe(3)
+    await lenient.close()
+  } finally {
+    await browser.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+}, 30_000)

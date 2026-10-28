@@ -293,44 +293,50 @@ export function generateCompareGallery(
     bodyTemp = bodyPath
     const bodyFd = fs.openSync(bodyTemp, 'a')
     try {
-      for (const chunk of renderComparePairChunks(model, links, options.strict ?? false, (pair) => {
-        const hydrated: GalleryShot[] = []
-        for (const [side, run] of [
-          ['a', aRun],
-          ['b', bRun],
-        ] as const) {
-          if (pair.kind !== 'shot') break
-          const shot = pair[side] as GalleryShot | null
-          if (shot?.image) {
-            try {
-              shot.image.dataUri = readPngModel(run, shot.entry.file).dataUri
-              hydrated.push(shot)
-            } catch (error) {
-              const reason = error instanceof Error ? error.message : String(error)
-              pair.error = `${side.toUpperCase()}: unreadable file (${shot.entry.file}): ${reason}`
-              pair.errorDetail = `${side.toUpperCase()}: ${reason}`
-              model.counts[pair.state]--
-              model.counts.unreadable++
-              pair.state = 'unreadable'
-              pair.verdict = null
-              shot.image = null
-              shot.imageError = reason
-              if (pair.diffTemp) {
-                const index = staged.findIndex((entry) => entry.temp === pair.diffTemp)
-                if (index !== -1) staged.splice(index, 1)
-                fs.rmSync(pair.diffTemp, { force: true })
-                pair.diffTemp = undefined
+      for (const chunk of renderComparePairChunks(
+        model,
+        links,
+        options.strict ?? false,
+        (pair) => {
+          const hydrated: GalleryShot[] = []
+          for (const [side, run] of [
+            ['a', aRun],
+            ['b', bRun],
+          ] as const) {
+            if (pair.kind !== 'shot') break
+            const shot = pair[side] as GalleryShot | null
+            if (shot?.image) {
+              try {
+                shot.image.dataUri = readPngModel(run, shot.entry.file).dataUri
+                hydrated.push(shot)
+              } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error)
+                pair.error = `${side.toUpperCase()}: unreadable file (${shot.entry.file}): ${reason}`
+                pair.errorDetail = `${side.toUpperCase()}: ${reason}`
+                model.counts[pair.state]--
+                model.counts.unreadable++
+                pair.state = 'unreadable'
+                pair.verdict = null
+                shot.image = null
+                shot.imageError = reason
+                if (pair.diffTemp) {
+                  const index = staged.findIndex((entry) => entry.temp === pair.diffTemp)
+                  if (index !== -1) staged.splice(index, 1)
+                  fs.rmSync(pair.diffTemp, { force: true })
+                  pair.diffTemp = undefined
+                }
+                break
               }
-              break
             }
           }
-        }
-        if (pair.diffTemp && pair.verdict) pair.verdict.diffPng = fs.readFileSync(pair.diffTemp)
-        return () => {
-          for (const shot of hydrated) shot.image!.dataUri = ''
-          if (pair.verdict) pair.verdict.diffPng = null
-        }
-      }))
+          if (pair.diffTemp && pair.verdict) pair.verdict.diffPng = fs.readFileSync(pair.diffTemp)
+          return () => {
+            for (const shot of hydrated) shot.image!.dataUri = ''
+            if (pair.verdict) pair.verdict.diffPng = null
+          }
+        },
+        gate.failOnChange,
+      ))
         writeAll(bodyFd, chunk)
     } finally {
       fs.closeSync(bodyFd)
