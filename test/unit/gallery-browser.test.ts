@@ -14,6 +14,7 @@ import { makeManifest, makeShot } from '../fixtures/manifest.js'
 let browser: Browser
 let root: string
 let galleryUrl: string
+let largeGalleryUrl: string
 
 function crc32(contents: Buffer): number {
   let crc = 0xffffffff
@@ -165,7 +166,11 @@ beforeAll(async () => {
     const file = `shots/browser.shots.ts/shot-${index + 1}.png`
     fs.writeFileSync(
       path.join(runDir, file),
-      uniquePng(index, index === 2 ? 24 : 32, index === 2 ? 96 : 24),
+      uniquePng(
+        index,
+        index === 2 ? 24 : index === 1 ? 200 : 32,
+        index === 2 ? 96 : index === 1 ? 150 : 24,
+      ),
     )
     shots.push(
       makeShot({
@@ -195,6 +200,41 @@ beforeAll(async () => {
   fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(manifest))
   galleryUrl = `${pathToFileURL(generateGallery(runDir).galleryPath).href}#debug`
   browser = await chromium.launch({ headless: true })
+  const largeDir = path.join(root, 'large')
+  fs.mkdirSync(path.join(largeDir, 'shots'), { recursive: true })
+  const capture = async (name: string, scale: number): Promise<ShotEntry> => {
+    const wideTall = name === 'wide-tall'
+    const context = await browser.newContext({
+      viewport: { width: wideTall ? 2560 : 1280, height: 800 },
+      deviceScaleFactor: scale,
+    })
+    const page = await context.newPage()
+    await page.setContent(
+      `<style>body{margin:0}main{height:${wideTall ? 16566 : name === 'tall' ? 8000 : 1200}px;background:linear-gradient(#284b88,#e8ad48)}</style><main></main>`,
+    )
+    await page.screenshot({ path: path.join(largeDir, 'shots', `${name}.png`), fullPage: true })
+    await context.close()
+    return makeShot({
+      name:
+        name === 'scale-two'
+          ? 'A long screenshot title that wraps across several lines on a narrow screen and still keeps all viewer controls readable'
+          : name,
+      spec: 'large.shots.ts',
+      file: `shots/${name}.png`,
+      viewport: { width: wideTall ? 2560 : 1280, height: 800 },
+      deviceScaleFactor: scale,
+    })
+  }
+  const largeShots = [
+    await capture('tall', 1),
+    await capture('scale-two', 2),
+    await capture('wide-tall', 1),
+  ]
+  fs.writeFileSync(
+    path.join(largeDir, 'manifest.json'),
+    JSON.stringify(makeManifest({ runId: 'large', shots: largeShots })),
+  )
+  largeGalleryUrl = pathToFileURL(generateGallery(largeDir).galleryPath).href
   // 120s, not 30s: this is a wall-clock budget, not an assertion. Building 60
   // PNGs and launching Chromium takes ~1s on a dev machine and far longer in a
   // 4-CPU CI container, where Playwright round-trips measured ~25x slower
@@ -207,6 +247,50 @@ afterAll(async () => {
 })
 
 describe('gallery browser behavior', () => {
+  it('centers a small image and offers zoom only after the viewport makes it necessary', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 844 } })
+    const page = await context.newPage()
+    await page.goto(galleryUrl)
+    await page
+      .locator('.card')
+      .filter({ has: page.locator('h3', { hasText: /^shot-2$/ }) })
+      .locator('.media')
+      .click()
+    const dialog = page.locator('#inspection-dialog[data-viewer-state="ready"]')
+    await dialog.waitFor()
+    const image = page.locator('.inspection-image')
+    const surface = page.locator('.inspection-surface')
+    const imageBox = await image.boundingBox()
+    const surfaceBox = await surface.boundingBox()
+    expect(imageBox!.x + imageBox!.width / 2).toBeCloseTo(surfaceBox!.x + surfaceBox!.width / 2, 0)
+    expect(imageBox!.y + imageBox!.height / 2).toBeCloseTo(
+      surfaceBox!.y + surfaceBox!.height / 2,
+      0,
+    )
+    expect(await page.locator('[data-viewer-toggle]').isHidden()).toBe(true)
+    expect(await page.locator('.viewer-help').isHidden()).toBe(true)
+    expect(
+      await image.evaluate(
+        (element) => element.ownerDocument.defaultView!.getComputedStyle(element).cursor,
+      ),
+    ).toBe('default')
+    await image.click()
+    expect(await image.evaluate((element) => element.classList.contains('actual'))).toBe(false)
+    await page.setViewportSize({ width: 180, height: 250 })
+    await page.locator('[data-viewer-toggle]:visible').waitFor()
+    expect(await page.locator('[data-viewer-toggle]').isVisible()).toBe(true)
+    expect(await page.locator('.viewer-help').isVisible()).toBe(true)
+    expect(
+      await image.evaluate(
+        (element) => element.ownerDocument.defaultView!.getComputedStyle(element).cursor,
+      ),
+    ).toBe('zoom-in')
+    await page.locator('[data-viewer-toggle]').click()
+    await dialog.waitFor()
+    expect(await image.evaluate((element) => element.classList.contains('actual'))).toBe(true)
+    await context.close()
+  })
+
   it('searches notes and scrolls a bounded note by keyboard at narrow width', async () => {
     const context = await browser.newContext({
       viewport: { width: 390, height: 844 },
@@ -372,6 +456,298 @@ describe('gallery browser behavior', () => {
     await context.close()
   })
 
+  it('keeps a viewer reopened in the same task after its queued close event', async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    await page.goto(galleryUrl)
+    await page.locator('.card').first().locator('[data-inspect]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.evaluate(`(() => {
+      document.querySelector('#inspection-dialog').close()
+      document.querySelectorAll('[data-inspect]')[1].click()
+    })()`)
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    expect(await page.locator('#inspection-dialog[open] .inspection-image').count()).toBe(1)
+    expect(await page.locator('#inspection-title').textContent()).toBe('shot-2 — Screenshot')
+    await context.close()
+  })
+
+  it('fits tall screenshots and toggles true device pixels with click anchoring', async () => {
+    for (const deviceScaleFactor of [1, 2]) {
+      for (const width of [1440, 390, 320]) {
+        const context = await browser.newContext({
+          viewport: { width, height: 844 },
+          deviceScaleFactor,
+        })
+        const page = await context.newPage()
+        await page.goto(largeGalleryUrl)
+        const opener = page.locator('.card').first().locator('.media')
+        await opener.click()
+        const dialog = page.locator('#inspection-dialog')
+        await dialog.waitFor({ state: 'visible' })
+        await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+        const geometry = () =>
+          page.locator('.inspection-image').evaluate((image) => {
+            const surface = image.parentElement!
+            return {
+              width: image.getBoundingClientRect().width,
+              height: image.getBoundingClientRect().height,
+              surfaceWidth: surface.clientWidth,
+              surfaceHeight: surface.clientHeight,
+              naturalWidth: image.naturalWidth,
+              naturalHeight: image.naturalHeight,
+              scrollTop: surface.scrollTop,
+              maxScrollTop: surface.scrollHeight - surface.clientHeight,
+            }
+          })
+        const fit = await geometry()
+        expect(fit.width).toBeLessThanOrEqual(fit.surfaceWidth + 1)
+        expect(fit.height).toBeLessThanOrEqual(fit.surfaceHeight + 1)
+        expect(fit.width).toBeLessThanOrEqual(fit.naturalWidth / deviceScaleFactor + 1)
+        const image = page.locator('.inspection-image')
+        const rect = await image.boundingBox()
+        if (!rect) throw new Error('viewer image absent')
+        const clickX = rect.x + rect.width / 2
+        const clickY = rect.y + rect.height / 2
+        await image.evaluate((element) =>
+          element.addEventListener(
+            'pointerup',
+            (event: { clientX: number; clientY: number }) => {
+              const rect = element.getBoundingClientRect()
+              ;(
+                globalThis as unknown as {
+                  viewerClick?: { x: number; y: number; clientX: number; clientY: number }
+                }
+              ).viewerClick = {
+                x: (event.clientX - rect.left) / rect.width,
+                y: (event.clientY - rect.top) / rect.height,
+                clientX: event.clientX,
+                clientY: event.clientY,
+              }
+            },
+            { once: true, capture: true },
+          ),
+        )
+        await page.mouse.click(clickX, clickY)
+        await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+        const actual = await geometry()
+        expect(actual.width).toBeCloseTo(actual.naturalWidth / deviceScaleFactor, 0)
+        expect(actual.height).toBeCloseTo(actual.naturalHeight / deviceScaleFactor, 0)
+        expect(await page.locator('[data-viewer-toggle]').textContent()).toBe('Fit to window')
+        const anchor = await image.evaluate((element) => {
+          const point = (
+            globalThis as unknown as {
+              viewerClick: { x: number; y: number; clientX: number; clientY: number }
+            }
+          ).viewerClick
+          const box = element.getBoundingClientRect()
+          return {
+            x: box.x + box.width * point.x - point.clientX,
+            y: box.y + box.height * point.y - point.clientY,
+          }
+        })
+        if (actual.width > actual.surfaceWidth) expect(Math.abs(anchor.x)).toBeLessThanOrEqual(1)
+        else expect(await image.evaluate((element) => element.parentElement!.scrollLeft)).toBe(0)
+        expect(
+          Math.abs(anchor.y),
+          JSON.stringify({ anchor, fit, actual, clickY }),
+        ).toBeLessThanOrEqual(1)
+        await page.locator('[data-viewer-toggle]').click()
+        await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+        expect((await geometry()).height).toBeLessThanOrEqual(fit.surfaceHeight + 1)
+        if (width === 1440 && deviceScaleFactor === 1) {
+          await page.evaluate(`(() => {
+            const image = document.querySelector('.inspection-image');
+            const rect = image.getBoundingClientRect();
+            image.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: rect.left + rect.width / 2, clientY: rect.top }));
+          })()`)
+          await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+          expect((await geometry()).scrollTop).toBeLessThanOrEqual(1)
+        }
+        await page.keyboard.press('Escape')
+        await expectFocus(page, opener)
+        await context.close()
+      }
+    }
+  }, 120_000)
+
+  it('keeps the exact pointer position anchored when a wide, tall image zooms', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    const page = await context.newPage()
+    await page.goto(largeGalleryUrl)
+    await page.locator('.card').filter({ hasText: 'wide-tall' }).locator('.media').click()
+    const ready = page.locator('#inspection-dialog[data-viewer-state="ready"]')
+    await ready.waitFor()
+    const image = page.locator('.inspection-image')
+    for (const [x, y] of [
+      [0.5, 0.5],
+      [0.6, 0.65],
+    ] as const) {
+      const fit = await image.boundingBox()
+      if (!fit) throw new Error('viewer image absent')
+      expect(fit.width / 2560).toBeLessThan(0.1)
+      const point = { clientX: fit.x + fit.width * x, clientY: fit.y + fit.height * y }
+      await page.mouse.click(point.clientX, point.clientY)
+      await ready.waitFor()
+      const actual = await image.evaluate(
+        (element, { x, y, point }) => {
+          const rect = element.getBoundingClientRect()
+          const surface = element.parentElement!
+          return {
+            width: rect.width,
+            scrollWidth: surface.scrollWidth,
+            clientWidth: surface.clientWidth,
+            deltaX: rect.left + rect.width * x - point.clientX,
+            deltaY: rect.top + rect.height * y - point.clientY,
+          }
+        },
+        { x, y, point },
+      )
+      expect(actual.width).toBe(2560)
+      expect(actual.scrollWidth).toBeGreaterThan(actual.clientWidth)
+      expect(Math.abs(actual.deltaX), JSON.stringify({ x, y, actual })).toBeLessThanOrEqual(1)
+      expect(Math.abs(actual.deltaY), JSON.stringify({ x, y, actual })).toBeLessThanOrEqual(1)
+      await page.locator('[data-viewer-toggle]').click()
+      await ready.waitFor()
+    }
+    await context.close()
+  })
+
+  it('opens a device-scale-two capture and refits on resize', async () => {
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 844 },
+      deviceScaleFactor: 2,
+    })
+    const page = await context.newPage()
+    await page.goto(largeGalleryUrl)
+    const opener = page.locator('.card').nth(1).locator('[data-inspect]')
+    await opener.click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    const image = page.locator('.inspection-image')
+    const before = await image.evaluate((element) => ({
+      width: element.getBoundingClientRect().width,
+      natural: element.naturalWidth,
+    }))
+    expect(before.width).toBeLessThanOrEqual(before.natural / 2)
+    await page.locator('[data-viewer-toggle]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    expect(await image.evaluate((element) => element.getBoundingClientRect().width)).toBeCloseTo(
+      before.natural / 2,
+      0,
+    )
+    await page.locator('[data-viewer-toggle]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForFunction(
+      (element) => {
+        const surface = element.parentElement!
+        const dpr = element.ownerDocument.defaultView!.devicePixelRatio
+        const width = element.naturalWidth / dpr
+        const height = element.naturalHeight / dpr
+        const fit = Math.min(surface.clientWidth / width, surface.clientHeight / height, 1)
+        const rect = element.getBoundingClientRect()
+        return (
+          Math.abs(rect.width - width * fit) < 0.5 &&
+          Math.abs(rect.height - height * fit) < 0.5 &&
+          element.ownerDocument
+            .querySelector('#inspection-dialog')
+            ?.getAttribute('data-viewer-state') === 'ready'
+        )
+      },
+      await image.elementHandle(),
+    )
+    const header = await page.locator('.dialog-head').boundingBox()
+    const surface = await page.locator('.inspection-surface').boundingBox()
+    expect(header!.y + header!.height).toBeLessThanOrEqual(surface!.y)
+    const resized = await image.evaluate((element) => {
+      const surface = element.parentElement!
+      const dpr = element.ownerDocument.defaultView!.devicePixelRatio
+      const actualWidth = element.naturalWidth / dpr
+      const actualHeight = element.naturalHeight / dpr
+      const fit = Math.min(
+        surface.clientWidth / actualWidth,
+        surface.clientHeight / actualHeight,
+        1,
+      )
+      const rect = element.getBoundingClientRect()
+      return {
+        width: rect.width,
+        height: rect.height,
+        fitWidth: actualWidth * fit,
+        fitHeight: actualHeight * fit,
+      }
+    })
+    expect(resized.fitWidth).toBeLessThan(before.width)
+    expect(resized.width).toBeCloseTo(resized.fitWidth, 0)
+    expect(resized.height).toBeCloseTo(resized.fitHeight, 0)
+    await page.locator('[data-viewer-toggle]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    const cdp = await context.newCDPSession(page)
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 391,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: false,
+    })
+    await page.waitForFunction('window.devicePixelRatio === 1')
+    await page.waitForFunction(
+      (element) =>
+        element.getBoundingClientRect().width === element.naturalWidth &&
+        element.ownerDocument
+          .querySelector('#inspection-dialog')
+          ?.getAttribute('data-viewer-state') === 'ready',
+      await image.elementHandle(),
+    )
+    expect(await image.evaluate((element) => element.getBoundingClientRect().width)).toBeCloseTo(
+      before.natural,
+      0,
+    )
+    await page.locator('[data-viewer-toggle]').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    expect(await image.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThan(
+      before.width,
+    )
+    await page.keyboard.press('Escape')
+    await expectFocus(page, opener)
+    await context.close()
+  }, 30_000)
+
+  it('keeps preview and text actions accessible and filters recoverable', async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    await page.goto(galleryUrl)
+    const first = page.locator('.card').first()
+    const preview = first.locator('.media')
+    await preview.focus()
+    await page.keyboard.press('Enter')
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.keyboard.press('Escape')
+    await expectFocus(page, preview)
+    await preview.focus()
+    await page.keyboard.press('Space')
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.keyboard.press('Escape')
+    await expectFocus(page, preview)
+    expect(await page.locator('#result-count').textContent()).toBe('60 of 60 shots shown')
+    await page.locator('#search').fill('no such shot')
+    expect(await page.locator('#result-count').textContent()).toBe('0 of 60 shots shown')
+    expect(await page.locator('#no-match').isVisible()).toBe(true)
+    await page.locator('[data-clear-search]').click()
+    expect(await page.locator('#no-match').isVisible()).toBe(false)
+    await page.locator('[data-filter="cropped"]').click()
+    expect(await page.locator('#result-count').textContent()).toBe('9 of 60 shots shown')
+    await page.locator('#search').fill('shot-30')
+    expect(await page.locator('#no-match').isVisible()).toBe(true)
+    await page.locator('[data-clear-filter]').click()
+    expect(await page.locator('#result-count').textContent()).toBe('1 of 60 shots shown')
+    expect(await page.locator('[data-filter="cropped"]').textContent()).toBe('Not full page · 9')
+    await page.locator('[data-filter="cropped"]').click()
+    await page.locator('[data-clear-search]').click()
+    expect(await page.locator('#result-count').textContent()).toBe('9 of 60 shots shown')
+    expect(await page.locator('[data-filter="cropped"]').getAttribute('aria-pressed')).toBe('true')
+    await context.close()
+  })
+
   it('hides a tall image placeholder while loaded and restores it after bounded eviction', async () => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
     const page = await context.newPage()
@@ -398,6 +774,10 @@ describe('gallery browser behavior', () => {
       visibleText: ['Original queued · 24×96 intrinsic pixels'],
       visibleTextIntersectingImage: 0,
     })
+    await tallCard.locator('.media').click()
+    await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+    await page.keyboard.press('Escape')
+    await expectFocus(page, tallCard.locator('.media'))
     await context.close()
   })
 
@@ -407,6 +787,9 @@ describe('gallery browser behavior', () => {
     await noScriptPage.goto(galleryUrl)
     expect(await noScriptPage.locator('a[data-original]').count()).toBe(60)
     expect(await noScriptPage.locator('noscript').isVisible()).toBe(true)
+    expect(await noScriptPage.locator('[data-viewer-open]:not([disabled])').count()).toBe(0)
+    expect(await noScriptPage.locator('.load-action').count()).toBe(60)
+    expect(await noScriptPage.locator('.load-action:not([disabled])').count()).toBe(0)
     expect(await noScriptPage.locator('.overview-image').count()).toBe(0)
     const noScriptTallCard = noScriptPage.locator('.card').filter({
       has: noScriptPage.locator('h3', { hasText: 'tall-aspect' }),
@@ -427,6 +810,7 @@ describe('gallery browser behavior', () => {
     await fallbackPage.goto(galleryUrl)
     expect(await fallbackPage.locator('.overview-image').count()).toBe(1)
     expect(await fallbackPage.locator('.load-action:visible').count()).toBe(60)
+    expect(await fallbackPage.locator('.load-action:not([disabled])').count()).toBe(60)
     await fallbackPage.locator('.card').nth(1).locator('.load-action').click()
     expect(await fallbackPage.locator('.overview-image').count()).toBe(2)
     const fallbackTallCard = fallbackPage.locator('.card').filter({

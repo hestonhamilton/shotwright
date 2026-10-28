@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { GALLERY_CSS, GALLERY_SCRIPT } from './assets.js'
+import { VIEWER_CSS, VIEWER_DIALOG, VIEWER_SCRIPT } from './viewer.js'
 import type { TestEntry } from '../manifest.js'
 import type { ArtifactReference, GalleryModel, GalleryShot, GallerySpec } from './model.js'
 import { validateRelativePath } from './model.js'
@@ -58,8 +59,8 @@ function viewportLabel(shot: GalleryShot): string {
 
 function deviceScaleFactorLabel(shot: GalleryShot): string {
   return shot.entry.deviceScaleFactor === null
-    ? 'DSF unavailable'
-    : `DSF ${shot.entry.deviceScaleFactor}`
+    ? 'Device scale factor unavailable'
+    : `Device scale factor ${shot.entry.deviceScaleFactor}`
 }
 
 function viewportFilterLabel(shot: GalleryShot): string {
@@ -125,17 +126,17 @@ function renderCard(
   const media =
     image === null
       ? `<div class="media broken"><div><strong>Screenshot unavailable</strong><p>${escapeHtml(entry.file)}</p><p>${escapeHtml(shot.imageError ?? 'Referenced PNG is unavailable')}</p></div></div>`
-      : `<div class="media">
+      : `<button class="media viewer-open" type="button" disabled data-viewer-open="download-${index}" aria-label="View full screenshot: ${escapeHtml(entry.name)}">
             <div class="placeholder" style="aspect-ratio:${image.width}/${image.height}">
               <div class="placeholder-copy">Original queued · ${number(image.width)}×${number(image.height)} intrinsic pixels</div>
             </div>
-          </div>`
+          </button>`
   const actions =
     image === null
       ? ''
       : `<div class="actions">
-              <button class="action load-action" type="button">Load screenshot</button>
-              <button class="action" type="button" data-inspect="download-${index}">Inspect 1:1</button>
+              <button class="action load-action" type="button" disabled>Load screenshot</button>
+              <button class="action" type="button" disabled data-viewer-open="download-${index}" data-inspect="download-${index}">View full screenshot</button>
               <a class="action" id="download-${index}" data-original
                 data-name="${escapeHtml(entry.name)}"
                 data-alt="${escapeHtml(`Screenshot ${entry.name} from ${entry.spec}`)}"
@@ -408,7 +409,7 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
     shotCount === 0
       ? `<section class="empty" aria-labelledby="empty-title">
           <h2 id="empty-title">No screenshots in this run</h2>
-          <p>The manifest is valid and contains <code>shots: []</code>. Try a run without <code>--only</code>, or check the active filter.</p>
+          <p>The manifest is valid and contains <code>shots: []</code>. This run recorded no screenshots. Check the capture configuration or run without <code>--only</code>.</p>
         </section>`
       : specs
   const only = manifest.flags.only.length === 0 ? 'None' : manifest.flags.only.join(', ')
@@ -443,6 +444,7 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Shotwright gallery — ${escapeHtml(manifest.runId)}</title>
   <style>${GALLERY_CSS}
+  ${VIEWER_CSS}
   .badge.durable.bad-status,.badge.test-status-failed,.badge.test-status-timedOut,.badge.test-status-interrupted{color:var(--bad);border-color:currentColor}
   .badge.test-status-passed{color:var(--good);border-color:currentColor}
   .data-preview{max-height:28rem;overflow:auto;padding:12px;border:1px solid #8999ad;border-radius:8px;background:#f2f5f9;color:#18202b;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -478,18 +480,18 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
     <section class="controls" aria-label="Gallery filters">
       <label><span class="eyebrow">Find a shot</span><input id="search" class="search" type="search" placeholder="Shot, spec, or test title; press / to focus"></label>
       <div class="chips" aria-label="Viewport filters">${chips}</div>
+      <p id="result-count" class="result-count" role="status">${shotCount} of ${shotCount} shots shown</p>
       <div class="keyboard"><kbd>/</kbd> search · <kbd>Esc</kbd> clear · <kbd>Tab</kbd> actions. Every touch target is at least 44 px high.</div>
     </section>
-    <noscript><p class="artifact-warning"><strong>JavaScript is off.</strong> Screenshot metadata and original download links remain available; overview loading, filters, and 1:1 inspection require JavaScript.</p></noscript>
+    <noscript><p class="artifact-warning"><strong>JavaScript is off.</strong> Screenshot metadata and original download links remain available; overview loading, filters, and the screenshot viewer require JavaScript.</p></noscript>
+    <section id="no-match" class="empty hidden" aria-live="polite"><h2>No matching screenshots</h2><p>Try another search or viewport filter.</p><button class="action" type="button" data-clear-search>Clear search</button> <button class="action" type="button" data-clear-filter>Clear filter</button></section>
     <div id="gallery-content">${content}${artifactOnlySpecs}${renderFailures(model)}</div>
     <footer role="contentinfo">Original PNGs are embedded once as download links. Sibling video and trace links require this gallery beside the run directory.${sourceLine()}</footer>
   </main>
-  <dialog id="inspection-dialog" aria-labelledby="inspection-title">
-    <div class="dialog-head"><h2 id="inspection-title">1:1 inspection</h2><form method="dialog"><button class="action" type="submit" data-close>Close</button></form></div>
-    <div class="inspection-surface" tabindex="0"></div>
-  </dialog>
+  ${VIEWER_DIALOG}
   <div class="debug" id="debug-overlay" role="status" aria-live="polite"></div>
-  <script>${GALLERY_SCRIPT}</script>
+  <script>${VIEWER_SCRIPT}
+${GALLERY_SCRIPT}</script>
 </body>
 </html>
 `

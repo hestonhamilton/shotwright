@@ -139,15 +139,6 @@ video { display: block; width: 100%; min-height: 44px; aspect-ratio: 16 / 9; bac
 }
 .empty { min-height: 180px; padding: 24px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); }
 .hidden { display: none !important; }
-dialog {
-  width: min(96vw, 1400px); height: min(94vh, 1000px); padding: 0;
-  border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text);
-}
-dialog::backdrop { background: rgb(0 0 0 / 72%); }
-.dialog-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-.dialog-head h2 { margin: 0; overflow-wrap: anywhere; font-size: 18px; }
-.inspection-surface { width: 100%; height: calc(100% - 65px); overflow: auto; overscroll-behavior: contain; }
-.inspection-image { display: block; max-width: none; max-height: none; }
 .debug {
   position: fixed; z-index: 30; right: 10px; bottom: 10px; display: none;
   padding: 10px 12px; border: 2px solid var(--accent); border-radius: 8px;
@@ -183,7 +174,6 @@ export const GALLERY_SCRIPT = `
   const cards = Array.from(document.querySelectorAll('.card[data-search]'));
   const live = [];
   let activeFilter = 'all';
-  let returnFocus = null;
   let reconcile = () => {};
 
   const notes = document.querySelectorAll('.shot-note');
@@ -236,6 +226,7 @@ export const GALLERY_SCRIPT = `
     trim();
   };
   const apply = () => {
+    let visible = 0;
     const query = search.value.trim().toLowerCase();
     cards.forEach((card) => {
       const textMatch = !query || card.dataset.search.includes(query);
@@ -243,13 +234,24 @@ export const GALLERY_SCRIPT = `
       const hidden = !(textMatch && filterMatch);
       card.classList.toggle('hidden', hidden);
       if (hidden) unload(card);
+      else visible++;
     });
     document.querySelectorAll('.spec').forEach((spec) => {
       if (spec.querySelector('.card')) spec.classList.toggle('hidden', !spec.querySelector('.card:not(.hidden)'));
     });
+    document.querySelector('#result-count').textContent = visible + ' of ' + cards.length + ' shots shown';
+    const noMatch = document.querySelector('#no-match');
+    noMatch.classList.toggle('hidden', cards.length === 0 || visible !== 0);
+    noMatch.querySelector('[data-clear-filter]').classList.toggle('hidden', activeFilter === 'all');
     reconcile();
   };
 
+  document.querySelector('[data-clear-search]').addEventListener('click', () => { search.value = ''; apply(); search.focus(); });
+  document.querySelector('[data-clear-filter]').addEventListener('click', () => {
+    activeFilter = 'all';
+    document.querySelectorAll('[data-filter]').forEach((item) => item.setAttribute('aria-pressed', String(item.dataset.filter === 'all')));
+    apply();
+  });
   search.addEventListener('input', apply);
   document.querySelectorAll('[data-filter]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -262,6 +264,7 @@ export const GALLERY_SCRIPT = `
   });
   document.querySelectorAll('.load-action').forEach((button) => {
     button.addEventListener('click', () => load(button.closest('.card')));
+    button.disabled = false;
   });
 
   if ('IntersectionObserver' in window) {
@@ -303,43 +306,12 @@ export const GALLERY_SCRIPT = `
     load(cards.find((card) => sourceFor(card)));
   }
 
-  const dialog = document.querySelector('#inspection-dialog');
-  const inspectionSurface = dialog.querySelector('.inspection-surface');
-  const inspectionTitle = dialog.querySelector('h2');
-  document.querySelectorAll('[data-inspect]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const source = document.querySelector('#' + button.dataset.inspect);
-      if (!source) return;
-      returnFocus = button;
-      inspectionTitle.textContent = source.dataset.name + ' — 1:1 inspection';
-      inspectionSurface.replaceChildren();
-      const image = document.createElement('img');
-      image.className = 'inspection-image';
-      image.alt = source.dataset.alt;
-      image.width = Number(source.dataset.width);
-      image.height = Number(source.dataset.height);
-      image.src = source.href;
-      inspectionSurface.append(image);
-      dialog.showModal();
-      dialog.querySelector('[data-close]').focus();
-    });
-  });
-  dialog.addEventListener('close', () => {
-    inspectionSurface.replaceChildren();
-    // The close event is queued, so input handled before it may already have
-    // moved focus somewhere deliberate. Restore only when focus is still
-    // nowhere useful: on the body, or stranded inside the closed dialog.
-    const active = document.activeElement;
-    if (!active || active === document.body || dialog.contains(active)) returnFocus?.focus();
-    returnFocus = null;
-  });
-
   document.addEventListener('keydown', (event) => {
-    if (event.key === '/' && document.activeElement !== search && !dialog.open) {
+    if (event.key === '/' && document.activeElement !== search && !document.querySelector('#inspection-dialog').open) {
       event.preventDefault();
       search.focus();
     }
-    if (event.key === 'Escape' && !dialog.open) {
+    if (event.key === 'Escape' && !document.querySelector('#inspection-dialog').open) {
       search.value = '';
       activeFilter = 'all';
       document.querySelectorAll('[data-filter]').forEach((item) => {

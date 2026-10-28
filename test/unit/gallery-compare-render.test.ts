@@ -106,7 +106,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
       `<p class="provenance">Render environment provenance incomplete: ${summary.provenance.unavailable.join('; ')}</p>`,
     )
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"fd84ce16ea221b99f9a39f34d219bd1ed198365ceff5bcfd3f19f4995571d929"`,
+      `"97fd2ff333606c3556d59bd1a11ec83c2ed691ce27bab651c5e92212b51a8fd9"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
@@ -127,6 +127,13 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     expect(html).toContain('.pair.state-similar.gated{border-left-color:var(--state-gated)}')
     expect(html).toContain('A run: failed · B run: passed')
     expect(html).toContain('data:image/png;base64,')
+    expect(html).toContain(
+      "style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'",
+    )
+    expect(html.match(/<script\b/gi)).toHaveLength(1)
+    expect(html).not.toContain('<script src=')
+    expect(html.match(/data-viewer-open="pair-\d+-(?:a|b|diff)"/g)?.length).toBeGreaterThan(0)
+    expect(html.match(/data:image\/png;base64,/g)).toHaveLength((html.match(/<img /g) ?? []).length)
     expect(html).toContain('fail-on-change on')
     expect(html).toContain(
       '<a href="../a/shots/identical.png" download="identical.png">Download A</a>',
@@ -294,6 +301,27 @@ it('marks exactly the cards the gate counts, derived from the same predicate as 
       const html = renderCompare(model, false, {}, strictFlag)
       expect(marked(html)).toBe(gatedCount(html))
     }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+it('explains an empty comparison without changing verdict totals', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-empty-compare-'))
+  try {
+    const dirs = ['a', 'b'].map((id) => {
+      const dir = path.join(root, id)
+      fs.mkdirSync(dir)
+      fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(makeManifest({ runId: id })))
+      return dir
+    })
+    const model = buildCompareModel(loadGalleryModel(dirs[0]!), loadGalleryModel(dirs[1]!), {
+      aRunDir: dirs[0]!,
+      bRunDir: dirs[1]!,
+    })
+    const html = renderCompare(model)
+    expect(html).toContain('No pairs to compare')
+    expect(html).toContain('gated pairs 0')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

@@ -3,6 +3,7 @@ import type { ArtifactEntry } from '../manifest.js'
 import { isGatedPair, type ComparePair, type GalleryCompareModel } from './compare-model.js'
 import type { CompareGenerationResult, GalleryShot } from './model.js'
 import { escapeHtml, siblingHref, siblingWarning, sourceLine } from './render.js'
+import { VIEWER_CSS, VIEWER_DIALOG, VIEWER_SCRIPT } from './viewer.js'
 import { compareProvenance, provenanceBanner, type CompareProvenance } from './provenance.js'
 
 /** Relative paths from the compare page to the A and B run directories. */
@@ -11,14 +12,15 @@ export interface CompareLinks {
   bBase?: string
 }
 
-function shotMedia(shot: GalleryShot | null, label: string, base: string): string {
+function shotMedia(shot: GalleryShot | null, label: string, base: string, index: number): string {
   if (!shot) return `<div class="missing">${label}: no shot</div>`
   if (!shot.image)
     return `<div class="missing">${label}: ${escapeHtml(shot.imageError ?? 'image unavailable')}</div>`
   const alt = `${label} ${shot.entry.spec} ${shot.entry.name}`
   const href = siblingHref([base, shot.entry.file].join('/'))
   const filename = shot.entry.file.split('/').at(-1)!
-  return `<figure><figcaption>${label} · ${shot.image.width}×${shot.image.height}</figcaption><img src="${escapeHtml(shot.image.dataUri)}" alt="${escapeHtml(alt)}"><a href="${escapeHtml(href)}" download="${escapeHtml(filename)}">Download ${label}</a></figure>`
+  const id = `pair-${index}-${label.toLowerCase()}`
+  return `<figure><figcaption>${label} · ${shot.image.width}×${shot.image.height}</figcaption><button class="compare-viewer-open viewer-open" type="button" disabled data-viewer-open="${id}" aria-label="View ${escapeHtml(label)} screenshot: ${escapeHtml(shot.entry.name)}"><img id="${id}" data-name="${escapeHtml(shot.entry.name)}" src="${escapeHtml(shot.image.dataUri)}" alt="${escapeHtml(alt)}"></button><a href="${escapeHtml(href)}" download="${escapeHtml(filename)}">Download ${label}</a></figure>`
 }
 function status(shot: GalleryShot | null, model: GalleryCompareModel, side: 'a' | 'b'): string {
   if (!shot) return 'absent'
@@ -63,7 +65,7 @@ function renderPair(
       ? ''
       : `<p>${pair.verdict.differentPixels} / ${pair.verdict.totalPixels} different pixels · ratio ${pair.verdict.ratio}</p>`
   const diff = pair.verdict?.diffPng
-    ? `<figure><figcaption>Diff</figcaption><img src="data:image/png;base64,${pair.verdict.diffPng.toString('base64')}" alt="Diff for ${escapeHtml(pair.spec)} ${escapeHtml(pair.name)}"></figure>`
+    ? `<figure><figcaption>Diff</figcaption><button class="compare-viewer-open viewer-open" type="button" disabled data-viewer-open="pair-${index}-diff" aria-label="View Diff screenshot: ${escapeHtml(pair.name)}"><img id="pair-${index}-diff" data-name="Diff for ${escapeHtml(pair.name)}" src="data:image/png;base64,${pair.verdict.diffPng.toString('base64')}" alt="Diff for ${escapeHtml(pair.spec)} ${escapeHtml(pair.name)}"></button></figure>`
     : ''
   const artifact =
     pair.kind === 'artifact'
@@ -71,7 +73,7 @@ function renderPair(
       : ''
   return `<article class="pair state-${pair.state}${pair.ignored ? ' ignored' : ''}${gated ? ' gated' : ''}" id="pair-${index}">
     <header><h2>${escapeHtml(pair.spec)} / ${escapeHtml(pair.name)}</h2><span class="badge">${pair.kind} · ${pair.state}${pair.ignored ? ' · ignored for gate' : ''}${gated ? ' · counted by gate' : ''}</span></header>
-    ${pair.kind === 'shot' ? `<p>A test: ${escapeHtml(status(a, model, 'a'))} · B test: ${escapeHtml(status(b, model, 'b'))}</p><div class="images">${shotMedia(a, 'A', runBase(links, model, 'a'))}${shotMedia(b, 'B', runBase(links, model, 'b'))}${diff}</div>${pairWarning()}${numbers}` : artifact}
+    ${pair.kind === 'shot' ? `<p>A test: ${escapeHtml(status(a, model, 'a'))} · B test: ${escapeHtml(status(b, model, 'b'))}</p><div class="images">${shotMedia(a, 'A', runBase(links, model, 'a'), index)}${shotMedia(b, 'B', runBase(links, model, 'b'), index)}${diff}</div>${pairWarning()}${numbers}` : artifact}
     ${pair.error ? `<p class="error">${escapeHtml(pair.error)}</p>` : ''}
   </article>`
 }
@@ -99,7 +101,7 @@ export function* renderCompareChunks(
 
 /** Close the compare page: the source-offer footer, then the document. */
 export function renderCompareTail(): string {
-  return `<footer>${sourceLine()}</footer></main></body></html>\n`
+  return `<footer>${sourceLine()}</footer></main>${VIEWER_DIALOG}<script>${VIEWER_SCRIPT}</script></body></html>\n`
 }
 
 /** Render the header after pair preparation has settled any late read failures. */
@@ -125,11 +127,13 @@ export function renderCompareHeader(
   const counts = Object.entries(model.counts)
     .map(([state, count]) => `<span class="badge">${state}: ${count}</span>`)
     .join('')
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; object-src 'none'; base-uri 'none'"><title>Shotwright compare — ${escapeHtml(model.a.manifest.runId)} vs ${escapeHtml(model.b.manifest.runId)}</title><style>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>Shotwright compare — ${escapeHtml(model.a.manifest.runId)} vs ${escapeHtml(model.b.manifest.runId)}</title><style>
   :root{color-scheme:light dark;font:16px/1.5 system-ui,sans-serif;--bg:#eef2f6;--text:#17233b;--header-bg:#17233b;--header-text:white;--badge-bg:#dbe6f6;--badge-text:#163968;--panel:white;--line:#c6d2df;--state-default:#4b729e;--state-bad:#b32c37;--state-added:#b47b11;--state-gated:#7a3fa0;--gated-badge-bg:#ecdcf6;--gated-badge-text:#4a1f6b;--panel-2:#f4f6f8;--diff-bg:#152032;--diff-text:#f4f7fc;--error:#a31928;--muted:#4a5872;--accent:#195ca5}
   @media (prefers-color-scheme: dark){:root{--bg:#11151b;--text:#edf1f7;--header-bg:#1a2029;--header-text:#edf1f7;--badge-bg:#25345f;--badge-text:#edf1f7;--panel:#1a2029;--line:#3b4655;--state-default:#91adff;--state-bad:#ff9aa8;--state-added:#ffd081;--state-gated:#c99bff;--gated-badge-bg:#3a2a51;--gated-badge-text:#e6c9ff;--panel-2:#222a35;--diff-bg:#11151b;--diff-text:#edf1f7;--error:#ff9aa8;--muted:#aab4c2;--accent:#91adff}}
   *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}main{max-width:1440px;margin:auto;padding:24px}header.top{padding:25px;background:var(--header-bg);color:var(--header-text);border-radius:16px}h1{margin:.2em 0}.counts{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.badge{display:inline-block;padding:5px 11px;border-radius:20px;background:var(--badge-bg);color:var(--badge-text);font-size:.9em}.pair{padding:18px;margin:16px 0;background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--state-default);border-radius:12px;overflow-wrap:anywhere}.pair.state-changed,.pair.state-size-changed,.pair.state-unreadable{border-left-color:var(--state-bad)}.pair.state-added,.pair.state-removed{border-left-color:var(--state-added)}.pair.state-similar.gated{border-left-color:var(--state-gated)}.pair.state-similar.gated .badge{background:var(--gated-badge-bg);color:var(--gated-badge-text)}.pair header{display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap;align-items:center}.pair h2{font-size:1.15em;margin:0}.images{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:12px}.images figure{margin:0;padding:10px;background:var(--panel-2);min-width:0}.images img{display:block;max-width:100%;max-height:420px;object-fit:contain;margin:auto}.images figcaption{font-weight:700;margin-bottom:8px}.missing{padding:40px;text-align:center;background:var(--panel-2)}.diff-text{max-height:420px;overflow:auto;padding:12px;background:var(--diff-bg);color:var(--diff-text);white-space:pre-wrap;overflow-wrap:anywhere}.error{color:var(--error)}.artifact-warning,.diff-note{font-size:.9em;color:var(--muted)}a{color:var(--accent)}footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted)}footer .source{margin:0;font-size:.9em;overflow-wrap:anywhere;color:var(--muted)}@media(max-width:600px){main{padding:10px}.pair{padding:12px}header.top{padding:17px}}
-  </style></head><body><main><header class="top"><p>Shotwright · compare gallery</p><h1>${escapeHtml(model.a.manifest.runId)} vs ${escapeHtml(model.b.manifest.runId)}</h1><p>A run: ${escapeHtml(model.a.manifest.status)} · B run: ${escapeHtml(model.b.manifest.status)}</p><p class="provenance">${escapeHtml(banner)}</p><p>Pairing key: spec + name · threshold ${model.options.threshold} · includeAA ${model.options.includeAA} · strict ${strict ? 'on' : 'off'}</p><p>Gate: measured non-parity ${measured} · ignored non-parity ${ignored} · gated pairs ${gated} · fail-on-change ${failOnChange ? 'on' : 'off'}</p></header><section class="counts" aria-label="Verdict counts">${counts}</section>`
+  ${VIEWER_CSS}
+  .compare-viewer-open{display:block;width:100%;min-height:44px;padding:0;border:0;background:transparent;border-radius:8px}.compare-viewer-open:focus-visible{outline:3px solid var(--accent);outline-offset:3px}.viewer-dialog .action{min-height:44px;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--accent);font:inherit;font-weight:650;cursor:pointer}.viewer-dialog .inspection-image{max-width:none;max-height:none}
+  </style></head><body><main><header class="top"><p>Shotwright · compare gallery</p><h1>${escapeHtml(model.a.manifest.runId)} vs ${escapeHtml(model.b.manifest.runId)}</h1><p>A run: ${escapeHtml(model.a.manifest.status)} · B run: ${escapeHtml(model.b.manifest.status)}</p><p class="provenance">${escapeHtml(banner)}</p><p>Pairing key: spec + name · threshold ${model.options.threshold} · includeAA ${model.options.includeAA} · strict ${strict ? 'on' : 'off'}</p><p>Gate: measured non-parity ${measured} · ignored non-parity ${ignored} · gated pairs ${gated} · fail-on-change ${failOnChange ? 'on' : 'off'}</p></header><section class="counts" aria-label="Verdict counts">${counts}</section>${model.pairs.length === 0 ? '<section class="pair"><h2>No pairs to compare</h2><p>These runs contain no matching screenshots or artifacts to compare.</p></section>' : ''}`
 }
 
 /** Stream pair sections without retaining their inlined image bytes. */
