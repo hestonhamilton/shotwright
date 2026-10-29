@@ -107,7 +107,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     )
     expect(page).toContain('<p class="provenance-status">Render environment details incomplete</p>')
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"73289ca41eb59d4cf95154c9f9e5edca1e0fe44f30b9937d7225152b60d3cad1"`,
+      `"4f9ddd2d2e006fcc19ace7095adeb970546ec12e2eccb938c5f049cd1d8f0115"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
@@ -135,8 +135,21 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     expect(html).not.toContain('<script src=')
     expect(html.match(/data-viewer-open="pair-\d+-(?:a|b|diff)"/g)?.length).toBeGreaterThan(0)
     expect(html.match(/data:image\/png;base64,/g)).toHaveLength(
-      (html.match(/<img\b/gi) ?? []).length,
+      (html.match(/<img\b[^>]*src="data:image\/png;base64,/gi) ?? []).length,
     )
+    const inspectActions = [
+      ...html.matchAll(/<button\b[^>]*data-viewer-pair-a="pair-(\d+)-a"[^>]*>/gi),
+    ]
+    expect(inspectActions).toHaveLength(4)
+    expect(inspectActions.every((match) => match[0].includes(' disabled '))).toBe(true)
+    expect(inspectActions.map((match) => Number(match[1]))).toEqual(
+      model.pairs.flatMap((pair, index) =>
+        pair.kind === 'shot' && !['added', 'removed', 'unreadable'].includes(pair.state)
+          ? [index]
+          : [],
+      ),
+    )
+    expect(html).toContain('data-pair-name="identical"')
     expect(html).toContain('fail-on-change on')
     expect(html).toContain('pairs counted by gate · Changed')
     expect(html).toContain('aria-pressed="true" disabled>All 8</button>')
