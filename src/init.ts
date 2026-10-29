@@ -22,6 +22,9 @@ export interface InitPlan {
   needsReview: InitReportLine[]
   upToDate: string[]
   conflicts: ScriptConflict[]
+  addedScripts: string[]
+  matchedScripts: string[]
+  skillDeferred: boolean
   notices: string[]
 }
 
@@ -55,7 +58,13 @@ export interface InitResult {
 export type InitOutcome =
   | { kind: 'dry-run'; nextSteps: InitNextSteps }
   | { kind: 'partial-write-failure'; exitCode: 1 }
-  | { kind: 'script-conflict'; scriptName: string; exitCode: 1 }
+  | {
+      kind: 'script-conflict'
+      scriptName: string
+      dryRun: boolean
+      nextSteps: InitNextSteps
+      exitCode: 1
+    }
   | { kind: 'fresh-vite-scaffold'; nextSteps: 'vite'; exitCode: 0 }
   | { kind: 'fresh-placeholder-scaffold'; nextSteps: 'placeholder'; exitCode: 0 }
   | { kind: 'partial-update'; nextSteps: InitNextSteps; exitCode: 0 }
@@ -121,7 +130,13 @@ export function detectVite(pkg: unknown): boolean {
 export function mutatePackageJsonScripts(
   raw: string,
   desired: DesiredScripts = desiredScripts,
-): { raw: string; changed: string[]; conflicts: ScriptConflict[]; note: string | null } {
+): {
+  raw: string
+  changed: string[]
+  matched: string[]
+  conflicts: ScriptConflict[]
+  note: string | null
+} {
   const pkg = JSON.parse(raw) as unknown
   if (!isObject(pkg)) throw new Error('package.json must contain a JSON object')
 
@@ -133,6 +148,7 @@ export function mutatePackageJsonScripts(
   const scripts = isObject(pkg.scripts) ? pkg.scripts : {}
   const conflicts: ScriptConflict[] = []
   const changed: string[] = []
+  const matched: string[] = []
 
   for (const [name, command] of Object.entries(desired)) {
     const actual = scripts[name]
@@ -141,6 +157,8 @@ export function mutatePackageJsonScripts(
       changed.push(name)
     } else if (actual !== command) {
       conflicts.push({ name, actual: String(actual) })
+    } else {
+      matched.push(name)
     }
   }
 
@@ -148,8 +166,14 @@ export function mutatePackageJsonScripts(
     pkg.scripts = scripts
   }
 
-  if (changed.length === 0) return { raw, changed, conflicts, note }
-  return { raw: JSON.stringify(pkg, null, indentString) + newline, changed, conflicts, note }
+  if (changed.length === 0) return { raw, changed, matched, conflicts, note }
+  return {
+    raw: JSON.stringify(pkg, null, indentString) + newline,
+    changed,
+    matched,
+    conflicts,
+    note,
+  }
 }
 
 export function resolveSkillDestination(cwd: string): SkillDestination {
@@ -278,6 +302,9 @@ export function planInit(
     needsReview: [],
     upToDate: [],
     conflicts: packageMutation.conflicts,
+    addedScripts: packageMutation.changed,
+    matchedScripts: packageMutation.matched,
+    skillDeferred: packageMutation.conflicts.some((conflict) => conflict.name === 'shots'),
     notices: [],
   }
   const declaredManager =
@@ -299,7 +326,7 @@ export function planInit(
   planManagedFile(plan, '.github/workflows/shotwright.yml', ciWorkflow, root)
   planPackageJson(plan, packageRaw, packageMutation)
   planGitignore(plan, gitignoreSnippet)
-  planSkill(plan, skill)
+  if (!plan.skillDeferred) planSkill(plan, skill)
   return plan
 }
 
@@ -323,11 +350,17 @@ export function dryRunInitPlan(plan: InitPlan): InitResult {
 export function classifyInitOutcome(result: InitResult): InitOutcome {
   const { plan } = result
   const nextSteps = plan.vite ? 'vite' : 'placeholder'
-  if (result.dryRun) return { kind: 'dry-run', nextSteps }
   if (result.failedAction) return { kind: 'partial-write-failure', exitCode: 1 }
   if (plan.conflicts.length > 0) {
-    return { kind: 'script-conflict', scriptName: plan.conflicts[0]!.name, exitCode: 1 }
+    return {
+      kind: 'script-conflict',
+      scriptName: plan.conflicts[0]!.name,
+      dryRun: result.dryRun,
+      nextSteps,
+      exitCode: 1,
+    }
   }
+  if (result.dryRun) return { kind: 'dry-run', nextSteps }
   if (result.written.length === 0) {
     if (plan.needsReview.length > 0) {
       return {
@@ -362,6 +395,12 @@ export function formatInitResult(
   if (!options.omitNotices) appendNotices(lines, plan.notices)
   appendActionNotices(lines, result.dryRun ? plan.actions : result.written)
   appendConflicts(lines, plan.conflicts, plan.manager)
+  if (plan.skillDeferred)
+    lines.push(
+      '',
+      'Deferred',
+      '  .claude/skills/shots-harness/SKILL.md (until the shots script conflict is resolved)',
+    )
 
   if (result.dryRun) {
     appendActionSection(
@@ -391,7 +430,23 @@ export function formatInitResult(
 
   appendNeedsReview(lines, plan.needsReview, result.dryRun)
   appendUpToDate(lines, plan.upToDate)
-  appendNextSteps(lines, outcome, plan.manager)
+  if (outcome.kind === 'script-conflict') {
+    lines.push(
+      '',
+      result.dryRun
+        ? `Setup would remain incomplete. Resolve the skipped script conflict and re-run \`${managerExec(plan.manager)} shotwright init\`; existing scaffold files and scripts would be skipped safely.`
+        : `Setup remains incomplete. Resolve the skipped script conflict and re-run \`${managerExec(plan.manager)} shotwright init\`; existing scaffold files and scripts will be skipped safely.`,
+    )
+    if (result.dryRun && plan.actions.length === 0)
+      lines.push('  No files or scripts would be written.')
+    if (!result.dryRun)
+      lines.push(
+        result.written.length > 0
+          ? '  The files and scripts listed under Created and Updated were written.'
+          : '  No files or scripts were written.',
+      )
+  }
+  appendNextSteps(lines, outcome, result)
   return trimTrailingBlank(lines).join('\n')
 }
 
@@ -418,11 +473,16 @@ function planPackageJson(
   original: string,
   mutation: ReturnType<typeof mutatePackageJsonScripts>,
 ): void {
+  if (
+    mutation.matched.length > 0 &&
+    (mutation.changed.length > 0 || mutation.conflicts.length > 0)
+  ) {
+    plan.upToDate.push(`scripts: ${mutation.matched.join(', ')}`)
+  }
   if (mutation.changed.length === 0) {
     if (mutation.conflicts.length === 0) plan.upToDate.push('package.json scripts')
     return
   }
-  if (mutation.conflicts.length > 0) return
   plan.actions.push({
     path: 'package.json',
     label: 'package.json (scripts)',
@@ -521,7 +581,7 @@ function formatHeadline(outcome: InitOutcome): string {
     case 'partial-write-failure':
       return 'shotwright init: failed partway through — the scaffold is incomplete'
     case 'script-conflict':
-      return `shotwright init: cannot claim the \`${outcome.scriptName}\` script`
+      return `shotwright init: ${outcome.dryRun ? 'dry run — ' : ''}cannot claim the \`${outcome.scriptName}\` script`
     case 'fresh-vite-scaffold':
       return 'shotwright init: detected vite — wrote an executable webServer default for http://127.0.0.1:5173'
     case 'fresh-placeholder-scaffold':
@@ -546,6 +606,7 @@ function formatInitFailure(
   appendActionSection(lines, 'Written before the failure', result.written)
   const failedIndex = result.plan.actions.indexOf(result.failedAction!)
   appendActionSection(lines, 'Not written', result.plan.actions.slice(failedIndex))
+  appendConflicts(lines, result.plan.conflicts, result.plan.manager)
   lines.push('')
   lines.push(
     `Fix the error and re-run \`${managerExec(result.plan.manager)} shotwright init\` — it will skip what already exists.`,
@@ -556,7 +617,10 @@ function formatInitFailure(
 function appendActionSection(lines: string[], title: string, actions: InitAction[]): void {
   if (actions.length === 0) return
   lines.push('', title)
-  for (const action of actions) lines.push(`  ${action.label}`)
+  for (const action of actions) {
+    lines.push(`  ${action.label}`)
+    if (action.path === 'package.json' && action.detail) lines.push(`    ${action.detail}`)
+  }
 }
 
 function appendReportSection(lines: string[], title: string, reports: InitReportLine[]): void {
@@ -588,6 +652,7 @@ function appendConflicts(
   if (conflicts.length === 0) return
   for (const conflict of conflicts) {
     lines.push('')
+    lines.push(`Skipped (existing command differs): ${conflict.name}`)
     lines.push('  package.json already defines:')
     lines.push(`      "${conflict.name}": "${conflict.actual}"`)
     lines.push('  shotwright did not change it.')
@@ -598,21 +663,25 @@ function appendConflicts(
   }
 }
 
-function appendNextSteps(lines: string[], outcome: InitOutcome, manager: PackageManager): void {
+function appendNextSteps(lines: string[], outcome: InitOutcome, result: InitResult): void {
   const nextSteps = initOutcomeNextSteps(outcome)
   if (nextSteps === null) return
+  const { plan } = result
+  const available = new Set(plan.matchedScripts)
+  if (result.dryRun || result.written.some((action) => action.path === 'package.json')) {
+    for (const name of plan.addedScripts) available.add(name)
+  }
+  const steps: string[] = []
+  if (nextSteps !== 'vite')
+    steps.push('Edit shots.config.ts - uncomment and set webServer for your app')
+  if (available.has('shots:install'))
+    steps.push(`${managerRun(plan.manager, 'shots:install')}     # download the browser (one time)`)
+  if (available.has('shots')) steps.push(managerRun(plan.manager, 'shots'))
+  if (available.has('shots:gallery')) steps.push(managerRun(plan.manager, 'shots:gallery'))
+  if (steps.length === 0) return
   lines.push('')
   lines.push('Next steps')
-  if (nextSteps === 'vite') {
-    lines.push(`  1. ${managerRun(manager, 'shots:install')}     # download the browser (one time)`)
-    lines.push(`  2. ${managerRun(manager, 'shots')}`)
-    lines.push(`  3. ${managerRun(manager, 'shots:gallery')}`)
-  } else {
-    lines.push('  1. Edit shots.config.ts - uncomment and set webServer for your app')
-    lines.push(`  2. ${managerRun(manager, 'shots:install')}     # download the browser (one time)`)
-    lines.push(`  3. ${managerRun(manager, 'shots')}`)
-    lines.push(`  4. ${managerRun(manager, 'shots:gallery')}`)
-  }
+  for (const [index, step] of steps.entries()) lines.push(`  ${index + 1}. ${step}`)
 }
 
 function initOutcomeExitCode(outcome: InitOutcome): number {
@@ -636,12 +705,12 @@ function initOutcomeExitCode(outcome: InitOutcome): number {
 function initOutcomeNextSteps(outcome: InitOutcome): InitNextSteps | null {
   switch (outcome.kind) {
     case 'dry-run':
+    case 'script-conflict':
     case 'fresh-vite-scaffold':
     case 'fresh-placeholder-scaffold':
     case 'partial-update':
       return outcome.nextSteps
     case 'partial-write-failure':
-    case 'script-conflict':
     case 'nothing-changed-review-pending':
     case 'nothing-changed':
       return null

@@ -1909,7 +1909,7 @@ describe('shotwright run against the demo app', () => {
     }
   }, 420_000)
 
-  it('fails init without overwriting an existing shots script', () => {
+  it('previews and applies free scripts around an existing shots script', () => {
     const packed = packShotwrightPackage('shotwright-collision-pack-')
     const cwd = createConsumerApp('shotwright-consumer-collision-', {})
     try {
@@ -1920,13 +1920,42 @@ describe('shotwright run against the demo app', () => {
       >
       pkg.scripts = { shots: 'playwright test' }
       fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify(pkg))
-      const before = fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')
+      const dry = runPnpmStatus(cwd, ['exec', 'shotwright', 'init', '--dry-run'])
+      expect(dry.status).toBe(1)
+      expect(dry.stdout).toContain('dry run — cannot claim the `shots` script')
+      expect(dry.stdout).toContain('Would create')
+      expect(dry.stdout).toContain('Would update')
+      expect(dry.stdout).toContain('scripts: shots:gallery, shots:compare, shots:install')
+      expect(dry.stdout).toContain('Skipped (existing command differs): shots')
+      expect(dry.stdout).toContain('Deferred')
+      expect(dry.stdout).not.toMatch(/\d+\. pnpm shots\s*$/m)
       const result = runPnpmStatus(cwd, ['exec', 'shotwright', 'init'])
       expect(result.status).toBe(1)
       expect(result.stdout).toContain('cannot claim the `shots` script')
       expect(result.stdout).toContain('"shots": "playwright test"')
-      expect(result.stdout).not.toContain('package.json had no indented property lines')
-      expect(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).toBe(before)
+      expect(result.stdout).toContain('Created')
+      expect(result.stdout).toContain('Updated')
+      expect(result.stdout).toContain('scripts: shots:gallery, shots:compare, shots:install')
+      expect(result.stdout).toContain('Skipped (existing command differs): shots')
+      expect(result.stdout).toContain('were written')
+      expect(result.stdout).toContain('skipped safely')
+      expect(result.stdout).not.toMatch(/\d+\. pnpm shots\s*$/m)
+      const after = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')) as {
+        scripts: Record<string, string>
+      }
+      expect(after.scripts).toMatchObject({
+        shots: 'playwright test',
+        'shots:gallery': 'shotwright gallery',
+        'shots:compare': 'shotwright compare',
+        'shots:install': 'playwright install chromium',
+      })
+      expect(fs.existsSync(path.join(cwd, '.claude/skills/shots-harness/SKILL.md'))).toBe(false)
+      after.scripts.shots = 'shotwright run'
+      fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify(after))
+      const resolved = runPnpmStatus(cwd, ['exec', 'shotwright', 'init'])
+      expect(resolved.status).toBe(0)
+      expect(resolved.stdout).toContain('.claude/skills/shots-harness/SKILL.md')
+      expect(runPnpmStatus(cwd, ['exec', 'shotwright', 'init']).status).toBe(0)
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true })
       fs.rmSync(packed.packDir, { recursive: true, force: true })

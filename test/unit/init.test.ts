@@ -172,9 +172,35 @@ describe('InitOutcome output coherence', () => {
       outcome: 'script-conflict',
       headline: 'shotwright init: cannot claim the `shots` script',
       exitCode: 1,
-      sections: ['Created'],
-      absent: ['Next steps', 'Not attempted', 'already set up'],
-      commands: ['pnpm exec shotwright run'],
+      sections: ['Created', 'Updated', 'Next steps'],
+      absent: ['pnpm shots\n', 'Not attempted', 'already set up'],
+      includes: [
+        'Skipped (existing command differs): shots',
+        'Deferred',
+        'scripts: shots:gallery, shots:compare, shots:install',
+      ],
+      commands: ['pnpm exec shotwright run', 'pnpm shots:install', 'pnpm shots:gallery'],
+    },
+    {
+      name: 'dry run with script conflict',
+      result: () =>
+        dryRunInitPlan(
+          planInit(
+            fixture({ packageJson: { scripts: { shots: 'playwright test' } } }),
+            readTemplate,
+          ),
+        ),
+      outcome: 'script-conflict',
+      headline: 'shotwright init: dry run — cannot claim the `shots` script',
+      exitCode: 1,
+      sections: ['Would create', 'Would update', 'Next steps'],
+      absent: ['pnpm shots\n', 'Created'],
+      includes: [
+        'Skipped (existing command differs): shots',
+        'Deferred',
+        'scripts: shots:gallery, shots:compare, shots:install',
+      ],
+      commands: ['pnpm exec shotwright run', 'pnpm shots:install', 'pnpm shots:gallery'],
     },
     {
       name: 'partial write failure',
@@ -321,33 +347,87 @@ describe('planInit', () => {
     expect(fs.existsSync(path.join(cwd, '.github', 'workflows', 'shotwright.yml'))).toBe(false)
   })
 
-  it('reports a taken shots script as exit 1 without changing package.json', () => {
+  it('preserves a taken shots script, adds free scripts, and completes on rerun', () => {
     const cwd = fixture({ packageJson: { scripts: { shots: 'playwright test' } } })
-    const before = fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')
     const result = applyInitPlan(planInit(cwd, readTemplate))
     const output = formatInitResult(result)
 
     expect(initExitCode(result)).toBe(1)
     expect(output).toContain('cannot claim the `shots` script')
     expect(output).toContain('"shots": "playwright test"')
-    expect(output).not.toContain('Next steps')
-    expect(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).toBe(before)
+    expect(output).toContain('Next steps')
+    expect(output).not.toMatch(/\d+\. pnpm shots\s*$/m)
+    const scripts = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).scripts
+    expect(scripts).toEqual({
+      shots: 'playwright test',
+      'shots:gallery': 'shotwright gallery',
+      'shots:compare': 'shotwright compare',
+      'shots:install': 'playwright install chromium',
+    })
+    expect(fs.existsSync(path.join(cwd, '.claude/skills/shots-harness/SKILL.md'))).toBe(false)
+    expect(applyInitPlan(planInit(cwd, readTemplate)).written).toEqual([])
+    scripts.shots = 'shotwright run'
+    fs.writeFileSync(
+      path.join(cwd, 'package.json'),
+      JSON.stringify({ name: 'app', scripts }, null, 2) + '\n',
+    )
+    const resolved = applyInitPlan(planInit(cwd, readTemplate))
+    expect(initExitCode(resolved)).toBe(0)
+    expect(resolved.written.map((action) => action.path)).toEqual([
+      '.claude/skills/shots-harness/SKILL.md',
+    ])
   })
 
-  it('does not report minified package indentation when scripts are conflicted', () => {
+  it('reports every conflict, exact matches, and a write failure first', () => {
+    const cwd = fixture({
+      packageJson: {
+        scripts: {
+          shots: 'consumer capture',
+          'shots:gallery': 'consumer gallery',
+          'shots:compare': 'shotwright compare',
+        },
+      },
+    })
+    const plan = planInit(cwd, readTemplate)
+    expect(plan.addedScripts).toEqual(['shots:install'])
+    expect(plan.matchedScripts).toEqual(['shots:compare'])
+    expect(plan.conflicts.map((conflict) => conflict.name)).toEqual(['shots', 'shots:gallery'])
+    const dry = dryRunInitPlan(plan)
+    expect(initExitCode(dry)).toBe(1)
+    const dryOutput = formatInitResult(dry)
+    expect(dryOutput).toContain('Skipped (existing command differs): shots')
+    expect(dryOutput).toContain('Skipped (existing command differs): shots:gallery')
+    expect(dryOutput).not.toMatch(/\d+\. pnpm shots(?::gallery)?\s*$/m)
+    plan.actions[0] = {
+      ...plan.actions[0]!,
+      write: () => {
+        throw new Error('injected write failure')
+      },
+    }
+    const failed = applyInitPlan(plan)
+    expect(classifyInitOutcome(failed).kind).toBe('partial-write-failure')
+    expect(initExitCode(failed)).toBe(1)
+    const output = formatInitResult(failed)
+    expect(output).toContain('injected write failure')
+    expect(output).toContain('Skipped (existing command differs): shots')
+    expect(output).toContain('Skipped (existing command differs): shots:gallery')
+  })
+
+  it('reports minified package indentation when free scripts are written despite a conflict', () => {
     const cwd = tempDir()
     fs.writeFileSync(
       path.join(cwd, 'package.json'),
       '{"name":"m","scripts":{"shots":"playwright test"}}',
     )
-    const before = fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')
     const result = applyInitPlan(planInit(cwd, readTemplate))
     const output = formatInitResult(result)
 
     expect(initExitCode(result)).toBe(1)
     expect(output).toContain('cannot claim the `shots` script')
-    expect(output).not.toContain('package.json had no indented property lines')
-    expect(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).toBe(before)
+    expect(output).toContain('package.json had no indented property lines')
+    expect(JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).scripts.shots).toBe(
+      'playwright test',
+    )
   })
 
   it('reports minified package indentation when package.json is written', () => {
@@ -707,6 +787,9 @@ describe('applyInitPlan', () => {
       needsReview: [],
       upToDate: [],
       conflicts: [],
+      addedScripts: [],
+      matchedScripts: [],
+      skillDeferred: false,
       notices: [],
     }
 
