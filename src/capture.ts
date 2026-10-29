@@ -177,6 +177,14 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
   const claimed = fs.fstatSync(fd)
   let completed = false
   try {
+    const capturePage = opts.locator ? opts.locator.page() : page
+    const viewport = capturePage.viewportSize()
+    const deviceScaleFactor: number = await capturePage.evaluate('window.devicePixelRatio')
+    if (!Number.isFinite(deviceScaleFactor) || deviceScaleFactor <= 0) {
+      throw new Error(
+        'shotwright: captured page device scale factor must be a finite positive number',
+      )
+    }
     const bytes = opts.locator
       ? await opts.locator.screenshot({
           type: 'png',
@@ -204,8 +212,8 @@ export async function shot(page: Page, name: string, opts: ShotOptions = {}): Pr
       name,
       spec,
       file,
-      viewport: page.viewportSize(),
-      deviceScaleFactor: (info.project.use.deviceScaleFactor as number | undefined) ?? null,
+      viewport,
+      deviceScaleFactor,
       fullPage,
       capturedAt: new Date(started).toISOString(),
       durationMs: Date.now() - started,

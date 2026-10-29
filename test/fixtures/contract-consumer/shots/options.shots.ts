@@ -56,3 +56,39 @@ test('shot screenshot options preserve Playwright bytes', async ({ page }) => {
     locatorBytes,
   )
 })
+
+test('spec-created context scale follows the captured page and locator', async ({ page, browser }) => {
+  const context = await browser.newContext({
+    viewport: { width: 320, height: 240 },
+    deviceScaleFactor: 1,
+  })
+  try {
+    const other = await context.newPage()
+    await other.setContent(`
+      <style>body { margin: 0 } #target { width: 120px; height: 60px; background: blue }</style>
+      <div id="target"></div><div style="height: 600px"></div>
+    `)
+    expect(await other.evaluate('window.devicePixelRatio')).toBe(1)
+    expect(await page.evaluate('window.devicePixelRatio')).toBe(2)
+    const runDir = process.env.SHOTWRIGHT_RUN_DIR!
+    const viewportBytes = await other.screenshot({ type: 'png', fullPage: false })
+    await shot(other, 'context-viewport', { fullPage: false })
+    expect(fs.readFileSync(path.join(runDir, 'shots/options/context-viewport.png'))).toEqual(
+      viewportBytes,
+    )
+    const fullPageBytes = await other.screenshot({ type: 'png', fullPage: true })
+    await shot(other, 'context-full-page')
+    expect(fs.readFileSync(path.join(runDir, 'shots/options/context-full-page.png'))).toEqual(
+      fullPageBytes,
+    )
+    const target = other.locator('#target')
+    const locatorBytes = await target.screenshot({ type: 'png' })
+    await shot(page, 'context-locator', { locator: target })
+    expect(fs.readFileSync(path.join(runDir, 'shots/options/context-locator.png'))).toEqual(
+      locatorBytes,
+    )
+    await shot(page, 'project-viewport', { fullPage: false })
+  } finally {
+    await context.close()
+  }
+})
