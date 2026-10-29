@@ -330,9 +330,9 @@ export const VIEWER_SCRIPT = `
       toggleButton.hidden = true;
       pairSurface.hidden = pairControls.hidden = pairDetails.hidden = false;
       pairError.hidden = true;
-      pairValues.swipe = pairValues.onion = '50';
       pairImages.slice(0, 2).forEach((img, index) => { img.src = (index === 0 ? a : b).src; });
       setPairMode('side');
+      pairValues.swipe = pairValues.onion = '50';
       dialog.showModal(); watchDpr();
       dialog.querySelector('[data-close]').focus();
       try { await Promise.all(pairImages.slice(0, 2).map((img) => img.decode())); }
