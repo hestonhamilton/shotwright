@@ -1,6 +1,6 @@
 # ADR 0025 — Off-GitHub run storage is a deferred, opt-in S3-compatible publish
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-10-29
 - **Bead:** `shotwright-746.64`
 - **Phase the decision landed in:** R

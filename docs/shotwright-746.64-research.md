@@ -3,7 +3,7 @@
 - **Bead:** `shotwright-746.64` (R phase; research only, no code)
 - **Read and observed:** 2026-10-29
 - **Related:** `shotwright-746.57` (output sizes), `shotwright-746.62` (upload modes and retention)
-- **Decision record:** [ADR 0025](adr/0025-off-github-run-storage-is-an-opt-in-s3-compatible-publish.md) (Proposed)
+- **Decision record:** [ADR 0025](adr/0025-off-github-run-storage-is-an-opt-in-s3-compatible-publish.md) (accepted)
 
 ## 1 · Question and constraints
 
