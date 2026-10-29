@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { parseRunArgs } from '../../src/cli.js'
 import { GALLERY_CSS, GALLERY_SCRIPT } from '../../src/gallery/assets.js'
 import { VIEWER_SCRIPT } from '../../src/gallery/viewer.js'
 import { generateGallery } from '../../src/gallery/generate.js'
@@ -205,8 +206,8 @@ describe('gallery rendering', () => {
       `&lt;script&gt; &amp; &quot;quote&quot;\n${'longword'.repeat(1000)}" data-tags=`,
     )
     expect(html).not.toContain('<script> &')
-    expect(html).toMatch(/<div class="shot-note" tabindex="0" role="group" aria-label="[^"]+">/)
-    expect(html).not.toMatch(/<div class="shot-note"[^>]*style=/)
+    expect(html).toMatch(/<div\b class="shot-note" tabindex="0" role="group" aria-label="[^"]+">/i)
+    expect(html).not.toMatch(/<div\b class="shot-note"[^>]*style=/i)
     expect(GALLERY_CSS).toMatch(/\.shot-note\.more-below\s*\{[^}]*box-shadow:/)
     expect(GALLERY_CSS).toMatch(/\.shot-note\.more-above\s*\{[^}]*box-shadow:/)
     expect(GALLERY_CSS).toMatch(/\.shot-note\.more-above\.more-below\s*\{[^}]*box-shadow:/)
@@ -223,7 +224,7 @@ describe('gallery rendering', () => {
     expect(html).toContain('View full screenshot')
     expect(html).toContain('data-viewer-state')
     expect(html).toContain('Screenshot viewer')
-    expect(html.match(/<article class="card/g) ?? []).toHaveLength(5)
+    expect(html.match(/<article\b class="card/gi) ?? []).toHaveLength(5)
     expect(html.indexOf('about.shots.ts')).toBeLessThan(html.indexOf('home.shots.ts'))
     for (const entry of fiveShots()) {
       expect(html).toContain(entry.name)
@@ -309,7 +310,7 @@ describe('gallery rendering', () => {
     writeRun(runDir, value)
     const html = renderGallery(loadGalleryModel(runDir))
     expect(html.match(/<script\b/gi) ?? []).toHaveLength(2)
-    expect(html.match(/<\/style>/g) ?? []).toHaveLength(1)
+    expect(html.match(/<\/style\b>/gi) ?? []).toHaveLength(1)
     expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&#39;&lt;/style&gt;')
     expect(html).toContain('video/%3Cscript%3Equote%22%27.webm')
     expect(html).toContain('trace/%3C/style%3E/trace%27.zip')
@@ -378,12 +379,38 @@ describe('gallery rendering', () => {
     ]
     writeRun(runDir, manifest('run', shots))
     const html = renderGallery(loadGalleryModel(runDir))
-    expect(html.match(/<video /g) ?? []).toHaveLength(1)
-    expect(
-      html.match(/shared by 3 shots by identical manifest path; test title unavailable/g) ?? [],
-    ).toHaveLength(1)
-    expect(html.match(/Download sibling trace/g) ?? []).toHaveLength(1)
-    expect(html).toContain('requires this gallery beside the run directory')
+    expect(html.match(/<video\b/gi) ?? []).toHaveLength(1)
+    expect(html.match(/Referenced by 3 shots in this spec/g) ?? []).toHaveLength(1)
+    expect(html.match(/Download video/g) ?? []).toHaveLength(1)
+    expect(html.match(/Download trace/g) ?? []).toHaveLength(1)
+    expect(html).toContain(
+      'Keep this gallery in its run folder so available video and trace links work.',
+    )
+  })
+
+  it('counts manifest shots even when a PNG is missing and the view is filtered', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    const pair = { video: 'video/shared.webm', trace: 'trace/shared.zip' }
+    const shots = [shot('one', 'home.shots.ts', 0, pair), shot('two', 'home.shots.ts', 1, pair)]
+    const value = manifest('run', shots)
+    value.flags.only = ['one']
+    writeRun(runDir, value, { omit: [shots[1]!.file] })
+    const html = renderGallery(loadGalleryModel(runDir))
+    expect(html).toContain('Referenced by 2 shots in this spec')
+    expect(html).toContain('<dt>Only filter</dt><dd>one</dd>')
+    expect(html).toContain('Screenshot unavailable')
+  })
+
+  it('keeps Shotwright flags distinct from Playwright trace passthrough', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    const args = parseRunArgs(['--', '--trace', 'retain-on-failure'])
+    expect(args.passthrough).toEqual(['--trace', 'retain-on-failure'])
+    const value = manifest('run', [shot('one', 'home.shots.ts', 0)])
+    value.flags.trace = args.trace
+    writeRun(runDir, value)
+    const html = renderGallery(loadGalleryModel(runDir))
+    expect(html).toContain('<dt>Shotwright trace flag</dt><dd>Off</dd>')
+    expect(html).toContain('No videos or traces linked to screenshots')
   })
 
   it('renders a typed broken artifact affordance and reports its relative path', () => {
@@ -395,8 +422,10 @@ describe('gallery rendering', () => {
     fs.rmSync(path.join(runDir, 'video/missing.webm'))
     const generated = generateGallery(runDir)
     const html = fs.readFileSync(generated.galleryPath, 'utf8')
-    expect(html).toContain('Broken video reference: video/missing.webm')
+    expect(html).toContain('Video file unavailable: video/missing.webm')
     expect(html).toContain('Video unavailable: video/missing.webm')
+    expect(html).toContain('Video or trace references in this run')
+    expect(html).toContain('Referenced by 1 shot in this spec')
     expect(generated.diagnostics).toEqual([
       {
         path: 'video/missing.webm',
@@ -405,14 +434,14 @@ describe('gallery rendering', () => {
     ])
   })
 
-  it('states the all-null artifact state once for a spec and omits video layout', () => {
+  it('states the all-null artifact state for a single shot and omits video layout', () => {
     const runDir = path.join(tmpDir(), 'run')
-    writeRun(runDir, manifest('run', fiveShots().slice(0, 2)))
+    writeRun(runDir, manifest('run', [shot('one', 'home.shots.ts', 0)]))
     const html = renderGallery(loadGalleryModel(runDir))
-    expect(html.match(/Video not captured/g) ?? []).toHaveLength(1)
-    expect(html.match(/Trace not captured/g) ?? []).toHaveLength(1)
-    expect(html).not.toContain('<video ')
-    expect(html).toContain('Video and trace absent in this run')
+    expect(html.match(/No video referenced/g) ?? []).toHaveLength(1)
+    expect(html.match(/No trace referenced/g) ?? []).toHaveLength(1)
+    expect(html).not.toMatch(/<video\b/i)
+    expect(html).toContain('No videos or traces linked to screenshots')
   })
 
   it('spells out unavailable device scale when viewport and scale are absent', () => {

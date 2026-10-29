@@ -8,8 +8,6 @@ import type { ArtifactReference, GalleryModel, GalleryShot, GallerySpec } from '
 import { validateRelativePath } from './model.js'
 import { shotwrightSource, type ShotwrightSource } from '../version.js'
 
-export const siblingWarning = 'requires this gallery beside the run directory'
-
 export function escapeHtml(value: string): string {
   return value.replace(
     /[&<>"']/g,
@@ -195,9 +193,9 @@ function artifactGroups(spec: GallerySpec): ArtifactGroup[] {
 }
 
 function artifactLink(artifact: ArtifactReference, kind: 'video' | 'trace'): string {
-  const label = kind === 'video' ? 'Download sibling video' : 'Download sibling trace'
+  const label = kind === 'video' ? 'Download video' : 'Download trace'
   if (!artifact.available) {
-    return `<span class="artifact-preview broken">Broken ${kind} reference: ${escapeHtml(artifact.path)}</span>`
+    return `<span class="artifact-preview broken">${kind === 'video' ? 'Video' : 'Trace'} file unavailable: ${escapeHtml(artifact.path)}</span>`
   }
   return `<a class="action" href="${escapeHtml(siblingHref(artifact.path))}" download>${label}</a>`
 }
@@ -205,19 +203,20 @@ function artifactLink(artifact: ArtifactReference, kind: 'video' | 'trace'): str
 function renderArtifactGroup(group: ArtifactGroup): string {
   if (group.video === null && group.trace === null) {
     return `<div class="artifact-group"><div class="artifact-row">
-            <span class="artifact-preview absent">Video not captured</span>
-            <span class="artifact-preview absent">Trace not captured</span>
+            <span class="artifact-preview absent">No video referenced</span>
+            <span class="artifact-preview absent">No trace referenced</span>
           </div></div>`
   }
-  const sharedLabel = `shared by ${group.shotCount} shots by identical manifest path; test title unavailable`
+  const sharedLabel = `Referenced by ${count(group.shotCount, 'shot')} in this spec`
   const links = [
     ...(group.video === null ? [] : [artifactLink(group.video, 'video')]),
     ...(group.trace === null ? [] : [artifactLink(group.trace, 'trace')]),
   ].join('')
-  const warning = `<p class="artifact-warning"><strong>Sibling-file warning:</strong> ${siblingWarning}.</p>`
+  const warning =
+    '<p class="artifact-warning"><strong>File location:</strong> Keep this gallery in its run folder so available video and trace links work.</p>'
   if (group.video !== null) {
     const player = group.video.available
-      ? `<video controls preload="metadata" aria-label="Shared captured video" src="${escapeHtml(siblingHref(group.video.path))}"></video>`
+      ? `<video controls preload="metadata" aria-label="Recorded video" src="${escapeHtml(siblingHref(group.video.path))}"></video>`
       : `<div class="broken">Video unavailable: ${escapeHtml(group.video.path)}</div>`
     return `<figure class="artifact-group video-layout">
             <div class="video-frame">${player}</div>
@@ -254,12 +253,12 @@ function renderSpec(
   return `<section class="spec" data-spec="${escapeHtml(spec.name)}" aria-labelledby="spec-${specIndex}">
       <header class="spec-head">
         <div><h2 id="spec-${specIndex}">${escapeHtml(spec.name)}</h2><p>${count(spec.shots.length, 'capture')} · manifest order</p></div>
-        <a class="action" href="#artifacts-${specIndex}">Group artifacts</a>
+        <a class="action" href="#artifacts-${specIndex}">Videos and traces</a>
       </header>
       <div class="cards">${cards}</div>
-      <aside class="artifacts" id="artifacts-${specIndex}" aria-label="Deduplicated artifacts for ${escapeHtml(spec.name)}">
-        <h3>Deduplicated artifact ${groups.length === 1 ? 'set' : 'sets'}</h3>
-        <p>Exact manifest paths are shown once per shared video/trace pair.</p>
+      <aside class="artifacts" id="artifacts-${specIndex}" aria-label="Videos and traces for ${escapeHtml(spec.name)}">
+        <h3>Videos and traces</h3>
+        <p>Screenshots that reference the same video and trace are listed together.</p>
         ${artifacts}
       </aside>
       ${dataArtifacts}
@@ -461,7 +460,7 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
         <span class="badge durable${manifest.status === 'failed' || manifest.status === 'timedout' || manifest.status === 'interrupted' ? ' bad-status' : ''}">${escapeHtml(statusLine)}</span>
         <span class="badge">${count(shotCount, 'shot')}</span>
         <span class="badge">${count(model.specs.length, 'spec')}</span>
-        <span class="badge">${hasArtifacts ? 'Sibling artifacts grouped by identical manifest path' : 'Video and trace absent in this run'}</span>
+        <span class="badge">${hasArtifacts ? 'Video or trace references in this run' : 'No videos or traces linked to screenshots'}</span>
       </div>
       ${manifest.runError ? `<p class="artifact-warning" role="alert">${escapeHtml(manifest.runError.message)}</p>` : ''}
       <details class="run-facts-disclosure">
@@ -474,8 +473,8 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
         <div><dt>Environment</dt><dd>${escapeHtml(environment)}</dd></div>
         <div><dt>Browsers</dt><dd>${escapeHtml(browsers)}</dd></div>
         <div><dt>Only filter</dt><dd>${escapeHtml(only)}</dd></div>
-        <div><dt>Video flag</dt><dd>${manifest.flags.video ? 'On' : 'Off'}</dd></div>
-        <div><dt>Trace flag</dt><dd>${manifest.flags.trace ? 'On' : 'Off'}</dd></div>
+        <div><dt>Shotwright video flag</dt><dd>${manifest.flags.video ? 'On' : 'Off'}</dd></div>
+        <div><dt>Shotwright trace flag</dt><dd>${manifest.flags.trace ? 'On' : 'Off'}</dd></div>
         <div><dt>Manifest</dt><dd>v${manifest.manifestVersion} · ${number(model.manifestByteLength)} bytes</dd></div>
         </dl>
       </details>
@@ -498,7 +497,7 @@ export function renderGallery(model: GalleryModel, runDir?: string): string {
     <noscript><p class="artifact-warning"><strong>JavaScript is off.</strong> Screenshot metadata and original download links remain available; overview loading, filters, and the screenshot viewer require JavaScript.</p></noscript>
     <section id="no-match" class="empty hidden" aria-live="polite"><h2>No matching screenshots</h2><p>Try another search or viewport filter.</p><button class="action" type="button" data-clear-search>Clear search</button> <button class="action" type="button" data-clear-filter>Clear filter</button></section>
     <div id="gallery-content">${content}${artifactOnlySpecs}${renderFailures(model)}</div>
-    <footer role="contentinfo">Original PNGs are embedded once as download links. Sibling video and trace links require this gallery beside the run directory.${sourceLine()}</footer>
+    <footer role="contentinfo">Original PNGs are embedded once as download links. Keep this gallery in its run folder so available video and trace links work.${sourceLine()}</footer>
   </main>
   ${VIEWER_DIALOG}
   <div class="debug" id="debug-overlay" role="status" aria-live="polite"></div>
