@@ -65,6 +65,21 @@ shots/example.shots.ts
 package.json (scripts)
 ```
 
+`init` preserves existing scripts whose commands differ from shotwright's and
+adds the free script names. It lists each conflicting name as skipped. If the
+`shots` name conflicts, the generated skill is deferred because its capture
+instructions use that name. Resolve the conflicting script and re-run
+`pnpm exec shotwright init`; existing scaffold files and scripts are skipped
+safely. Next steps list only commands that are already available or were added.
+
+Exit code 0 means the planned or actual setup has no unresolved script
+conflicts, even if user-owned files need review. Exit code 1 means a known
+script conflict or an actual error. With `--dry-run`, exit 1 predicts a known
+conflict; no write was attempted. A real exit 1 may follow successful partial
+writes, so read the Created, Updated, and Skipped sections before resolving the
+conflict and rerunning. A dry run cannot predict unforeseen I/O failures during
+the real run.
+
 Then:
 
 ```sh

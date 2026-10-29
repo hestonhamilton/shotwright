@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
+import { PNG } from 'pngjs'
 import { validateManifest } from '../../src/gallery/model.js'
 import type { Manifest } from '../../src/manifest.js'
 
@@ -43,6 +44,30 @@ function newest(): { dir: string; manifest: Manifest } {
   }
 }
 describe('real Playwright contract consumer', () => {
+  it('records the spec-created page and locator scale with unchanged PNG bytes', () => {
+    const result = run(['--grep', 'spec-created context scale follows'])
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    const { dir, manifest } = newest()
+    const byName = new Map(manifest.shots.map((entry) => [entry.name, entry]))
+    for (const name of ['context-viewport', 'context-full-page', 'context-locator']) {
+      expect(byName.get(name)).toMatchObject({
+        viewport: { width: 320, height: 240 },
+        deviceScaleFactor: 1,
+      })
+    }
+    expect(byName.get('project-viewport')).toMatchObject({
+      viewport: { width: 1440, height: 960 },
+      deviceScaleFactor: 2,
+    })
+    const dimensions = (name: string) => {
+      const entry = byName.get(name)!
+      return PNG.sync.read(fs.readFileSync(path.join(dir, entry.file)))
+    }
+    expect(dimensions('context-viewport')).toMatchObject({ width: 320, height: 240 })
+    expect(dimensions('context-locator')).toMatchObject({ width: 120, height: 60 })
+    expect(dimensions('project-viewport')).toMatchObject({ width: 2880, height: 1920 })
+    expect(dimensions('context-full-page').height).toBeGreaterThan(240)
+  })
   it.skipIf(process.platform !== 'linux')(
     'keeps the PNG when browser internals throw during observation',
     () => {

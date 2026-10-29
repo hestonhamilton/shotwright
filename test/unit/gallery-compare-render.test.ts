@@ -10,6 +10,66 @@ import { generateCompareGallery } from '../../src/gallery/generate-compare.js'
 import { renderCompare, renderCompareHeader } from '../../src/gallery/render-compare.js'
 import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
+it('labels each compare side with its logical viewport and scale without changing verdicts', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-scale-compare-'))
+  try {
+    for (const id of ['a', 'b']) {
+      const dir = path.join(root, id)
+      fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+      fs.writeFileSync(
+        path.join(dir, 'shots/same.png'),
+        PNG.sync.write(new PNG({ width: 2, height: 2 })),
+      )
+      fs.writeFileSync(
+        path.join(dir, 'shots/unknown.png'),
+        PNG.sync.write(new PNG({ width: 2, height: 2 })),
+      )
+      fs.writeFileSync(
+        path.join(dir, 'manifest.json'),
+        JSON.stringify(
+          makeManifest({
+            runId: id,
+            shots: [
+              makeShot({
+                name: 'same',
+                file: 'shots/same.png',
+                viewport: { width: 320, height: 240 },
+                deviceScaleFactor: id === 'a' ? 1 : 2,
+              }),
+              makeShot({
+                name: 'unknown',
+                file: 'shots/unknown.png',
+                viewport: null,
+                deviceScaleFactor: null,
+              }),
+            ],
+          }),
+        ),
+      )
+    }
+    const model = buildCompareModel(
+      loadGalleryModel(path.join(root, 'a')),
+      loadGalleryModel(path.join(root, 'b')),
+      { aRunDir: path.join(root, 'a'), bRunDir: path.join(root, 'b') },
+    )
+    expect(model.pairs).toHaveLength(2)
+    expect(model.pairs.map((pair) => pair.state)).toEqual(['identical', 'identical'])
+    const html = renderCompare(model)
+    expect(html).toContain('A · 2×2 pixels · Logical viewport 320×240 · Device scale factor 1')
+    expect(html).toContain('B · 2×2 pixels · Logical viewport 320×240 · Device scale factor 2')
+    expect(html).toContain(
+      'A · 2×2 pixels · Logical viewport unavailable · Device scale factor unavailable',
+    )
+    expect(html).toContain(
+      'B · 2×2 pixels · Logical viewport unavailable · Device scale factor unavailable',
+    )
+    expect(html).toContain('2 of 2 pairs')
+    expect(html).not.toContain('<article class="pair state-changed"')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 it('renders all seven verdict labels, gate summary, diff image, and run status', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-render-'))
   try {
@@ -107,7 +167,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     )
     expect(page).toContain('<p class="provenance-status">Render environment details incomplete</p>')
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"68036f1905808041bd0c720c48e1416b2c72c395b4a741306cae143a0a4c47be"`,
+      `"4e4020804a0496cef2265d64314231d5d0e082444527fe123324df3471ebd913"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
