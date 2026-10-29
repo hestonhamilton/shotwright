@@ -11,4 +11,5 @@ jobs:
     uses: ./.github/workflows/shotwright.yml
     with:
       mode: self
+      upload: always
       config-path: demo/shots.config.ts

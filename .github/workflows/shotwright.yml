@@ -31,6 +31,10 @@ on:
         description: "Record traces in the uploaded run. Traces can include credentials."
         type: boolean
         default: false
+      upload:
+        description: "Upload the run artifact: always, on-failure, or never."
+        type: string
+        default: always
       retention-days:
         description: "GitHub artifact retention in days."
         type: number
@@ -58,6 +62,15 @@ jobs:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
+      - name: Validate upload policy
+        working-directory: .
+        env:
+          UPLOAD_POLICY: ${{ inputs.upload }}
+        run: |
+          case "$UPLOAD_POLICY" in
+            always|on-failure|never) ;;
+            *) echo "::error::unsupported shotwright upload policy '$UPLOAD_POLICY' (expected always, on-failure, or never)"; exit 1 ;;
+          esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -135,6 +148,7 @@ jobs:
             yarn) yarn playwright install --with-deps chromium ;;
           esac
       - name: Run shotwright
+        id: shot
         env:
           SHOTWRIGHT_MODE: ${{ inputs.mode }}
           SHOTWRIGHT_CONFIG_PATH: ${{ inputs.config-path }}
@@ -178,7 +192,7 @@ jobs:
           esac
       - name: Resolve invocation run directory
         id: resolve
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (inputs.upload == 'always' || (inputs.upload == 'on-failure' && steps.shot.outcome == 'failure')) }}
         working-directory: .
         env:
           SHOTWRIGHT_RUN_DIR_FILE: ${{ runner.temp }}/shotwright-run-dir-${{ github.run_id }}-${{ github.run_attempt }}
@@ -191,9 +205,10 @@ jobs:
           run_dir="$(cat "$SHOTWRIGHT_RUN_DIR_FILE")"
           if [ ! -d "$run_dir" ]; then echo "::error::shotwright run directory does not exist: $run_dir"; exit 1; fi
           printf 'run-dir=%s\nrun-id=%s\n' "$run_dir" "$(basename "$run_dir")" >> "$GITHUB_OUTPUT"
+          if [ -f "$run_dir/manifest.json" ]; then echo 'complete=true' >> "$GITHUB_OUTPUT"; else echo 'complete=false' >> "$GITHUB_OUTPUT"; fi
       - name: Upload shotwright run
         id: upload
-        if: ${{ !cancelled() && steps.resolve.outputs.run-dir != '' }}
+        if: ${{ !cancelled() && steps.resolve.outputs.run-dir != '' && (inputs.upload == 'always' || (inputs.upload == 'on-failure' && steps.shot.outcome == 'failure')) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name || format('shotwright-{0}-{1}-{2}', github.workflow, github.run_id, github.run_attempt) }}
@@ -205,5 +220,10 @@ jobs:
         env:
           RUN_ID: ${{ steps.resolve.outputs.run-id }}
           ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          COMPLETE: ${{ steps.resolve.outputs.complete }}
         run: |
-          printf '## Shotwright artifacts\n\n- Run: `%s`\n- Artifact: %s\n' "$RUN_ID" "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$COMPLETE" = true ]; then
+            printf '## Shotwright artifacts\n\n- Run: `%s`\n- Run artifact: %s\n' "$RUN_ID" "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '## Shotwright artifacts\n\n- Run: `%s`\n- Incomplete run directory — diagnostic evidence only; no published manifest or reviewable run\n- Artifact: %s\n' "$RUN_ID" "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
+          fi

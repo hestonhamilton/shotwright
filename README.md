@@ -311,8 +311,13 @@ excluded by `--only`.
 that uploads the current invocation's run directory, including failed-run
 evidence when a directory was created. Inputs are `mode`, `config-path`,
 `runs-on` (JSON runner labels), `working-directory`, `package-manager`,
-`playwright-args` (JSON array), `traces` (default false), `retention-days`, and
+`playwright-args` (JSON array), `traces` (default false), `upload`, `retention-days`, and
 `artifact-name`. It supports npm, pnpm and yarn.
+`upload` accepts `always`, `on-failure`, or `never`. The reusable workflow defaults
+to `always` with seven-day retention; the generated caller uploads failed PR runs
+for two days and every manual dispatch run for seven days. Override `upload` or
+`retention-days` in the caller to control [Actions storage costs](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+`never` runs shots without producing a GitHub run artifact.
 The workflow uploads review artifacts; it does not compare pixels as a merge
 gate. Screenshots, videos, failure context, data and traces can expose
 authenticated content. Playwright traces may include credentials, cookies and

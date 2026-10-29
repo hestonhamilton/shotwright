@@ -33,7 +33,7 @@ Settled 2026-07-29 with the owner; alternatives and rationale in
 | Engine | **Playwright test-runner** — `*.shots.ts` specs run via `playwright test` with a shotwright-provided config. Videos, traces, and reporting come free; specs live outside the consumer's e2e gate. |
 | Philosophy | **Review artifacts, not assertions.** Output is throwaway, regenerated, gitignored. Compare computes verdicts for review; `--fail-on-change` makes parity gating opt-in ([ADR 0022](adr/0022-compare-verdicts-are-review-aid.md)). |
 | Local tooling | Gallery, run comparison, trace/video helpers, and an agent skill — all in scope (§4). |
-| CI | **Artifacts only by default**: a reusable GitHub Actions workflow uploads the current run directory, including failed-run evidence when available; compare's optional gate is a separate caller choice. |
+| CI | **Artifacts only by default**: the reusable workflow uploads the current run directory, including failed-run evidence when available, with `upload: always` and seven-day retention. The generated caller uses `on-failure` and two days for PRs, `always` and seven days for manual dispatch; `never` suppresses the artifact but still runs shots. Compare's optional gate is a separate caller choice. |
 | Self-testing | A tiny static demo app in-repo; shotwright's own example specs and CI run against it. |
 | Repo | Public (`hestonhamilton/shotwright`): no host paths, LAN IPs, or personal data committed. **AGPL-3.0-or-later** (ADR 0018). |
 
@@ -112,8 +112,12 @@ upgrades preserve.
 A reusable workflow (`workflow_call`) + a template the `init` drops in: install
 the selected npm, pnpm or yarn package in `working-directory`, run shotwright,
 and upload the current invocation's directory, including failed-run evidence
-when present. Traces default off. Compare writes verdicts and JSON by default;
-only a caller choosing `--fail-on-change` turns non-parity into an exit gate.
+when present. The reusable workflow defaults to `upload: always` and seven-day
+retention; the generated caller uses `on-failure` and two days for PRs, and
+`always` and seven days for manual dispatch. `upload: never` suppresses the
+artifact but still runs shots. Traces default off. Compare writes verdicts and
+JSON by default; only a caller choosing `--fail-on-change` turns non-parity into
+an exit gate.
 
 ## 4 · Epic map
 
