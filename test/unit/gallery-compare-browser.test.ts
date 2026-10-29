@@ -53,12 +53,14 @@ it('opens A, B, and Diff without CSP violations or network requests and leaves n
       const pairOpener = page.locator('[data-viewer-pair-a]')
       await pairOpener.click()
       await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+      expect(await page.locator('.pair-surface img[src]').count()).toBe(2)
       expect(await page.locator('#inspection-dialog').count()).toBe(1)
       expect(await page.locator('[data-pair-mode="side"]').getAttribute('aria-pressed')).toBe(
         'true',
       )
       expect(await page.locator('.pair-controls').isVisible()).toBe(true)
       await page.locator('[data-pair-mode="swipe"]').click()
+      expect(await page.locator('.pair-surface img[src]').count()).toBe(4)
       await page.locator('[data-pair-range]').fill('35')
       expect(await page.locator('[data-pair-percent]').textContent()).toBe('35%')
       expect(
@@ -69,14 +71,19 @@ it('opens A, B, and Diff without CSP violations or network requests and leaves n
           ),
       ).toBe('inset(0px 65% 0px 0px)')
       await page.locator('[data-pair-mode="onion"]').click()
-      await page.locator('[data-pair-range]').fill('35')
+      expect(await page.locator('[data-pair-range]').inputValue()).toBe('50')
+      await page.locator('[data-pair-range]').fill('70')
       expect(
         await page
           .locator('.pair-layer-b')
           .evaluate(
             (element) => element.ownerDocument.defaultView!.getComputedStyle(element).opacity,
           ),
-      ).toBe('0.35')
+      ).toBe('0.7')
+      await page.locator('[data-pair-mode="swipe"]').click()
+      expect(await page.locator('[data-pair-range]').inputValue()).toBe('35')
+      await page.locator('[data-pair-mode="onion"]').click()
+      expect(await page.locator('[data-pair-range]').inputValue()).toBe('70')
       await page.keyboard.press('Escape')
       await page.locator('.pair-surface img[src]').first().waitFor({ state: 'detached' })
       expect(
@@ -89,6 +96,7 @@ it('opens A, B, and Diff without CSP violations or network requests and leaves n
         const opener = page.locator(`[data-viewer-open="pair-0-${side}"]`)
         await opener.click()
         await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+        expect(await page.locator('.pair-surface img[src]').count()).toBe(0)
         expect(await page.locator('[data-viewer-prev]').isHidden()).toBe(true)
         expect(await page.locator('[data-viewer-next]').isHidden()).toBe(true)
         expect(await page.locator('[data-viewer-position]').isHidden()).toBe(true)
@@ -142,6 +150,10 @@ it('opens A, B, and Diff without CSP violations or network requests and leaves n
       expect(await page.locator('[data-pair-mode="side"]').getAttribute('aria-pressed')).toBe(
         'true',
       )
+      await page.locator('[data-pair-mode="swipe"]').click()
+      expect(await page.locator('[data-pair-range]').inputValue()).toBe('50')
+      await page.locator('[data-pair-mode="onion"]').click()
+      expect(await page.locator('[data-pair-range]').inputValue()).toBe('50')
       await page.keyboard.press('Escape')
       expect(errors).toEqual([])
       expect(network).toEqual([])
@@ -245,6 +257,15 @@ it('keeps pair geometry, panning, and overlay controls usable at desktop and nar
         pane.scrollTop = 40
       })
       await expect.poll(async () => (await measure())[0]!.y).toBeCloseTo(40, 0)
+      await page.locator('.pair-surface').evaluate((surface) => {
+        const a = surface.querySelector('[data-pair-pane="a"]')!
+        const b = surface.querySelector('[data-pair-pane="b"]')!
+        a.scrollTop = 300
+        b.scrollTop = 120
+      })
+      await expect.poll(async () => (await measure())[0]!.y).toBeCloseTo(120, 0)
+      dimensions = await measure()
+      expect(Math.abs(dimensions[0]!.y - dimensions[1]!.y)).toBeLessThanOrEqual(1)
       await page.locator('[data-pair-mode="swipe"]').click()
       await page.locator('[data-pair-range]').fill('35')
       const overlay = page.locator('.pair-overlay .pair-stage')
@@ -287,6 +308,69 @@ it('keeps pair geometry, panning, and overlay controls usable at desktop and nar
       expect(await page.locator('[data-pair-mode="side"]').getAttribute('aria-pressed')).toBe(
         'true',
       )
+      await context.close()
+    }
+  } finally {
+    await browser.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+}, 30_000)
+
+it('fits 1000x700 and 1000x8000 pairs within both panes at mobile and desktop sizes', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-pair-fit-'))
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const runs = (['a', 'b'] as const).map((side) => {
+      const dir = path.join(root, side)
+      fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+      const shots = [700, 8000].map((height) => {
+        const name = `height-${height}`
+        const image = new PNG({ width: 1000, height })
+        for (let pixel = 0; pixel < image.data.length; pixel += 4) {
+          image.data[pixel] = side === 'a' ? 220 : 30
+          image.data[pixel + 1] = 80
+          image.data[pixel + 2] = side === 'a' ? 40 : 210
+          image.data[pixel + 3] = 255
+        }
+        fs.writeFileSync(path.join(dir, 'shots', `${name}.png`), PNG.sync.write(image))
+        return makeShot({ name, file: `shots/${name}.png` })
+      })
+      fs.writeFileSync(
+        path.join(dir, 'manifest.json'),
+        JSON.stringify(makeManifest({ runId: side, shots })),
+      )
+      return dir
+    })
+    const url = pathToFileURL(generateCompareGallery(runs[0]!, runs[1]!).outputFile).href
+    for (const viewport of [
+      { width: 390, height: 844, colorScheme: 'dark' as const },
+      { width: 1280, height: 800, colorScheme: 'light' as const },
+    ]) {
+      const context = await browser.newContext({ viewport, colorScheme: viewport.colorScheme })
+      const page = await context.newPage()
+      await page.goto(url)
+      for (const [index, height] of [700, 8000].entries()) {
+        await page.locator('[data-viewer-pair-a]').nth(index).click()
+        await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+        const overflow = await page.locator('[data-pair-pane]').evaluateAll((panes) =>
+          panes.map((pane) => ({
+            vertical: pane.scrollHeight - pane.clientHeight,
+            horizontal: pane.scrollWidth - pane.clientWidth,
+          })),
+        )
+        for (const pane of overflow) {
+          expect(pane.vertical).toBeLessThanOrEqual(0)
+          expect(pane.horizontal).toBeLessThanOrEqual(0)
+        }
+        if (process.env.SHOTWRIGHT_REPAIR_SCREENSHOTS) {
+          const out = path.join(process.cwd(), 'local')
+          fs.mkdirSync(out, { recursive: true })
+          await page.locator('#inspection-dialog').screenshot({
+            path: path.join(out, `pair-side-${viewport.width}x${viewport.height}-${height}.png`),
+          })
+        }
+        await page.keyboard.press('Escape')
+      }
       await context.close()
     }
   } finally {

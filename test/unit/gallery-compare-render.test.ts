@@ -107,7 +107,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     )
     expect(page).toContain('<p class="provenance-status">Render environment details incomplete</p>')
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"4f9ddd2d2e006fcc19ace7095adeb970546ec12e2eccb938c5f049cd1d8f0115"`,
+      `"3b0c41d776fa49fa5870f62d6e1da5e505edbe245707536ddb4955140c45aec6"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,

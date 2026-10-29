@@ -26,8 +26,8 @@ export const VIEWER_CSS = `
 .pair-controls input { width: min(28vw, 180px); }
 .pair-details { padding: 4px 14px; color: var(--muted); font-size: 12px; }
 .pair-surface { display: flex; flex: 1 1 auto; min-height: 0; width: 100%; gap: 8px; padding: 8px; box-sizing: border-box; background: var(--panel-2); }
-.pair-pane { flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; background: var(--panel); }
-.pair-pane-label { position: sticky; top: 0; left: 0; z-index: 2; display: inline-block; padding: 2px 6px; background: var(--panel); }
+.pair-pane { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; background: var(--panel); }
+.pair-pane-label { position: sticky; top: 0; left: 0; z-index: 2; display: block; width: max-content; padding: 2px 6px; background: var(--panel); }
 .pair-stage { position: relative; flex: none; background-color: #aaa; background-image: linear-gradient(45deg,#ddd 25%,transparent 25%),linear-gradient(-45deg,#ddd 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ddd 75%),linear-gradient(-45deg,transparent 75%,#ddd 75%); background-size: 16px 16px; background-position: 0 0,0 8px,8px -8px,-8px 0; }
 .pair-stage img { position: absolute; top: 0; left: 0; max-width: none; max-height: none; }
 .pair-overlay { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
@@ -72,9 +72,10 @@ export const VIEWER_SCRIPT = `
   let viewerMode = 'closed';
   let pairMode = 'side';
   let pairSources = null;
-  let pairSyncing = false;
-  let pairSyncOrigin = null;
+  let pairSyncFrame = 0;
+  let pairPendingOrigin = null;
   const pairEcho = new WeakMap();
+  const pairValues = { swipe: '50', onion: '50' };
   let image = null;
   let returnFocus = null;
   let initialOpener = null;
@@ -87,7 +88,9 @@ export const VIEWER_SCRIPT = `
   const clamp = (value, max) => Math.max(0, Math.min(value, max));
   const clearPair = () => {
     pairSources = null;
-    pairSyncOrigin = null;
+    pairPendingOrigin = null;
+    if (pairSyncFrame) cancelAnimationFrame(pairSyncFrame);
+    pairSyncFrame = 0;
     for (const item of pairImages) { item.removeAttribute('src'); item.style.cssText = ''; }
     pairControls.hidden = pairDetails.hidden = pairSurface.hidden = true;
     pairError.hidden = true;
@@ -110,7 +113,7 @@ export const VIEWER_SCRIPT = `
     const stageHeight = Math.max(...dimensions.map((item) => item.height));
     let fit;
     if (pairMode === 'side') {
-      fit = Math.min(1, ...pairPanes.flatMap((pane, index) => [pane.clientWidth / dimensions[index].width, (pane.clientHeight - pane.querySelector('.pair-pane-label').offsetHeight) / dimensions[index].height]));
+      fit = Math.min(1, ...pairPanes.flatMap((pane, index) => [pane.clientWidth / dimensions[index].width, (pane.clientHeight - pairStage(pane).offsetTop) / dimensions[index].height]));
     } else {
       fit = Math.min(1, overlayPane.clientWidth / stageWidth, overlayPane.clientHeight / stageHeight);
     }
@@ -130,9 +133,11 @@ export const VIEWER_SCRIPT = `
       img.style.width = dimensions[index].width * scale + 'px';
       img.style.height = dimensions[index].height * scale + 'px';
     });
+    const toggleWasHidden = toggleButton.hidden;
     toggleButton.hidden = fit >= 1;
     toggleButton.textContent = actual ? 'Fit to window' : 'Actual pixels';
     pairDetails.textContent = 'A ' + pairSources[0].naturalWidth + '×' + pairSources[0].naturalHeight + ' · B ' + pairSources[1].naturalWidth + '×' + pairSources[1].naturalHeight + (pairSources[0].naturalWidth !== pairSources[1].naturalWidth || pairSources[0].naturalHeight !== pairSources[1].naturalHeight ? ' · aligned at top left' : '');
+    if (toggleWasHidden !== toggleButton.hidden) pairSize();
   };
   const pairReveal = () => {
     pairPercent.textContent = pairRange.value + '%';
@@ -141,7 +146,9 @@ export const VIEWER_SCRIPT = `
     layer.style.opacity = pairMode === 'onion' ? String(Number(pairRange.value) / 100) : '1';
   };
   const setPairMode = (mode) => {
+    if (pairMode === 'swipe' || pairMode === 'onion') pairValues[pairMode] = pairRange.value;
     pairMode = mode;
+    if (mode !== 'side') overlayPane.querySelectorAll('img').forEach((img, index) => { if (!img.hasAttribute('src')) img.src = pairSources[index].src; });
     pairSurface.classList.toggle('side-by-side', mode === 'side');
     pairPanes.forEach((pane) => { pane.hidden = mode !== 'side'; pane.scrollLeft = pane.scrollTop = 0; });
     overlayPane.hidden = mode === 'side';
@@ -149,7 +156,7 @@ export const VIEWER_SCRIPT = `
     pairRangeWrap.hidden = mode === 'side';
     pairRangeLabel.textContent = mode === 'swipe' ? 'Swipe' : 'Onion skin';
     pairRange.setAttribute('aria-label', mode === 'swipe' ? 'Swipe reveal' : 'Onion skin opacity');
-    pairRange.value = '50';
+    pairRange.value = mode === 'side' ? '50' : pairValues[mode];
     pairModes.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.pairMode === mode)));
     pairReveal();
     pairSize();
@@ -157,19 +164,22 @@ export const VIEWER_SCRIPT = `
   pairModes.forEach((button) => button.addEventListener('click', () => { if (viewerMode === 'pair' && pairSources) setPairMode(button.dataset.pairMode); }));
   pairRange.addEventListener('input', pairReveal);
   pairPanes.forEach((pane) => pane.addEventListener('scroll', () => {
-    if (viewerMode !== 'pair' || pairMode !== 'side' || pairSyncing) return;
+    if (viewerMode !== 'pair' || pairMode !== 'side') return;
     const echo = pairEcho.get(pane);
     if (echo && Math.abs(pane.scrollLeft - echo.x) < 1 && Math.abs(pane.scrollTop - echo.y) < 1) { pairEcho.delete(pane); return; }
     pairEcho.delete(pane);
-    if (pairSyncOrigin && pairSyncOrigin !== pane) return;
-    pairSyncOrigin = pane;
-    pairSyncing = true;
-    const other = pairPanes.find((item) => item !== pane);
-    other.scrollLeft = clamp(pane.scrollLeft, other.scrollWidth - other.clientWidth);
-    other.scrollTop = clamp(pane.scrollTop, other.scrollHeight - other.clientHeight);
-    pairEcho.set(other, { x: other.scrollLeft, y: other.scrollTop });
-    pairSyncing = false;
-    requestAnimationFrame(() => { if (pairSyncOrigin === pane) pairSyncOrigin = null; });
+    pairPendingOrigin = pane;
+    if (pairSyncFrame) return;
+    pairSyncFrame = requestAnimationFrame(() => {
+      pairSyncFrame = 0;
+      const origin = pairPendingOrigin;
+      pairPendingOrigin = null;
+      if (viewerMode !== 'pair' || pairMode !== 'side' || !origin) return;
+      const other = pairPanes.find((item) => item !== origin);
+      other.scrollLeft = clamp(origin.scrollLeft, other.scrollWidth - other.clientWidth);
+      other.scrollTop = clamp(origin.scrollTop, other.scrollHeight - other.clientHeight);
+      pairEcho.set(other, { x: other.scrollLeft, y: other.scrollTop });
+    });
   }));
   const pointAtCenter = () => {
     const rect = image.getBoundingClientRect();
@@ -320,7 +330,8 @@ export const VIEWER_SCRIPT = `
       toggleButton.hidden = true;
       pairSurface.hidden = pairControls.hidden = pairDetails.hidden = false;
       pairError.hidden = true;
-      pairImages.forEach((img, index) => { img.src = (index % 2 === 0 ? a : b).src; });
+      pairValues.swipe = pairValues.onion = '50';
+      pairImages.slice(0, 2).forEach((img, index) => { img.src = (index === 0 ? a : b).src; });
       setPairMode('side');
       dialog.showModal(); watchDpr();
       dialog.querySelector('[data-close]').focus();

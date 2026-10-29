@@ -87,3 +87,15 @@ Card-level overlays; a second dialog; freeform zoom or gesture controls; per-pai
    - Add focused DPR and single-viewer regression cases.
    - Exact CSP string equality and the main-branch byte baseline are dropped. A CSP check that it still forbids network and allows only inline script/style and `data:` images remains.
    - Visual review stays the UI gate.
+
+## Implementation redteam disposition (2026-10-28)
+
+All four findings were accepted and repaired. A further "no invariant finding" note needed no change.
+
+1. **Fitted panes overflowed at 390 px.** Fixed: the fit uses the measured layout space. Tests assert there is no overflow at 390×844 and 1280×800 for a 1000×700 pair and a 1000×8000 pair.
+2. **Same-frame alternating scroll could desynchronize the panes.** Fixed: the last user-originated offset is reconciled. A same-frame test covers it.
+3. **Four images received `src` on open.** Amends disposition #5:
+   - The two side-by-side images are assigned on open.
+   - The two overlay layers are assigned the first time Swipe or Onion skin is selected.
+   - All are cleared on close. A 1000×8000 pair decoded without error through open, mode switches, close and reopen.
+4. **The slider reset on every mode switch.** Fixed: Swipe and Onion skin each keep their own value within one opening, and both reset to 50% on each new open.
