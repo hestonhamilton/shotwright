@@ -57,13 +57,18 @@ export interface CompareLinks {
 
 function shotMedia(shot: GalleryShot | null, label: string, base: string, index: number): string {
   if (!shot) return `<div class="missing">${label}: no shot</div>`
+  const viewport = shot.entry.viewport
+    ? `${shot.entry.viewport.width}×${shot.entry.viewport.height}`
+    : 'unavailable'
+  const scale = shot.entry.deviceScaleFactor ?? 'unavailable'
+  const metadata = `Logical viewport ${viewport} · Device scale factor ${scale}`
   if (!shot.image)
-    return `<div class="missing">${label}: ${escapeHtml(shot.imageError ?? 'image unavailable')}</div>`
+    return `<div class="missing">${label}: ${escapeHtml(shot.imageError ?? 'image unavailable')} · ${metadata}</div>`
   const alt = `${label} ${shot.entry.spec} ${shot.entry.name}`
   const href = siblingHref([base, shot.entry.file].join('/'))
   const filename = shot.entry.file.split('/').at(-1)!
   const id = `pair-${index}-${label.toLowerCase()}`
-  return `<figure><figcaption>${label} · ${shot.image.width}×${shot.image.height}</figcaption><button class="compare-viewer-open viewer-open" type="button" disabled data-viewer-open="${id}" aria-label="View ${escapeHtml(label)} screenshot: ${escapeHtml(shot.entry.name)}"><img id="${id}" data-name="${escapeHtml(shot.entry.name)}" src="${escapeHtml(shot.image.dataUri)}" alt="${escapeHtml(alt)}"></button><a href="${escapeHtml(href)}" download="${escapeHtml(filename)}">Download ${label}</a></figure>`
+  return `<figure><figcaption>${label} · ${shot.image.width}×${shot.image.height} pixels · ${metadata}</figcaption><button class="compare-viewer-open viewer-open" type="button" disabled data-viewer-open="${id}" aria-label="View ${escapeHtml(label)} screenshot: ${escapeHtml(shot.entry.name)}"><img id="${id}" data-name="${escapeHtml(shot.entry.name)}" src="${escapeHtml(shot.image.dataUri)}" alt="${escapeHtml(alt)}"></button><a href="${escapeHtml(href)}" download="${escapeHtml(filename)}">Download ${label}</a></figure>`
 }
 function status(shot: GalleryShot | null, model: GalleryCompareModel, side: 'a' | 'b'): string {
   if (!shot) return 'absent'

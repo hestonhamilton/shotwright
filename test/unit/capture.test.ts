@@ -204,8 +204,10 @@ describe('shot', () => {
     fs.mkdirSync(path.join(runDir, '.sidecar'))
     vi.stubEnv('SHOTWRIGHT_RUN_DIR', runDir)
     const screenshot = vi.fn().mockResolvedValue(Buffer.from('png'))
+    const evaluate = vi.fn().mockResolvedValue(1)
     const page = {
       screenshot,
+      evaluate,
       viewportSize: () => ({ width: 800, height: 600 }),
       context: () => ({ browser: () => null }),
     } as unknown as Page
@@ -216,18 +218,81 @@ describe('shot', () => {
       retry: 0,
     } as ReturnType<typeof test.info>)
     const png = (name: string) => path.join(runDir, 'shots', 'flow', `${name}.png`)
-    return { runDir, page, screenshot, png }
+    return { runDir, page, screenshot, evaluate, png }
   }
 
   it('runs a filtered check once without a screenshot, PNG, or sidecar', async () => {
-    const { runDir, page, screenshot, png } = fixture()
+    const { runDir, page, screenshot, evaluate, png } = fixture()
     try {
       vi.stubEnv('SHOTWRIGHT_ONLY', 'selected')
       const check = vi.fn()
       await shot(page, 'omitted', { check })
       expect(check).toHaveBeenCalledOnce()
       expect(screenshot).not.toHaveBeenCalled()
+      expect(evaluate).not.toHaveBeenCalled()
       expect(fs.existsSync(png('omitted'))).toBe(false)
+      expect(readSidecars(runDir)).toEqual([])
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records the captured page scale instead of the project scale', async () => {
+    const { runDir, page, evaluate } = fixture()
+    try {
+      await shot(page, 'observed')
+      expect(evaluate).toHaveBeenCalledOnce()
+      expect(readSidecars(runDir)).toMatchObject([
+        { kind: 'shot', viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 },
+      ])
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the locator owner page for viewport and scale', async () => {
+    const { runDir, page, evaluate } = fixture()
+    const ownerEvaluate = vi.fn().mockResolvedValue(3)
+    const owner = {
+      viewportSize: () => ({ width: 320, height: 240 }),
+      evaluate: ownerEvaluate,
+    } as unknown as Page
+    const locator = {
+      page: () => owner,
+      screenshot: vi.fn().mockResolvedValue(Buffer.from('locator png')),
+    } as unknown as NonNullable<Parameters<typeof shot>[2]>['locator']
+    try {
+      await shot(page, 'other-context', { locator })
+      expect(evaluate).not.toHaveBeenCalled()
+      expect(ownerEvaluate).toHaveBeenCalledOnce()
+      expect(readSidecars(runDir)).toMatchObject([
+        { kind: 'shot', viewport: { width: 320, height: 240 }, deviceScaleFactor: 3 },
+      ])
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([0, -1, Infinity, NaN])('cleans up an invalid observed scale %s', async (value) => {
+    const { runDir, page, screenshot, evaluate, png } = fixture()
+    evaluate.mockResolvedValue(value)
+    try {
+      await expect(shot(page, 'invalid')).rejects.toThrow(/finite positive/)
+      expect(screenshot).not.toHaveBeenCalled()
+      expect(fs.existsSync(png('invalid'))).toBe(false)
+      expect(readSidecars(runDir)).toEqual([])
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true })
+    }
+  })
+
+  it('cleans up when page evaluation fails before screenshot', async () => {
+    const { runDir, page, screenshot, evaluate, png } = fixture()
+    evaluate.mockRejectedValue(new Error('Target page has been closed'))
+    try {
+      await expect(shot(page, 'closed')).rejects.toThrow('Target page has been closed')
+      expect(screenshot).not.toHaveBeenCalled()
+      expect(fs.existsSync(png('closed'))).toBe(false)
       expect(readSidecars(runDir)).toEqual([])
     } finally {
       fs.rmSync(runDir, { recursive: true, force: true })

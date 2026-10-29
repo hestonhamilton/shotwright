@@ -103,6 +103,32 @@ function fiveShots(): ShotEntry[] {
 }
 
 describe('deterministic gallery publication', () => {
+  it('separates equal-size viewports by observed scale in chips, cards and details', () => {
+    const runDir = path.join(tmpDir(), 'run')
+    writeRun(
+      runDir,
+      manifest('run', [
+        shot('scale-one', 'home.shots.ts', 0, { deviceScaleFactor: 1 }),
+        shot('scale-two', 'home.shots.ts', 1, {
+          viewport: { width: 1440, height: 960 },
+          deviceScaleFactor: 2,
+        }),
+      ]),
+    )
+    const html = renderGallery(loadGalleryModel(runDir))
+    expect(html).toContain('1440×960 · Device scale factor 1 · 1')
+    expect(html).toContain('1440×960 · Device scale factor 2 · 1')
+    expect(html).toContain(
+      '<div class="meta"><span>1440×960</span><span>Device scale factor 1</span>',
+    )
+    expect(html).toContain(
+      '<div class="meta"><span>1440×960</span><span>Device scale factor 2</span>',
+    )
+    expect(html).toContain('<dt>Device scale factor</dt><dd>1</dd>')
+    expect(html).toContain('<dt>Device scale factor</dt><dd>2</dd>')
+    expect(html.match(/<article\b class="card/g)).toHaveLength(2)
+  })
+
   it('produces byte-identical HTML from identical inputs in two run locations', () => {
     const root = tmpDir()
     const first = path.join(root, 'first/run')
