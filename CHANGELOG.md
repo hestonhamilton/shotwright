@@ -1,5 +1,16 @@
 # shotwright
 
+## 0.6.0
+
+### Minor Changes
+
+- 2ddbafd: Add selectable CI run-artifact upload modes while preserving the reusable workflow's existing upload and retention defaults. Generated PR workflows upload failed runs for two days; manual runs upload every run.
+
+### Patch Changes
+
+- 65d0b46: Record each screenshot's device scale factor and viewport from the page that produced it, including locators in spec-created contexts. Show each side's logical viewport and scale in compare output.
+- fa8c926: Preserve conflicting consumer scripts while adding free init scripts, and report safe rerun steps. `init --dry-run` now exits 1 when it predicts a script conflict.
+
 ## 0.5.0
 
 ### Minor Changes
