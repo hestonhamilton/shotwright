@@ -22,9 +22,17 @@ jobs:
       package-manager: pnpm
       # Traces can include credentials; recording is off by default.
       traces: false
+      # Private repository Actions artifacts and Packages share included storage:
+      # 500 MB on Free or 1 GB on Pro, with usage accruing by GB-hour.
+      # https://docs.github.com/en/billing/concepts/product-billing/github-actions
+      # PRs upload failed shot runs for 2 days; manual dispatch uploads every run for 7 days.
+      # Override upload (always, on-failure, never) or retention-days as needed;
+      # never leaves no GitHub run artifact.
+      # Screenshots, videos, authenticated captures and optional traces can expose
+      # sensitive data, including credentials in traces.
+      upload: ${{ github.event_name == 'pull_request' && 'on-failure' || 'always' }}
+      retention-days: ${{ github.event_name == 'pull_request' && 2 || 7 }}
     # Caller env does not cross a reusable-workflow boundary. Map the named
     # SHOTWRIGHT_BASE_URL / USERNAME / PASSWORD secrets explicitly, or use
     # secrets: inherit when the repository trust boundary permits it.
-    # Uploaded runs include screenshots, videos, failure context, data artifacts, and optional traces;
-    # they can expose anything authenticated flows displayed or fetched. Set retention-days accordingly.
     # secrets: inherit

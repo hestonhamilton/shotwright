@@ -960,6 +960,7 @@ describe('consumer workflow contract', () => {
       'package-manager',
       'playwright-args',
       'traces',
+      'upload',
       'retention-days',
       'artifact-name',
     ])
@@ -968,8 +969,28 @@ describe('consumer workflow contract', () => {
     expect(workflow).toContain('runs-on: ${{ fromJSON(inputs.runs-on) }}')
     expect(workflow).toContain('working-directory: ${{ inputs.working-directory }}')
   })
-  it('uploads the invocation after failure with strict path handling and retention', () => {
-    expect(workflow).toContain("if: ${{ !cancelled() && steps.resolve.outputs.run-dir != '' }}")
+  it('validates the upload policy before setup and preserves reusable defaults', () => {
+    expect(workflow).toMatch(
+      / {6}upload:\n {8}description:.*always, on-failure, or never.*\n {8}type: string\n {8}default: always/,
+    )
+    expect(workflow).toMatch(/ {6}retention-days:\n(?:.|\n)*? {8}default: 7/)
+    expect(workflow.indexOf('- name: Validate upload policy')).toBeLessThan(
+      workflow.indexOf('- uses: actions/checkout@'),
+    )
+    expect(workflow).toContain('UPLOAD_POLICY: ${{ inputs.upload }}')
+    expect(workflow).toContain('always|on-failure|never) ;;')
+    expect(workflow).toContain(
+      "::error::unsupported shotwright upload policy '$UPLOAD_POLICY' (expected always, on-failure, or never)",
+    )
+  })
+  it('uploads eligible invocations with strict path handling and manifest-based summaries', () => {
+    expect(workflow).toContain('id: shot')
+    expect(workflow).toContain(
+      "if: ${{ !cancelled() && (inputs.upload == 'always' || (inputs.upload == 'on-failure' && steps.shot.outcome == 'failure')) }}",
+    )
+    expect(workflow).toContain(
+      "if: ${{ !cancelled() && steps.resolve.outputs.run-dir != '' && (inputs.upload == 'always' || (inputs.upload == 'on-failure' && steps.shot.outcome == 'failure')) }}",
+    )
     expect(workflow).toContain('if-no-files-found: error')
     expect(workflow).toContain('retention-days: ${{ inputs.retention-days }}')
     expect(workflow).toContain(
@@ -977,7 +998,20 @@ describe('consumer workflow contract', () => {
     )
     expect(workflow).toContain('SHOTWRIGHT_RUN_DIR_FILE: ${{ runner.temp }}')
     expect(workflow).toContain('run_dir="$(cat "$SHOTWRIGHT_RUN_DIR_FILE")"')
+    expect(workflow).toContain('if [ -f "$run_dir/manifest.json" ]; then echo \'complete=true\'')
+    expect(workflow).toContain('else echo \'complete=false\' >> "$GITHUB_OUTPUT"')
+    expect(workflow).toContain('COMPLETE: ${{ steps.resolve.outputs.complete }}')
+    expect(workflow).toContain('if [ "$COMPLETE" = true ]; then')
+    expect(workflow).toContain('Run artifact: %s')
+    expect(workflow).toContain(
+      'Incomplete run directory — diagnostic evidence only; no published manifest or reviewable run',
+    )
     expect(workflow).not.toContain('readlink shots-output/latest')
+    const demo = fs.readFileSync(
+      path.join(workflowRoot, '.github/workflows/demo-shots.yml'),
+      'utf8',
+    )
+    expect(demo).toContain('upload: always')
   })
   it('defaults traces off and passes the opt-in to the run flag', () => {
     expect(workflow).toMatch(/ {6}traces:\n(?:.|\n)*? {8}default: false/)
@@ -1038,5 +1072,18 @@ describe('consumer workflow contract', () => {
     expect(template).toContain(`shotwright.yml@v${version}`)
     expect(template).toContain('working-directory: .')
     expect(template).toContain('package-manager: pnpm')
+    expect(template).toContain(
+      "upload: ${{ github.event_name == 'pull_request' && 'on-failure' || 'always' }}",
+    )
+    expect(template).toContain(
+      "retention-days: ${{ github.event_name == 'pull_request' && 2 || 7 }}",
+    )
+    expect(template).toContain('500 MB on Free or 1 GB on Pro')
+    expect(template).toContain('GB-hour')
+    expect(template).toContain('never leaves no GitHub run artifact')
+    expect(template).toContain('including credentials in traces')
+    expect(template).toContain(
+      'https://docs.github.com/en/billing/concepts/product-billing/github-actions',
+    )
   })
 })
