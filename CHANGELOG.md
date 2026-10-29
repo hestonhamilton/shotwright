@@ -1,5 +1,19 @@
 # shotwright
 
+## 0.5.0
+
+### Minor Changes
+
+- 6690b4d: Inspect two screenshots together in the compare dialog with side by side, swipe, and onion skin views. Size changes remain aligned at the top left for visual review.
+- 5b9ed24: Open gallery and compare screenshots in a fitted viewer with actual device pixel zoom. Add visible search result counts, recoverable empty states, and clear device scale wording.
+
+### Patch Changes
+
+- 1188900: Clarify gallery video and trace labels, including missing links and file placement. Comparison pages now explain where linked downloads must remain.
+- d778738: Make compare galleries easier to scan with a concise outcome summary, state filters, and links to each pair. Keep comparison settings and provenance details available in a disclosure.
+- fc55436: Navigate filtered gallery screenshots with arrow keys or Previous and Next buttons. The viewer shows the current position and returns focus to the screenshot last viewed.
+- cdfaa52: Collapse run facts on narrow gallery screens so the first screenshot is visible sooner. Keep search and viewport filters disabled when JavaScript is unavailable.
+
 ## 0.4.0
 
 ### Minor Changes
