@@ -6,6 +6,18 @@ import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const parserFailure = vi.hoisted(() => ({ enabled: false }))
+vi.mock('yaml', async (importOriginal) => {
+  const original = await importOriginal<typeof import('yaml')>()
+  return {
+    ...original,
+    parseDocument: (...args: Parameters<typeof original.parseDocument>) => {
+      if (parserFailure.enabled) throw new Error('parser failed')
+      return original.parseDocument(...args)
+    },
+  }
+})
+
 import { parseCompareArgs, parseGalleryArgs, parseRunArgs } from '../../src/cli.js'
 import {
   applyInitPlan,
@@ -24,6 +36,7 @@ import {
   type InitPlan,
 } from '../../src/init.js'
 import { readTemplate, templateUrl } from '../../src/templates.js'
+import { shotwrightVersion } from '../../src/version.js'
 
 const tempRoots: string[] = []
 
@@ -260,6 +273,135 @@ describe('InitOutcome output coherence', () => {
       for (const command of outputCommands) assertGeneratedCommandParses(command)
     },
   )
+})
+
+describe('workflow pin notices', () => {
+  const version = shotwrightVersion()
+  const warning = (tag: string, job = 'shotwright', line = 3) =>
+    `Warning: .github/workflows/shotwright.yml:${line} job ${job} uses @${tag}, while the shotwright CLI running init is ${version}. For this package, review the workflow release changes, then change that job's uses pin to @v${version}.`
+  const call = (tag: string, directory?: string) =>
+    `    uses: hestonhamilton/shotwright/.github/workflows/shotwright.yml@${tag}\n${directory === undefined ? '' : `    with:\n      working-directory: ${directory}\n`}`
+  const setup = (workflow: string, nested = false) => {
+    const root = fixture({ packageJson: {} })
+    const cwd = nested ? path.join(root, 'apps', 'web') : root
+    if (nested) {
+      fs.mkdirSync(cwd, { recursive: true })
+      fs.writeFileSync(path.join(cwd, 'package.json'), '{"name":"web"}\n')
+    }
+    const file = path.join(root, '.github/workflows/shotwright.yml')
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, workflow)
+    return { root, cwd, file }
+  }
+
+  it('warns in both modes once per job without editing the caller or changing exit status', () => {
+    const source = `jobs:\n  shotwright:\n${call('v0.4.0')}`
+    const { cwd, file } = setup(source)
+    const plan = planInit(cwd, readTemplate)
+    expect(plan.notices).toEqual([warning('v0.4.0')])
+    expect(plan.actions.map((action) => action.path)).not.toContain(
+      '.github/workflows/shotwright.yml',
+    )
+    const dry = dryRunInitPlan(plan)
+    expect(initExitCode(dry)).toBe(0)
+    expect(formatInitResult(dry).split(warning('v0.4.0')).length - 1).toBe(1)
+    const normal = applyInitPlan(plan)
+    expect(initExitCode(normal)).toBe(0)
+    expect(formatInitResult(normal).split(warning('v0.4.0')).length - 1).toBe(1)
+    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    expect(plan.leftAlone.map((item) => item.path)).toContain('.github/workflows/shotwright.yml')
+    const rerun = applyInitPlan(planInit(cwd, readTemplate))
+    expect(rerun.written).toEqual([])
+    expect(rerun.plan.notices).toEqual([warning('v0.4.0')])
+    expect(initExitCode(rerun)).toBe(0)
+  })
+
+  it.each([
+    ['equal', `jobs:\n  shotwright:\n${call(`v${version}`)}`, 0],
+    ['newer', `jobs:\n  shotwright:\n${call('v99.0.0')}`, 1],
+    [
+      'quoted',
+      `jobs:\n  shotwright:\n    uses: 'hestonhamilton/shotwright/.github/workflows/shotwright.yml@v0.4.0' # old\n`,
+      1,
+    ],
+    [
+      'fork',
+      `jobs:\n  shotwright:\n    uses: other/shotwright/.github/workflows/shotwright.yml@v0.4.0\n`,
+      0,
+    ],
+    ['branch', `jobs:\n  shotwright:\n${call('main')}`, 0],
+    ['sha', `jobs:\n  shotwright:\n${call('1234567890abcdef')}`, 0],
+    ['invalid semver', `jobs:\n  shotwright:\n${call('v0.4.0-beta.01')}`, 0],
+    [
+      'step only',
+      `jobs:\n  shotwright:\n    steps:\n      - uses: hestonhamilton/shotwright/.github/workflows/shotwright.yml@v0.4.0\n`,
+      0,
+    ],
+    ['expression', `jobs:\n  shotwright:\n${call('v0.4.0', '${{ inputs.path }}')}`, 0],
+    ['duplicate uses', `jobs:\n  shotwright:\n${call('v0.4.0')}${call('v0.3.0')}`, 0],
+    ['malformed', 'jobs:\n  shotwright: [unterminated\n', 0],
+  ])('%s yields %i warning(s)', (_name, source, count) => {
+    const { cwd } = setup(source)
+    expect(planInit(cwd, readTemplate).notices).toHaveLength(count)
+  })
+
+  it('evaluates clear siblings independently of an ambiguous job and preserves tag suffixes', () => {
+    const source = `jobs:\n  bad:\n${call('v0.4.0')}${call('v0.3.0')}  good:\n${call('v0.4.0-beta.1+build.2')}  equal:\n${call(`v${version}`)}`
+    const { cwd } = setup(source)
+    expect(planInit(cwd, readTemplate).notices).toEqual([
+      warning('v0.4.0-beta.1+build.2', 'good', 6),
+    ])
+  })
+
+  it.each([
+    ['current nested package', 'apps/web', 1],
+    ['normalized path', 'apps/./web', 1],
+    ['quoted path', '"apps/web"', 1],
+    ['sibling', 'apps/other', 0],
+    ['root default', undefined, 0],
+    ['traversal', '../../outside', 0],
+  ])('%s resolves only the current package', (_name, directory, count) => {
+    const { cwd } = setup(`jobs:\n  shotwright:\n${call('v0.4.0', directory)}`, true)
+    expect(planInit(cwd, readTemplate).notices).toHaveLength(count)
+  })
+
+  it('accepts default root targets and evaluates jobs in source order', () => {
+    const source = `jobs:\n  equal:\n    with:\n      working-directory: .\n${call(`v${version}`)}  older:\n    with:\n      working-directory: .\n${call('v0.4.0')}  newer:\n${call('v99.0.0')}`
+    const { cwd } = setup(source)
+    expect(planInit(cwd, readTemplate).notices).toEqual([
+      warning('v0.4.0', 'older', 9),
+      warning('v99.0.0', 'newer', 11),
+    ])
+    const reversed = `jobs:\n  newer:\n${call('v99.0.0')}  older:\n${call('v0.4.0')}`
+    fs.writeFileSync(path.join(cwd, '.github/workflows/shotwright.yml'), reversed)
+    expect(planInit(cwd, readTemplate).notices).toHaveLength(2)
+  })
+
+  it('resolves an internal symlink and ignores a symlink outside the Git root', () => {
+    const { root, cwd, file } = setup(`jobs:\n  shotwright:\n${call('v0.4.0', 'alias')}`, true)
+    fs.symlinkSync('apps/web', path.join(root, 'alias'))
+    expect(planInit(cwd, readTemplate).notices).toHaveLength(1)
+    fs.rmSync(path.join(root, 'alias'))
+    fs.symlinkSync(path.dirname(root), path.join(root, 'alias'))
+    expect(planInit(cwd, readTemplate).notices).toEqual([])
+    expect(fs.readFileSync(file, 'utf8')).toContain('working-directory: alias')
+  })
+
+  it('treats a thrown parser error as no verdict in normal and dry-run modes', () => {
+    const { cwd } = setup(`jobs:\n  shotwright:\n${call('v0.4.0')}`)
+    parserFailure.enabled = true
+    try {
+      const plan = planInit(cwd, readTemplate)
+      expect(plan.notices).toEqual([])
+      expect(initExitCode(dryRunInitPlan(plan))).toBe(0)
+      expect(formatInitResult(dryRunInitPlan(plan))).not.toContain('Warning:')
+      const result = applyInitPlan(plan)
+      expect(initExitCode(result)).toBe(0)
+      expect(formatInitResult(result)).not.toContain('Warning:')
+    } finally {
+      parserFailure.enabled = false
+    }
+  })
 })
 
 describe('planInit', () => {
