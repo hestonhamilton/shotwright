@@ -1,5 +1,17 @@
 # shotwright
 
+## 0.7.0
+
+### Minor Changes
+
+- 8312be9: Warn during `shotwright init` when a current-package caller job pins a different Shotwright release than the CLI running init, and show the manual pin change.
+- fb30e22: Let consumer configs read `SHOTWRIGHT_VIDEO` and `SHOTWRIGHT_TRACE` as shotwright flag-intent indicators, and set a shared recorded video frame size with `defineShotsConfig({ videoSize })`.
+
+### Patch Changes
+
+- 7f7bc06: Show the changed-pixel percentage beside compare cards and jump links, and let reviewers sort changed pairs by highest percentage while keeping state groups and comparison results unchanged.
+- 5609dd0: Embed one image for byte-equal A/B screenshot pairs in self-contained compare pages while preserving both download links and viewer modes.
+
 ## 0.6.0
 
 ### Minor Changes
