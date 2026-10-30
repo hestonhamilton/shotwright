@@ -70,6 +70,47 @@ it('labels each compare side with its logical viewport and scale without changin
   }
 })
 
+it('keeps tiny and near-complete changes truthful in cards and jump links', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-percent-'))
+  try {
+    for (const side of ['a', 'b']) {
+      const dir = path.join(root, side)
+      fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+      const image = new PNG({ width: 100, height: 100 })
+      for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255
+      if (side === 'b') image.data[0] = 255
+      fs.writeFileSync(path.join(dir, 'shots/one.png'), PNG.sync.write(image))
+      fs.writeFileSync(
+        path.join(dir, 'manifest.json'),
+        JSON.stringify(
+          makeManifest({ runId: side, shots: [makeShot({ name: 'one', file: 'shots/one.png' })] }),
+        ),
+      )
+    }
+    const a = path.join(root, 'a'),
+      b = path.join(root, 'b')
+    const model = buildCompareModel(loadGalleryModel(a), loadGalleryModel(b), {
+      aRunDir: a,
+      bRunDir: b,
+    })
+    expect(model.pairs[0]?.state).toBe('changed')
+    expect(model.pairs[0]?.verdict?.differentPixels).toBe(1)
+    const tiny = renderCompare(model)
+    expect(tiny.match(/&lt;0\.1% pixels changed/g)).toHaveLength(2)
+    expect(tiny).toContain('1 / 10000 different pixels · ratio 0.0001')
+    model.pairs[0]!.verdict!.ratio = 0.9999
+    const near = renderCompare(model)
+    expect(near.match(/&gt;99\.9% pixels changed/g)).toHaveLength(2)
+    expect(near).not.toContain('100.0% pixels changed')
+    model.pairs[0]!.verdict!.ratio = 1
+    expect(renderCompare(model).match(/100\.0% pixels changed/g)).toHaveLength(2)
+    model.pairs[0]!.verdict!.ratio = null
+    expect(renderCompare(model).match(/Pixel fraction unavailable/g)).toHaveLength(2)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 it('renders all seven verdict labels, gate summary, diff image, and run status', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-render-'))
   try {
@@ -167,7 +208,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     )
     expect(page).toContain('<p class="provenance-status">Render environment details incomplete</p>')
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"4e4020804a0496cef2265d64314231d5d0e082444527fe123324df3471ebd913"`,
+      `"2f48bf773adde8d7d96d6b87f933064a288b378350ccc9ced3081676486e4a47"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
@@ -228,9 +269,12 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     expect(hrefs.map((match) => match[2])).toEqual(
       model.pairs.map(
         (pair) =>
-          `${pair.spec} / ${pair.name} · ${pair.state === 'size-changed' ? 'Size changed' : pair.state[0]!.toUpperCase() + pair.state.slice(1)}`,
+          `${pair.spec} / ${pair.name} · ${pair.state === 'size-changed' ? 'Size changed' : pair.state[0]!.toUpperCase() + pair.state.slice(1)}${pair.state === 'changed' ? ` · ${pair.kind === 'artifact' ? 'Pixel fraction unavailable' : '100.0% pixels changed'}` : ''}`,
       ),
     )
+    expect(html).toContain('100.0% pixels changed</span>')
+    expect(html).toContain('Pixel fraction unavailable</span>')
+    expect(html).toContain('4 / 4 different pixels · ratio 1')
     expect(html.match(/<span\b class="badge">[^<]+: 0<\/span\b>/gi)).toBeNull()
     expect(html).toContain(
       '<a href="../a/shots/identical.png" download="identical.png">Download A</a>',
@@ -405,7 +449,7 @@ it('marks exactly the cards the gate counts, derived from the same predicate as 
     const gatedCount = (html: string): number =>
       Number(/(?:gated pairs|pairs that would count toward the gate) (\d+)/.exec(html)?.[1])
     const find = (html: string, name: string): string =>
-      cards(html).find((card) => card.includes(`/ ${name}</h2>`))!
+      cards(html).find((card) => card.includes(`/ ${name}<`))!
 
     const strictResult = generateCompareGallery(a, b, {
       strict: true,

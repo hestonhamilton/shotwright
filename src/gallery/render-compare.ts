@@ -16,11 +16,43 @@ const stateLabels: Record<ComparePair['state'], string> = {
   unreadable: 'Unreadable',
 }
 
+function changeLabel(pair: ComparePair): string {
+  if (pair.state !== 'changed') return ''
+  if (pair.kind === 'artifact' || pair.verdict?.ratio == null) return 'Pixel fraction unavailable'
+  const ratio = pair.verdict.ratio
+  const rounded = (ratio * 100).toFixed(1)
+  const percent =
+    ratio > 0 && rounded === '0.0'
+      ? '<0.1%'
+      : ratio < 1 && rounded === '100.0'
+        ? '>99.9%'
+        : `${rounded}%`
+  return `${percent} pixels changed`
+}
+
 const FILTER_SCRIPT = `(() => {
   const chips = [...document.querySelectorAll('[data-compare-filter]')];
   const cards = [...document.querySelectorAll('article.pair')];
-  const entries = [...document.querySelectorAll('[data-compare-jump]')];
+  const entries = new Map([...document.querySelectorAll('[data-compare-jump]')].map((entry) => [entry.querySelector('a').getAttribute('href').slice(1), entry]));
   const count = document.querySelector('#compare-result-count');
+  const sort = document.querySelector('#compare-sort');
+  const originalIndex = (card) => Number(card.id.slice('pair-'.length));
+  const reorder = () => {
+    const changed = cards.filter((card) => card.dataset.compareState === 'changed');
+    const ordered = [...changed].sort((a, b) => {
+      if (sort.value === 'current') return originalIndex(a) - originalIndex(b);
+      const aRatio = a.dataset.compareRatio === undefined ? -1 : Number(a.dataset.compareRatio);
+      const bRatio = b.dataset.compareRatio === undefined ? -1 : Number(b.dataset.compareRatio);
+      return bRatio - aRatio || originalIndex(a) - originalIndex(b);
+    });
+    const after = changed.at(-1)?.nextElementSibling;
+    const list = entries.get(changed[0]?.id)?.parentElement;
+    const afterEntry = entries.get(changed.at(-1)?.id)?.nextElementSibling;
+    ordered.forEach((card) => {
+      card.parentElement.insertBefore(card, after);
+      list.insertBefore(entries.get(card.id), afterEntry);
+    });
+  };
   const apply = (filter) => {
     if (location.hash.startsWith('#pair-')) {
       const target = document.getElementById(location.hash.slice(1));
@@ -29,16 +61,21 @@ const FILTER_SCRIPT = `(() => {
       }
     }
     let visible = 0;
-    cards.forEach((card, index) => {
+    cards.forEach((card) => {
       const show = filter === 'all' || (filter === 'gated' ? card.dataset.compareGated === 'true' : card.dataset.compareState === filter);
       card.hidden = !show;
-      entries[index].hidden = !show;
+      entries.get(card.id).hidden = !show;
       if (show) visible++;
     });
     chips.forEach((chip) => chip.setAttribute('aria-pressed', String(chip.dataset.compareFilter === filter)));
     count.textContent = visible + ' of ' + cards.length + ' pairs shown';
   };
   chips.forEach((chip) => { chip.addEventListener('click', () => apply(chip.dataset.compareFilter)); chip.disabled = false; });
+  sort.addEventListener('change', () => {
+    reorder();
+    apply(chips.find((chip) => chip.getAttribute('aria-pressed') === 'true').dataset.compareFilter);
+  });
+  sort.disabled = false;
   window.addEventListener('hashchange', () => {
     if (!/^#pair-\\d+$/.test(location.hash)) return;
     const target = document.getElementById(location.hash.slice(1));
@@ -127,8 +164,13 @@ function renderPair(
     b?.image?.dataUri.startsWith('data:')
       ? `<button class="action" type="button" disabled data-viewer-pair-a="pair-${index}-a" data-viewer-pair-b="pair-${index}-b" data-pair-name="${escapeHtml(pair.name)}">Inspect A/B together</button>`
       : ''
-  return `<article class="pair state-${pair.state}${pair.ignored ? ' ignored' : ''}${gated ? ' gated' : ''}" id="pair-${index}" data-compare-state="${pair.state}" data-compare-gated="${gated}">
-    <header><h2>${escapeHtml(pair.spec)} / ${escapeHtml(pair.name)}</h2><span class="badge">${pair.kind} · ${pair.state}${pair.ignored ? ' · ignored for gate' : ''}${gated ? (failOnChange ? ' · counted by gate' : ' · would count toward gate') : ''}</span></header>
+  const label = changeLabel(pair)
+  const ratio =
+    pair.kind === 'shot' && pair.state === 'changed' && pair.verdict?.ratio != null
+      ? ` data-compare-ratio="${pair.verdict.ratio}"`
+      : ''
+  return `<article class="pair state-${pair.state}${pair.ignored ? ' ignored' : ''}${gated ? ' gated' : ''}" id="pair-${index}" data-compare-state="${pair.state}" data-compare-gated="${gated}"${ratio}>
+    <header><h2>${escapeHtml(pair.spec)} / ${escapeHtml(pair.name)}${label ? `<span class="change-label"> · ${escapeHtml(label)}</span>` : ''}</h2><span class="badge">${pair.kind} · ${pair.state}${pair.ignored ? ' · ignored for gate' : ''}${gated ? (failOnChange ? ' · counted by gate' : ' · would count toward gate') : ''}</span></header>
     ${pair.kind === 'shot' ? `<p>A test: ${escapeHtml(status(a, model, 'a'))} · B test: ${escapeHtml(status(b, model, 'b'))}</p>${inspect}<div class="images">${shotMedia(a, 'A', runBase(links, model, 'a'), index)}${shotMedia(b, 'B', runBase(links, model, 'b'), index)}${diff}</div>${pairWarning()}${numbers}` : artifact}
     ${pair.error ? `<p class="error">${escapeHtml(pair.error)}</p>` : ''}
   </article>`
@@ -200,17 +242,17 @@ export function renderCompareHeader(
   const jumps = model.pairs
     .map(
       (pair, index) =>
-        `<li data-compare-jump><a href="#pair-${index}">${escapeHtml(pair.spec)} / ${escapeHtml(pair.name)} · ${stateLabels[pair.state]}</a></li>`,
+        `<li data-compare-jump><a href="#pair-${index}">${escapeHtml(pair.spec)} / ${escapeHtml(pair.name)} · ${stateLabels[pair.state]}${changeLabel(pair) ? ` · ${escapeHtml(changeLabel(pair))}` : ''}</a></li>`,
     )
     .join('')
   const other = measured - model.counts.changed
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>Shotwright compare — ${escapeHtml(model.a.manifest.runId)} vs ${escapeHtml(model.b.manifest.runId)}</title><style>
   :root{color-scheme:light dark;font:16px/1.5 system-ui,sans-serif;--bg:#eef2f6;--text:#17233b;--header-bg:#17233b;--header-text:white;--badge-bg:#dbe6f6;--badge-text:#163968;--panel:white;--line:#c6d2df;--state-default:#4b729e;--state-bad:#b32c37;--state-added:#b47b11;--state-gated:#7a3fa0;--gated-badge-bg:#ecdcf6;--gated-badge-text:#4a1f6b;--panel-2:#f4f6f8;--diff-bg:#152032;--diff-text:#f4f7fc;--error:#a31928;--muted:#4a5872;--accent:#195ca5}
   @media (prefers-color-scheme: dark){:root{--bg:#11151b;--text:#edf1f7;--header-bg:#1a2029;--header-text:#edf1f7;--badge-bg:#25345f;--badge-text:#edf1f7;--panel:#1a2029;--line:#3b4655;--state-default:#91adff;--state-bad:#ff9aa8;--state-added:#ffd081;--state-gated:#c99bff;--gated-badge-bg:#3a2a51;--gated-badge-text:#e6c9ff;--panel-2:#222a35;--diff-bg:#11151b;--diff-text:#edf1f7;--error:#ff9aa8;--muted:#aab4c2;--accent:#91adff}}
-  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}main{max-width:1440px;margin:auto;padding:24px}header.top{padding:25px;background:var(--header-bg);color:var(--header-text);border-radius:16px}h1{margin:.2em 0}.badge{display:inline-block;padding:5px 11px;border-radius:20px;background:var(--badge-bg);color:var(--badge-text);font-size:.9em}.pair{padding:18px;margin:16px 0;background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--state-default);border-radius:12px;overflow-wrap:anywhere}.pair[hidden],[data-compare-jump][hidden]{display:none}.pair.state-changed,.pair.state-size-changed,.pair.state-unreadable{border-left-color:var(--state-bad)}.pair.state-added,.pair.state-removed{border-left-color:var(--state-added)}.pair.state-similar.gated{border-left-color:var(--state-gated)}.pair.state-similar.gated .badge{background:var(--gated-badge-bg);color:var(--gated-badge-text)}.pair header{display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap;align-items:center}.pair h2{font-size:1.15em;margin:0}.images{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:12px}.images figure{margin:0;padding:10px;background:var(--panel-2);min-width:0}.images img{display:block;max-width:100%;max-height:420px;object-fit:contain;margin:auto}.images figcaption{font-weight:700;margin-bottom:8px}.missing{padding:40px;text-align:center;background:var(--panel-2)}.diff-text{max-height:420px;overflow:auto;padding:12px;background:var(--diff-bg);color:var(--diff-text);white-space:pre-wrap;overflow-wrap:anywhere}.error{color:var(--error)}.artifact-warning,.diff-note{font-size:.9em;color:var(--muted)}a{color:var(--accent)}footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted)}footer .source{margin:0;font-size:.9em;overflow-wrap:anywhere;color:var(--muted)}.compare-summary{font-size:1.1em;font-weight:650;margin:10px 0}.compare-detail,.compare-jumps{margin:12px 0}.compare-detail summary,.compare-jumps summary{cursor:pointer;min-height:44px;padding:8px 0}.compare-controls{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.compare-chip{min-height:44px;padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);font:inherit;cursor:pointer}.compare-chip[aria-pressed="true"]{border-color:var(--accent);background:var(--badge-bg);color:var(--badge-text)}.compare-chip:disabled{opacity:.65;cursor:default}.compare-jumps ul{margin:0;padding-left:24px}.compare-jumps li{padding:5px 0;overflow-wrap:anywhere}a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}@media(max-width:600px){main{padding:10px}.pair{padding:12px}header.top{padding:17px}}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}main{max-width:1440px;margin:auto;padding:24px}header.top{padding:25px;background:var(--header-bg);color:var(--header-text);border-radius:16px}h1{margin:.2em 0}.badge{display:inline-block;padding:5px 11px;border-radius:20px;background:var(--badge-bg);color:var(--badge-text);font-size:.9em}.pair{padding:18px;margin:16px 0;background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--state-default);border-radius:12px;overflow-wrap:anywhere}.pair[hidden],[data-compare-jump][hidden]{display:none}.pair.state-changed,.pair.state-size-changed,.pair.state-unreadable{border-left-color:var(--state-bad)}.pair.state-added,.pair.state-removed{border-left-color:var(--state-added)}.pair.state-similar.gated{border-left-color:var(--state-gated)}.pair.state-similar.gated .badge{background:var(--gated-badge-bg);color:var(--gated-badge-text)}.pair header{display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap;align-items:center}.pair h2{font-size:1.15em;margin:0}.change-label{color:var(--state-bad);font-size:.9em}.images{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:12px}.images figure{margin:0;padding:10px;background:var(--panel-2);min-width:0}.images img{display:block;max-width:100%;max-height:420px;object-fit:contain;margin:auto}.images figcaption{font-weight:700;margin-bottom:8px}.missing{padding:40px;text-align:center;background:var(--panel-2)}.diff-text{max-height:420px;overflow:auto;padding:12px;background:var(--diff-bg);color:var(--diff-text);white-space:pre-wrap;overflow-wrap:anywhere}.error{color:var(--error)}.artifact-warning,.diff-note{font-size:.9em;color:var(--muted)}a{color:var(--accent)}footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted)}footer .source{margin:0;font-size:.9em;overflow-wrap:anywhere;color:var(--muted)}.compare-summary{font-size:1.1em;font-weight:650;margin:10px 0}.compare-detail,.compare-jumps{margin:12px 0}.compare-detail summary,.compare-jumps summary{cursor:pointer;min-height:44px;padding:8px 0}.compare-controls{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.compare-chip{min-height:44px;padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);font:inherit;cursor:pointer}.compare-chip[aria-pressed="true"]{border-color:var(--accent);background:var(--badge-bg);color:var(--badge-text)}.compare-chip:disabled{opacity:.65;cursor:default}.compare-sort{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0}.compare-sort select{min-height:44px;max-width:100%;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit}.compare-sort select:focus-visible{outline:3px solid var(--accent);outline-offset:3px}.compare-jumps ul{margin:0;padding-left:24px}.compare-jumps li{padding:5px 0;overflow-wrap:anywhere}a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}@media(max-width:600px){main{padding:10px}.pair{padding:12px}header.top{padding:17px}}
   ${VIEWER_CSS}
   .compare-viewer-open{display:block;width:100%;min-height:44px;padding:0;border:0;background:transparent;border-radius:8px}.compare-viewer-open:focus-visible{outline:3px solid var(--accent);outline-offset:3px}.pair>[data-viewer-pair-a],.viewer-dialog .action{min-height:44px;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--accent);font:inherit;font-weight:650;cursor:pointer}.pair>[data-viewer-pair-a]:disabled{cursor:default;opacity:.65}.viewer-dialog .inspection-image{max-width:none;max-height:none}
-  </style></head><body><main><header class="top"><p>Shotwright · compare gallery</p><h1>${escapeHtml(model.a.manifest.runId)} vs ${escapeHtml(model.b.manifest.runId)}</h1><p>A run: ${escapeHtml(model.a.manifest.status)} · B run: ${escapeHtml(model.b.manifest.status)}</p><p class="compare-summary">${gated} ${gated === 1 ? 'pair' : 'pairs'} ${failOnChange ? 'counted by gate' : 'would count toward the gate'}${model.counts.changed > 0 ? ` · Changed ${model.counts.changed}` : ''}${other > 0 ? ` · Other non-parity ${other}` : ''}</p>${strict ? `<p>Strict mode: similar pairs ${failOnChange ? 'count toward the gate' : 'would count toward the gate'} unless ignored.</p>` : ''}<p class="provenance-status">${provenanceStatus}</p><details class="compare-detail"><summary>Run and comparison details</summary><p class="provenance">${escapeHtml(banner)}</p><p>Pairing key: spec + name · threshold ${model.options.threshold} · includeAA ${model.options.includeAA} · strict ${strict ? 'on' : 'off'}</p><p>Gate: measured non-parity ${measured} · ignored non-parity ${ignored} · ${failOnChange ? 'gated pairs' : 'pairs that would count toward the gate'} ${gated} · fail-on-change ${failOnChange ? 'on' : 'off'}</p></details></header><nav aria-label="Compare filters" class="compare-controls">${chips}</nav><p id="compare-result-count" role="status">${model.pairs.length} of ${model.pairs.length} pairs shown</p>${model.pairs.length ? `<details class="compare-jumps"><summary>Jump to pair</summary><ul>${jumps}</ul></details>` : '<section class="pair"><h2>No pairs to compare</h2><p>These runs contain no matching screenshots or artifacts to compare.</p></section>'}`
+  </style></head><body><main><header class="top"><p>Shotwright · compare gallery</p><h1>${escapeHtml(model.a.manifest.runId)} vs ${escapeHtml(model.b.manifest.runId)}</h1><p>A run: ${escapeHtml(model.a.manifest.status)} · B run: ${escapeHtml(model.b.manifest.status)}</p><p class="compare-summary">${gated} ${gated === 1 ? 'pair' : 'pairs'} ${failOnChange ? 'counted by gate' : 'would count toward the gate'}${model.counts.changed > 0 ? ` · Changed ${model.counts.changed}` : ''}${other > 0 ? ` · Other non-parity ${other}` : ''}</p>${strict ? `<p>Strict mode: similar pairs ${failOnChange ? 'count toward the gate' : 'would count toward the gate'} unless ignored.</p>` : ''}<p class="provenance-status">${provenanceStatus}</p><details class="compare-detail"><summary>Run and comparison details</summary><p class="provenance">${escapeHtml(banner)}</p><p>Pairing key: spec + name · threshold ${model.options.threshold} · includeAA ${model.options.includeAA} · strict ${strict ? 'on' : 'off'}</p><p>Gate: measured non-parity ${measured} · ignored non-parity ${ignored} · ${failOnChange ? 'gated pairs' : 'pairs that would count toward the gate'} ${gated} · fail-on-change ${failOnChange ? 'on' : 'off'}</p></details></header><nav aria-label="Compare filters" class="compare-controls">${chips}</nav><div class="compare-sort"><label for="compare-sort">Sort changed pairs</label><select id="compare-sort" disabled><option value="current" selected>Current order</option><option value="highest">Highest percentage changed first</option></select></div><p id="compare-result-count" role="status">${model.pairs.length} of ${model.pairs.length} pairs shown</p>${model.pairs.length ? `<details class="compare-jumps"><summary>Jump to pair</summary><ul>${jumps}</ul></details>` : '<section class="pair"><h2>No pairs to compare</h2><p>These runs contain no matching screenshots or artifacts to compare.</p></section>'}`
 }
 
 /** Stream pair sections without retaining their inlined image bytes. */

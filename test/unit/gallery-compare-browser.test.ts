@@ -552,3 +552,123 @@ it('filters final compare pairs and keeps native jump links usable', async () =>
     fs.rmSync(root, { recursive: true, force: true })
   }
 }, 30_000)
+
+it('sorts changed pairs by exact fraction while preserving jump identities and filters', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-sort-'))
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const names = ['low', 'tie-a', 'high', 'tie-b', 'same']
+    const changedPixels: Record<string, number> = {
+      low: 1,
+      'tie-a': 4,
+      high: 9,
+      'tie-b': 4,
+      same: 0,
+    }
+    for (const side of ['a', 'b']) {
+      const dir = path.join(root, side)
+      fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+      fs.mkdirSync(path.join(dir, 'data'))
+      const shots = names.map((name) => {
+        const image = new PNG({ width: 10, height: 10 })
+        for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255
+        if (side === 'b') for (let i = 0; i < changedPixels[name]!; i++) image.data[i * 4] = 255
+        fs.writeFileSync(path.join(dir, 'shots', `${name}.png`), PNG.sync.write(image))
+        return makeShot({ name, file: `shots/${name}.png` })
+      })
+      fs.writeFileSync(path.join(dir, 'data/note.txt'), side)
+      fs.writeFileSync(
+        path.join(dir, 'manifest.json'),
+        JSON.stringify(
+          makeManifest({
+            runId: side,
+            shots,
+            artifacts: [
+              {
+                spec: 'example.shots.ts',
+                name: 'note',
+                file: 'data/note.txt',
+                contentType: 'text/plain',
+                bytes: 1,
+                testId: 'test-note',
+              },
+            ],
+          }),
+        ),
+      )
+    }
+    const file = generateCompareGallery(path.join(root, 'a'), path.join(root, 'b'), {
+      failOnChange: true,
+    }).outputFile
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    const errors: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    await page.goto(pathToFileURL(file).href)
+    const order = async (selector: string): Promise<string[]> =>
+      page
+        .locator(selector)
+        .evaluateAll(
+          (elements, kind) =>
+            elements.map((element) =>
+              kind === 'article.pair'
+                ? element.id
+                : element.querySelector('a')!.getAttribute('href')!.slice(1),
+            ),
+          selector,
+        )
+    const original = await order('article.pair')
+    expect(original).toHaveLength(6)
+    expect(await order('[data-compare-jump]')).toEqual(original)
+    const sort = page.locator('#compare-sort')
+    expect(await sort.isEnabled()).toBe(true)
+    await sort.focus()
+    await page.keyboard.press('End')
+    expect(await sort.inputValue()).toBe('highest')
+    const sorted = await order('article.pair')
+    expect(sorted).toEqual([
+      original[2],
+      original[1],
+      original[3],
+      original[0],
+      original[4],
+      original[5],
+    ])
+    expect(await order('[data-compare-jump]')).toEqual(sorted)
+    await page.locator('.compare-jumps summary').click()
+    await page.locator('[data-compare-filter="changed"]').click()
+    expect(await page.locator('article.pair:visible').count()).toBe(5)
+    expect(await page.locator('[data-compare-jump]:visible').count()).toBe(5)
+    expect(await page.locator('#compare-result-count').textContent()).toBe('5 of 6 pairs shown')
+    await page.locator('[data-compare-filter="gated"]').click()
+    expect(await page.locator('article.pair:visible').count()).toBe(5)
+    await sort.selectOption('current')
+    expect(await order('article.pair')).toEqual(original)
+    await page.locator('[data-compare-filter="changed"]').click()
+    await sort.selectOption('highest')
+    expect(await order('[data-compare-jump]')).toEqual(await order('article.pair'))
+    expect(await page.locator('[data-compare-jump]:visible').count()).toBe(5)
+    const hidden = original[5]!
+    await page.evaluate((id) => {
+      ;(globalThis as unknown as { location: { hash: string } }).location.hash = id
+    }, hidden)
+    await page.locator(`#${hidden}`).waitFor({ state: 'visible' })
+    expect(await page.locator('[data-compare-filter="all"]').getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+    expect(new URL(page.url()).hash).toBe(`#${hidden}`)
+    await page.reload()
+    expect(await sort.inputValue()).toBe('current')
+    expect(await order('article.pair')).toEqual(original)
+    expect(errors).toEqual([])
+    await context.close()
+    const plain = await browser.newPage({ javaScriptEnabled: false })
+    await plain.goto(pathToFileURL(file).href)
+    expect(await plain.locator('#compare-sort').isDisabled()).toBe(true)
+    expect(await plain.locator('article.pair:visible').count()).toBe(6)
+    expect(await plain.locator('[data-compare-jump] a').count()).toBe(6)
+  } finally {
+    await browser.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+}, 30_000)
