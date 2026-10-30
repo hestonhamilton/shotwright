@@ -30,7 +30,9 @@ Two principles that shape most decisions:
    in the package (or its `templates/`), not in the consumer.
 
 **This repository is public-facing** — no host paths, LAN IPs, usernames,
-or personal data in committed files.
+personal data, or names of the owner's private repositories in committed
+files, commit messages, PR text or Release notes. Refer to a private repo as
+"a consumer project".
 
 ## Project config
 

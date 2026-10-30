@@ -43,8 +43,8 @@ Each step is an implementation or verification chunk. Run commands from the shot
    | shotwright-2sr.5 | shotwright | 1.3.2 | unset | unset | off |
    | redteam-leak-gate clone | shotwright | 1.3.2 | unset | unset | off |
    | redteam-release-path clone | shotwright | 1.3.2 | unset | unset | off |
-   | trove | trove | 1.3.2 | unset | unset | off |
-   | trove-bid | trove | 1.3.2 | unset | unset | off |
+   | private consumer A | consumer A | 1.3.2 | unset | unset | off |
+   | private consumer A (second checkout) | consumer A | 1.3.2 | unset | unset | off |
 
    After removal, run **one** read-only `bd --global sql 'SELECT DATABASE() AS db'` from each listed workspace in its normal environment, with no `BD_BACKUP_ENABLED=0` override. Record the operator, timestamp, workspace name, command completion, and result for each. Then run one global registration query from shotwright:
 
