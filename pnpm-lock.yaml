@@ -19,6 +19,9 @@ importers:
       pngjs:
         specifier: ^7.0.0
         version: 7.0.0
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
     devDependencies:
       '@arethetypeswrong/cli':
         specifier: ^0.18.5

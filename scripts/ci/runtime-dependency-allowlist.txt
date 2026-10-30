@@ -11,3 +11,4 @@
 # Removing every entry returns the gate to zero runtime dependencies.
 pixelmatch@8.0.0
 pngjs@7.0.0
+yaml@2.9.1

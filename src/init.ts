@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import fs from 'node:fs'
 import path from 'node:path'
+import * as YAML from 'yaml'
+import { isMap, isScalar, type YAMLMap } from 'yaml'
+
+import { shotwrightVersion } from './version.js'
 
 export interface InitArgs {
   dryRun: boolean
@@ -321,6 +325,7 @@ export function planInit(
     )
   }
   assertContained(root, cwd)
+  plan.notices.push(...workflowPinNotices(root, workingDirectory))
   planManagedFile(plan, 'shots.config.ts', config)
   planManagedFile(plan, 'shots/example.shots.ts', example)
   planManagedFile(plan, '.github/workflows/shotwright.yml', ciWorkflow, root)
@@ -328,6 +333,91 @@ export function planInit(
   planGitignore(plan, gitignoreSnippet)
   if (!plan.skillDeferred) planSkill(plan, skill)
   return plan
+}
+
+const callerRef =
+  /^hestonhamilton\/shotwright\/\.github\/workflows\/shotwright\.yml@(v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/
+
+function uniqueScalar(map: YAMLMap, key: string): { value: string; offset: number } | null {
+  const pairs = map.items.filter((item) => isScalar(item.key) && item.key.value === key)
+  if (pairs.length !== 1 || !isScalar(pairs[0]!.value)) return null
+  const scalar = pairs[0]!.value
+  if (typeof scalar.value !== 'string') return null
+  return { value: scalar.value, offset: scalar.range?.[0] ?? 0 }
+}
+
+function uniqueMap(map: YAMLMap, key: string): YAMLMap | null {
+  const pairs = map.items.filter((item) => isScalar(item.key) && item.key.value === key)
+  return pairs.length === 1 && isMap(pairs[0]!.value) ? pairs[0]!.value : null
+}
+
+function currentPackageTarget(root: string, target: string, packageDirectory: string): boolean {
+  if (path.isAbsolute(target) || target.includes('\\') || target.includes('${{')) return false
+  const absolute = path.resolve(root, target)
+  const relative = path.relative(root, absolute)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+    return false
+  try {
+    return fs.realpathSync(absolute) === fs.realpathSync(path.resolve(root, packageDirectory))
+  } catch {
+    return false
+  }
+}
+
+function workflowPinNotices(root: string, packageDirectory: string): string[] {
+  try {
+    const file = path.join(root, '.github/workflows/shotwright.yml')
+    const source = readOptional(file)
+    if (source === null) return []
+    const document = YAML.parseDocument(source, { uniqueKeys: true })
+    // Duplicate mapping keys are checked below at the relevant structural level.
+    if (document.errors.some((error) => error.code !== 'DUPLICATE_KEY')) return []
+    if (!isMap(document.contents)) return []
+    const jobs = uniqueMap(document.contents, 'jobs')
+    if (!jobs) return []
+    const seen = new Set<string>()
+    const version = shotwrightVersion()
+    const notices: string[] = []
+    for (const entry of jobs.items) {
+      if (!isScalar(entry.key) || typeof entry.key.value !== 'string') continue
+      const jobId = entry.key.value
+      if (seen.has(jobId)) continue
+      seen.add(jobId)
+      if (jobs.items.filter((item) => isScalar(item.key) && item.key.value === jobId).length !== 1)
+        continue
+      if (!isMap(entry.value)) continue
+      const uses = uniqueScalar(entry.value, 'uses')
+      if (!uses) continue
+      const match = callerRef.exec(uses.value)
+      if (!match) continue
+      const prerelease = /-([^+]+)/.exec(match[1]!)?.[1]
+      if (prerelease?.split('.').some((part) => /^0\d+$/.test(part))) continue
+      const withPairs = entry.value.items.filter(
+        (item) => isScalar(item.key) && item.key.value === 'with',
+      )
+      if (withPairs.length > 1 || (withPairs.length === 1 && !isMap(withPairs[0]!.value))) continue
+      const withMap = withPairs.length === 1 ? (withPairs[0]!.value as YAMLMap) : null
+      const directoryPairs = withMap?.items.filter(
+        (item) => isScalar(item.key) && item.key.value === 'working-directory',
+      )
+      if (directoryPairs && directoryPairs.length > 1) continue
+      const directory = directoryPairs?.length
+        ? uniqueScalar(withMap!, 'working-directory')?.value
+        : '.'
+      if (directory === undefined || !currentPackageTarget(root, directory, packageDirectory))
+        continue
+      const tag = match[1]!
+      if (tag === `v${version}`) continue
+      const line = source.slice(0, uses.offset).split('\n').length
+      notices.push(
+        `Warning: .github/workflows/shotwright.yml:${line} job ${jobId} uses @${tag}, while the shotwright CLI running init is ${version}. For this package, review the workflow release changes, then change that job's uses pin to @v${version}.`,
+      )
+    }
+    return notices
+  } catch {
+    // A diagnostic cannot turn an otherwise successful init into a failure.
+    return []
+  }
 }
 
 export function applyInitPlan(plan: InitPlan): InitResult {
