@@ -10,6 +10,99 @@ import { generateCompareGallery } from '../../src/gallery/generate-compare.js'
 import { renderCompare, renderCompareHeader } from '../../src/gallery/render-compare.js'
 import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
+function withTextChunk(source: Buffer): Buffer {
+  const payload = Buffer.from('tEXtcomment\0same pixels')
+  let crc = 0xffffffff
+  for (const byte of payload) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+  }
+  const chunk = Buffer.alloc(payload.length + 8)
+  chunk.writeUInt32BE(payload.length - 4, 0)
+  payload.copy(chunk, 4)
+  chunk.writeUInt32BE((crc ^ 0xffffffff) >>> 0, chunk.length - 4)
+  return Buffer.concat([source.subarray(0, -12), chunk, source.subarray(-12)])
+}
+
+it('shares only byte-equal A/B PNGs while preserving decoded-pixel verdicts and full diffs', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-shared-compare-'))
+  try {
+    const png = (color: number, width = 8): Buffer => {
+      const image = new PNG({ width, height: 8 })
+      image.data.fill(255)
+      for (let index = 0; index < image.data.length; index += 4) image.data[index] = color
+      return PNG.sync.write(image)
+    }
+    const same = png(30)
+    const changed = png(255)
+    const shots = {
+      a: [same, same, same, same],
+      b: [same, withTextChunk(same), changed, png(30, 9)],
+    }
+    const names = ['byte-equal', 'pixel-equal', 'changed', 'size-changed']
+    for (const side of ['a', 'b'] as const) {
+      const dir = path.join(root, side)
+      fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+      for (const [index, name] of names.entries())
+        fs.writeFileSync(path.join(dir, 'shots', `${name}.png`), shots[side][index]!)
+      fs.writeFileSync(
+        path.join(dir, 'manifest.json'),
+        JSON.stringify(
+          makeManifest({
+            runId: side,
+            shots: names.map((name) => makeShot({ name, file: `shots/${name}.png` })),
+          }),
+        ),
+      )
+    }
+    const a = path.join(root, 'a')
+    const b = path.join(root, 'b')
+    const model = buildCompareModel(loadGalleryModel(a), loadGalleryModel(b), {
+      aRunDir: a,
+      bRunDir: b,
+    })
+    expect(Object.fromEntries(model.pairs.map((pair) => [pair.name, pair.state]))).toEqual({
+      changed: 'changed',
+      'size-changed': 'size-changed',
+      'byte-equal': 'identical',
+      'pixel-equal': 'identical',
+    })
+    const file = generateCompareGallery(a, b).outputFile
+    const html = fs.readFileSync(file, 'utf8')
+    const cards = [...html.matchAll(/<article class="pair [\s\S]*?<\/article>/g)]
+    const byName = (name: string): string =>
+      cards.find((card) =>
+        new RegExp(` / ${name}(</h2>|<span class="change-label">)`).test(card[0]),
+      )![0]
+    const sources = (card: string): string[] =>
+      [...card.matchAll(/<img\b[^>]*src="(data:image\/png;base64,[^"]+)"/g)].map(
+        (match) => match[1]!,
+      )
+    expect(sources(byName('byte-equal'))).toHaveLength(1)
+    expect(byName('byte-equal')).toContain('A and B identical (same file)')
+    expect(byName('byte-equal')).toContain(
+      'data-viewer-pair-a="pair-2-a" data-viewer-pair-b="pair-2-a"',
+    )
+    expect(sources(byName('pixel-equal'))).toHaveLength(2)
+    expect(sources(byName('pixel-equal'))[0]).not.toBe(sources(byName('pixel-equal'))[1])
+    expect(sources(byName('changed'))).toHaveLength(3)
+    expect(sources(byName('size-changed'))).toHaveLength(2)
+    expect(byName('byte-equal')).toContain('Download A</a> · <a')
+    expect(byName('byte-equal')).toContain('Download B</a>')
+    expect(html).toContain("default-src 'none'; img-src data:; style-src 'unsafe-inline'")
+    expect(html).not.toContain('<svg')
+    const report = JSON.parse(
+      fs.readFileSync(file.replace(/\.html$/, '.compare.json'), 'utf8'),
+    ) as { counts: Record<string, number>; pairs: { name: string; state: string }[] }
+    expect(report.counts.identical).toBe(2)
+    expect(report.pairs.map(({ name, state }) => [name, state])).toEqual(
+      model.pairs.map(({ name, state }) => [name, state]),
+    )
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 it('labels each compare side with its logical viewport and scale without changing verdicts', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-scale-compare-'))
   try {
@@ -55,14 +148,15 @@ it('labels each compare side with its logical viewport and scale without changin
     expect(model.pairs).toHaveLength(2)
     expect(model.pairs.map((pair) => pair.state)).toEqual(['identical', 'identical'])
     const html = renderCompare(model)
-    expect(html).toContain('A · 2×2 pixels · Logical viewport 320×240 · Device scale factor 1')
-    expect(html).toContain('B · 2×2 pixels · Logical viewport 320×240 · Device scale factor 2')
     expect(html).toContain(
-      'A · 2×2 pixels · Logical viewport unavailable · Device scale factor unavailable',
+      'A and B identical (same file) · 2×2 pixels · A: Logical viewport 320×240 · Device scale factor 1 · B: Logical viewport 320×240 · Device scale factor 2',
     )
     expect(html).toContain(
-      'B · 2×2 pixels · Logical viewport unavailable · Device scale factor unavailable',
+      'A: Logical viewport unavailable · Device scale factor unavailable · B: Logical viewport unavailable · Device scale factor unavailable',
     )
+    expect(html.match(/<img id="pair-\d+-a"/g)).toHaveLength(2)
+    expect(html).not.toContain('<img id="pair-0-b"')
+    expect(html).toContain('data-viewer-pair-a="pair-0-a" data-viewer-pair-b="pair-0-a"')
     expect(html).toContain('2 of 2 pairs')
     expect(html).not.toContain('<article class="pair state-changed"')
   } finally {
@@ -208,7 +302,7 @@ it('renders all seven verdict labels, gate summary, diff image, and run status',
     )
     expect(page).toContain('<p class="provenance-status">Render environment details incomplete</p>')
     expect(sha256(page)).toMatchInlineSnapshot(
-      `"2f48bf773adde8d7d96d6b87f933064a288b378350ccc9ced3081676486e4a47"`,
+      `"1cb612ba3850558e91e6c32be1d1cfa5d1e32110912e8176750ad1d0414abfe2"`,
     )
     expect(sha256(JSON.stringify(summary, null, 2) + '\n')).toMatchInlineSnapshot(
       `"25921cb2341aa0cab3aef4ce30ad07ac37f01a467bbc20b4d45110ed6f0edcb8"`,
