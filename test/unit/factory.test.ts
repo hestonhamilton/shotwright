@@ -179,6 +179,54 @@ describe('defineShotsConfig', () => {
     expect(config.use?.trace).toBe('on')
   })
 
+  it.each([
+    ['off without size', '0', undefined, 'off'],
+    ['off with size', '0', { width: 960, height: 640 }, 'off'],
+    ['on without size', '1', undefined, 'on'],
+    [
+      'on with size',
+      '1',
+      { width: 960, height: 640 },
+      { mode: 'on', size: { width: 960, height: 640 } },
+    ],
+  ] as const)(
+    'applies video size to global, default, and explicit projects: %s',
+    (_, flag, size, expected) => {
+      vi.stubEnv('SHOTWRIGHT_VIDEO', flag)
+      vi.stubEnv('SHOTWRIGHT_TRACE', '1')
+      const options: ShotsConfigOptions = { videoSize: size }
+      const defaultConfig = defineShotsConfig(options)
+      const explicitConfig = defineShotsConfig({
+        ...options,
+        projects: [
+          { name: 'desktop', use: { deviceScaleFactor: 2, video: 'off' } },
+          { name: 'mobile', use: { deviceScaleFactor: 3, video: 'off' } },
+        ],
+      })
+      for (const config of [defaultConfig, explicitConfig]) {
+        expect(config).not.toHaveProperty('videoSize')
+        expect(config.use).toMatchObject({ video: expected, trace: 'on', screenshot: 'off' })
+        for (const project of config.projects ?? []) {
+          expect(project.use).toMatchObject({ video: expected, trace: 'on', screenshot: 'off' })
+        }
+      }
+      expect(defaultConfig.projects?.[0]?.use?.deviceScaleFactor).toBe(2)
+      expect(explicitConfig.projects?.map((project) => project.use?.deviceScaleFactor)).toEqual([
+        2, 3,
+      ])
+    },
+  )
+
+  it('types videoSize as a width and height pair', () => {
+    const accepted: ShotsConfigOptions = { videoSize: { width: 960, height: 640 } }
+    const rejected: ShotsConfigOptions = {
+      // @ts-expect-error videoSize requires height
+      videoSize: { width: 960 },
+    }
+    expect(accepted.videoSize).toEqual({ width: 960, height: 640 })
+    void rejected
+  })
+
   it('creates the run dir only under SHOTWRIGHT_RUN=1 and exports it via env', () => {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-factory-'))
     try {
