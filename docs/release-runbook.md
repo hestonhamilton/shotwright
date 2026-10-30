@@ -408,6 +408,10 @@ irreversible one. Check before you click:
       with them, this line is stale. A jump to 200 files is a caught mistake.
 - [ ] `dist-tag` is right. `next` for anything with a prerelease suffix. The
       workflow also enforces the pairing, so a mismatch fails before packing.
+- [ ] `CHANGELOG.md` at the commit being published has a `## <version>` section
+      with release notes. Check the commit, not just the current working tree;
+      this matters especially for a `next` prerelease. The post-publish check
+      below still verifies the exact notes from the tagged commit.
 - [ ] The version number is one you are willing to burn permanently.
 
 ### 2.4b Tag the release and protect the tag
@@ -435,6 +439,177 @@ git push origin v0.1.0
       (`shotwright-746.18.39`). The first Version PR after 0.1.0 was opened
       before that existed and left the pin at `v0.1.0`. To fix a pin by hand,
       run `node scripts/sync-template-pin.mjs`.
+
+### 2.4c Create and verify the GitHub Release
+
+Run this **after** a successful real publish and the protected tag push. Supply
+the version without `v` and that real Release workflow's run ID. For example,
+the `v0.6.0` backfill uses `version=0.6.0` and `run_id=40970401508`.
+Do not use a successful dry run: its `Publish to npm` job was skipped. This
+procedure adds only GitHub release metadata; npm remains the package channel,
+and no tarball or other asset is attached. Older tags remain tag-only.
+
+Run the following in the repository. Keep the same shell for all blocks in this
+section. A failed command stops the procedure before `gh release create`.
+
+```bash
+set -euo pipefail
+repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+version=0.6.0                 # replace for the next publish
+run_id=40970401508           # replace with its successful real publish run
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+[[ "$run_id" =~ ^[0-9]+$ ]]
+tag="v$version"
+
+run="$(gh api "repos/$repo/actions/runs/$run_id")"
+jq -e --argjson id "$run_id" '
+  .id == $id and .name == "Release" and
+  .path == ".github/workflows/release.yml" and
+  .event == "workflow_dispatch" and .head_branch == "main" and
+  .conclusion == "success" and
+  (.head_sha | test("^[0-9a-f]{40}$"))
+' <<<"$run" >/dev/null
+run_sha="$(jq -r .head_sha <<<"$run")"
+jobs="$(gh api --paginate "repos/$repo/actions/runs/$run_id/jobs?per_page=100" | jq -s '[.[].jobs[] | select(.name == "Publish to npm")]')"
+jq -e 'length == 1 and .[0].conclusion == "success"' <<<"$jobs" >/dev/null
+
+# Resolve the remote ref through every annotated tag object. The ref's SHA is
+# a tag-object SHA, not the published commit. Reject unexpected object types.
+ref="$(gh api "repos/$repo/git/ref/tags/$tag")"
+jq -e --arg tag "$tag" '.ref == ("refs/tags/" + $tag) and .object.type == "tag"' <<<"$ref" >/dev/null
+kind="$(jq -r .object.type <<<"$ref")"
+tag_sha="$(jq -r .object.sha <<<"$ref")"
+for depth in {1..8}; do
+  [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]]
+  case "$kind" in
+    tag)
+      object="$(gh api "repos/$repo/git/tags/$tag_sha")"
+      kind="$(jq -er .object.type <<<"$object")"
+      tag_sha="$(jq -er .object.sha <<<"$object")"
+      ;;
+    commit) break ;;
+    *) echo "unexpected tag target type: $kind" >&2; exit 1 ;;
+  esac
+done
+[[ "$kind" == commit && "$tag_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'tag did not peel to a commit' >&2; exit 1; }
+gh api "repos/$repo/git/commits/$tag_sha" --jq .sha | grep -Fx "$tag_sha" >/dev/null
+[[ "$tag_sha" == "$run_sha" ]] || { echo "tag/run SHA mismatch: $tag_sha != $run_sha" >&2; exit 1; }
+printf 'verified real publish run %s and peeled tag %s at %s\n' "$run_id" "$tag" "$tag_sha"
+```
+
+Confirm the published version and its npm dist-tag before extracting notes.
+The same comparison applies to retries. A stable release must be npm `latest`;
+a prerelease must be npm `next`. Record the current stable tag before a `next`
+release so GitHub Latest can be checked afterward. If the registry has moved
+past an older stable backfill, stop for a release-policy decision rather than
+moving Latest backward.
+
+```bash
+published="$(npm view "shotwright@$version" version --json | jq -er 'if type == "array" then if length == 1 then .[0] else error("ambiguous version") end else . end')"
+[[ "$published" == "$version" ]] || { echo "npm version mismatch: $published" >&2; exit 1; }
+if [[ "$version" == *-* ]]; then
+  dist_tag=next
+  prerelease=true
+  stable_version="$(npm view shotwright dist-tags.latest --json | jq -er 'if type == "array" then if length == 1 then .[0] else error("ambiguous latest") end else . end')"
+  [[ "$stable_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'npm latest is not stable' >&2; exit 1; }
+  expected_latest="v$stable_version"
+else
+  dist_tag=latest
+  prerelease=false
+  expected_latest="$tag"
+fi
+tagged_version="$(npm view shotwright "dist-tags.$dist_tag" --json | jq -er 'if type == "array" then if length == 1 then .[0] else error("ambiguous dist-tag") end else . end')"
+[[ "$tagged_version" == "$version" ]] || { echo "npm $dist_tag points to $tagged_version, not $version" >&2; exit 1; }
+
+# Use the verified commit, never HEAD or the operator's current checkout.
+# Fetch the published commit first if it is not present locally.
+git cat-file -e "$tag_sha^{commit}"
+notes="$(mktemp "$TMPDIR/shotwright-release-notes-XXXXXX")"
+trap 'rm -f "$notes"' EXIT
+git show "$tag_sha:CHANGELOG.md" | python3 -c '
+import sys
+version = sys.argv[1]
+lines = sys.stdin.read().splitlines(keepends=True)
+heading = "## " + version
+matches = [i for i, line in enumerate(lines) if line.rstrip("\r\n") == heading]
+if len(matches) != 1:
+    raise SystemExit(f"expected one literal {heading} heading, found {len(matches)}")
+start = matches[0] + 1
+end = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
+body = "".join(lines[start:end])
+if not body.strip():
+    raise SystemExit(f"empty notes for {heading}")
+sys.stdout.write(body.rstrip("\r\n") + "\n")
+' "$version" >"$notes"
+printf 'notes from %s:CHANGELOG.md (%s)\n' "$tag_sha" "$version"
+cat "$notes"                 # review before the public create
+```
+
+The extractor matches the version literally (dots are not regular-expression
+wildcards), preserves Markdown and internal blank lines, and changes only
+terminal newlines. It accepts a nonempty section ending at EOF. A missing,
+duplicate, or empty section fails. The temporary notes file is removed on
+normal exit and failure; keep this shell open until verification is complete.
+
+Check for an existing Release before creating one. List *all* Releases first:
+the tag-specific endpoint omits drafts, so its 404 alone is not evidence of
+absence. Any API, authorization, or network error stops the procedure. A
+matching, published Release is a successful retry only after every check below;
+a draft or differing Release needs investigation, never an automatic edit.
+
+```bash
+matches="$(gh api --paginate "repos/$repo/releases?per_page=100" |
+  jq -s --arg tag "$tag" '[.[][] | select(.tag_name == $tag)]')"
+count="$(jq length <<<"$matches")"
+[[ "$count" == 0 || "$count" == 1 ]] || { echo 'multiple Releases for tag' >&2; exit 1; }
+if [[ "$count" == 1 ]]; then
+  jq -e '.[0].draft == false' <<<"$matches" >/dev/null || { echo 'draft Release exists; investigate' >&2; exit 1; }
+  echo "Release for $tag already exists; verifying"
+else
+  echo "no Release for $tag; creating once"
+  if [[ "$prerelease" == true ]]; then
+    gh release create "$tag" --verify-tag --title "$tag" --notes-file "$notes" --prerelease --latest=false
+  else
+    gh release create "$tag" --verify-tag --title "$tag" --notes-file "$notes" --latest
+  fi
+fi
+
+release="$(gh api "repos/$repo/releases/tags/$tag")"
+jq -e --arg tag "$tag" --argjson prerelease "$prerelease" --rawfile notes "$notes" '
+  .tag_name == $tag and .name == $tag and .draft == false and
+  .prerelease == $prerelease and .body == $notes and .assets == []
+' <<<"$release" >/dev/null
+latest="$(gh api "repos/$repo/releases/latest" --jq .tag_name)"
+[[ "$latest" == "$expected_latest" ]] || { echo "GitHub Latest is $latest, expected $expected_latest" >&2; exit 1; }
+ref_after="$(gh api "repos/$repo/git/ref/tags/$tag")"
+[[ "$(jq -r .object.sha <<<"$ref_after")" == "$(jq -r .object.sha <<<"$ref")" ]] || { echo 'remote tag ref changed' >&2; exit 1; }
+kind="$(jq -r .object.type <<<"$ref_after")"
+after_sha="$(jq -r .object.sha <<<"$ref_after")"
+for depth in {1..8}; do
+  [[ "$after_sha" =~ ^[0-9a-f]{40}$ ]]
+  case "$kind" in
+    tag)
+      object="$(gh api "repos/$repo/git/tags/$after_sha")"
+      kind="$(jq -er .object.type <<<"$object")"
+      after_sha="$(jq -er .object.sha <<<"$object")"
+      ;;
+    commit) break ;;
+    *) echo "unexpected tag target type: $kind" >&2; exit 1 ;;
+  esac
+done
+[[ "$kind" == commit && "$after_sha" == "$run_sha" ]] || { echo 'peeled tag no longer matches publish run' >&2; exit 1; }
+gh api "repos/$repo/git/commits/$after_sha" --jq .sha | grep -Fx "$after_sha" >/dev/null
+echo "verified Release $tag: exact notes, title, classification, no assets; Latest=$latest; remote tag unchanged"
+```
+
+The final check peels the remote tag again; the ref-object comparison alone
+cannot detect mutation of an intermediate tag object. If a tag push or
+`gh release create` fails partway, rerun the entire
+procedure. The preflight creates only on confirmed absence; if another operator
+creates a Release concurrently, a duplicate-create failure calls for a fresh
+read-only verification, not an overwrite. npm publish, git tag push, and GitHub
+Release creation are separate operations with no shared transaction. A failed
+Release step leaves a published package and protected tag requiring this retry.
 
 ### 2.5 Verify from outside
 
