@@ -9,7 +9,7 @@
 
 Private-repo artifacts share the account's Actions and Packages allowance: 500 MB
 on Free and 1 GB on Pro, with overage at $0.25 per GB-month. Community reports say
-uploads stop account-wide when the quota is hit. One sillysnippets run is about
+uploads stop account-wide when the quota is hit. One consumer project's run is about
 120 MB, and it stores every screenshot twice: inlined in the 69 MB gallery and
 again under `shots/`. At 7-day retention, 5 modestly active private consumers
 need about 5.6 GB. The owner asked how mature projects host CI reports off

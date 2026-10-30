@@ -8,7 +8,7 @@
 ## 1 · Question and constraints
 
 Each private consumer's run artifacts count against the owning account's shared
-Actions-artifact and Packages storage. One sillysnippets run is about 120 MB, of
+Actions-artifact and Packages storage. One consumer project's run is about 120 MB, of
 which `gallery.html` is about 69 MB (`shotwright-746.57`). The bead asks how mature
 projects host CI reports and media off GitHub, and what shotwright should do as
 adoption grows.
