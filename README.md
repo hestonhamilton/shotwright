@@ -291,11 +291,29 @@ export default defineShotsConfig({
   shotsDir: 'shots',                              // spec directory
   outputDir: 'shots-output',                      // run directories
   viewport: { width: 1440, height: 960 },
-  deviceScaleFactor: 2,
+  deviceScaleFactor: process.env.SHOTWRIGHT_VIDEO === '1' ? 1 : 2,
+  videoSize: { width: 1440, height: 960 },
   webServer: { command: 'pnpm dev', url: 'http://localhost:5173' },
   use: { baseURL: 'http://localhost:5173' },      // harness invariants still win
 })
 ```
+
+While `shotwright run` evaluates the config, `SHOTWRIGHT_VIDEO` and
+`SHOTWRIGHT_TRACE` are exactly `'1'` when their shotwright flags were requested
+and `'0'` otherwise. Compare with `'1'`; these values describe shotwright CLI
+flag intent, not whether recording ultimately occurs. For example,
+`shotwright run -- --trace on` leaves `SHOTWRIGHT_TRACE` at `'0'` because that
+trace mode is passed to Playwright. Conversely,
+`shotwright run --trace -- --trace off` leaves it at `'1'`, although Playwright
+can disable tracing. The CLI supplies both values to the config process.
+
+`videoSize` requests one recorded video frame size for all projects when
+`--video` is on. It does not set screenshot dimensions or ensure page content
+fills the frame. Without `videoSize`, Playwright chooses the recording size:
+it scales the viewport down to fit within 800×800, or uses 800×450 when no
+viewport is configured. The example chooses DSF 1 for video runs and DSF 2
+otherwise. Leaving `deviceScaleFactor` unset retains DSF 2 in the default
+project. Choosing DSF 1 also changes screenshot pixels.
 
 This uses the default `shots` project. To use explicit `projects` instead,
 put `viewport` and `deviceScaleFactor` in each `project.use`; supplying either
@@ -304,6 +322,9 @@ harness top-level setting with `projects` now raises a config error in
 existing runs from such a config. In 0.4.0,
 move those settings from the harness top level into each `project.use` if your
 config previously combined them: the combination was silently ignored.
+For video-dependent scale in explicit projects, put
+`deviceScaleFactor: process.env.SHOTWRIGHT_VIDEO === '1' ? 1 : 2` in each
+`project.use`.
 
 When adapting a Playwright base config, `use: base.use` transfers only its
 `use` settings. Pass `projects: base.projects` to retain project-level

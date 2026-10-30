@@ -27,6 +27,7 @@ export type ShotsConfigOptions = Omit<PlaywrightTestConfig, HarnessOwnedKeys | '
   outputDir?: string
   viewport?: { width: number; height: number }
   deviceScaleFactor?: number
+  videoSize?: { width: number; height: number }
   use?: Omit<NonNullable<PlaywrightTestConfig['use']>, 'screenshot' | 'video' | 'trace'>
 }
 
@@ -73,9 +74,16 @@ export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTest
     }
   }
   const runDir = process.env.SHOTWRIGHT_RUN_DIR
+  const { videoSize, ...playwrightOptions } = opts
+  const video =
+    process.env.SHOTWRIGHT_VIDEO !== '1'
+      ? 'off'
+      : videoSize === undefined
+        ? 'on'
+        : ({ mode: 'on', size: videoSize } as const)
 
   const config: PlaywrightTestConfig = {
-    ...opts,
+    ...playwrightOptions,
     testDir: opts.shotsDir ?? 'shots',
     testMatch: '**/*.shots.ts',
     fullyParallel: opts.fullyParallel ?? false,
@@ -84,7 +92,7 @@ export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTest
     use: {
       ...opts.use,
       screenshot: 'off',
-      video: process.env.SHOTWRIGHT_VIDEO === '1' ? 'on' : 'off',
+      video,
       trace: process.env.SHOTWRIGHT_TRACE === '1' ? 'on' : 'off',
     },
     projects: opts.projects?.map((project) => ({
@@ -92,7 +100,7 @@ export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTest
       use: {
         ...project.use,
         screenshot: 'off',
-        video: process.env.SHOTWRIGHT_VIDEO === '1' ? 'on' : 'off',
+        video,
         trace: process.env.SHOTWRIGHT_TRACE === '1' ? 'on' : 'off',
       },
     })) ?? [
@@ -103,7 +111,7 @@ export function defineShotsConfig(opts: ShotsConfigOptions = {}): PlaywrightTest
           viewport: opts.viewport ?? { width: 1440, height: 960 },
           deviceScaleFactor: opts.deviceScaleFactor ?? 2,
           screenshot: 'off',
-          video: process.env.SHOTWRIGHT_VIDEO === '1' ? 'on' : 'off',
+          video,
           trace: process.env.SHOTWRIGHT_TRACE === '1' ? 'on' : 'off',
         },
       },

@@ -1082,6 +1082,81 @@ beforeAll(() => {
 }, 240_000)
 
 describe('shotwright run against the demo app', () => {
+  it('exposes config-time flag intent and conditional DSF with a valid video size', () => {
+    const scratch = fs.mkdtempSync(path.join(root, 'local/video-config-'))
+    const configPath = path.join(scratch, 'shots.config.ts')
+    const markerPath = path.join(scratch, 'observed.json')
+    fs.writeFileSync(
+      configPath,
+      `import fs from 'node:fs'
+import { defineShotsConfig } from 'shotwright'
+const config = defineShotsConfig({
+  shotsDir: ${JSON.stringify(path.join(root, 'demo/shots'))},
+  outputDir: ${JSON.stringify(path.join(scratch, 'runs'))},
+  videoSize: { width: 960, height: 640 },
+  deviceScaleFactor: process.env.SHOTWRIGHT_VIDEO === '1' ? 1 : 2,
+})
+fs.writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify({
+  videoFlag: process.env.SHOTWRIGHT_VIDEO,
+  traceFlag: process.env.SHOTWRIGHT_TRACE,
+  video: config.projects?.[0]?.use?.video,
+  dsf: config.projects?.[0]?.use?.deviceScaleFactor,
+}))
+export default config
+`,
+    )
+    try {
+      for (const { args, videoFlag, traceFlag, video, dsf } of [
+        { args: [], videoFlag: '0', traceFlag: '0', video: 'off', dsf: 2 },
+        {
+          args: ['--video'],
+          videoFlag: '1',
+          traceFlag: '0',
+          video: { mode: 'on', size: { width: 960, height: 640 } },
+          dsf: 1,
+        },
+        {
+          args: ['--', '--trace', 'on'],
+          videoFlag: '0',
+          traceFlag: '0',
+          video: 'off',
+          dsf: 2,
+        },
+        {
+          args: ['--trace', '--', '--trace', 'off'],
+          videoFlag: '0',
+          traceFlag: '1',
+          video: 'off',
+          dsf: 2,
+        },
+      ]) {
+        fs.rmSync(markerPath, { force: true })
+        const result = spawnSync(
+          process.execPath,
+          [
+            'dist/cli.js',
+            'run',
+            '--config',
+            configPath,
+            ...args,
+            ...(args.includes('--') ? [] : ['--']),
+            '--list',
+          ],
+          { cwd: root, encoding: 'utf8', env: { ...process.env, CI: '1' }, timeout: 30_000 },
+        )
+        expect(result.status, result.stderr).toBe(0)
+        expect(JSON.parse(fs.readFileSync(markerPath, 'utf8'))).toEqual({
+          videoFlag,
+          traceFlag,
+          video,
+          dsf,
+        })
+      }
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true })
+    }
+  }, 120_000)
+
   it('rejects a run-dir-file with a missing parent before spawning', () => {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-missing-parent-'))
     const destination = path.join(scratch, 'missing', 'run-dir.txt')
