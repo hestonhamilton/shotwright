@@ -107,6 +107,28 @@ function shotMedia(shot: GalleryShot | null, label: string, base: string, index:
   const id = `pair-${index}-${label.toLowerCase()}`
   return `<figure><figcaption>${label} · ${shot.image.width}×${shot.image.height} pixels · ${metadata}</figcaption><button class="compare-viewer-open viewer-open" type="button" disabled data-viewer-open="${id}" aria-label="View ${escapeHtml(label)} screenshot: ${escapeHtml(shot.entry.name)}"><img id="${id}" data-name="${escapeHtml(shot.entry.name)}" src="${escapeHtml(shot.image.dataUri)}" alt="${escapeHtml(alt)}"></button><a href="${escapeHtml(href)}" download="${escapeHtml(filename)}">Download ${label}</a></figure>`
 }
+function sharedShotMedia(
+  a: GalleryShot,
+  b: GalleryShot,
+  aBase: string,
+  bBase: string,
+  index: number,
+): string {
+  const image = a.image!
+  const metadata = (shot: GalleryShot): string => {
+    const viewport = shot.entry.viewport
+      ? `${shot.entry.viewport.width}×${shot.entry.viewport.height}`
+      : 'unavailable'
+    return `Logical viewport ${viewport} · Device scale factor ${shot.entry.deviceScaleFactor ?? 'unavailable'}`
+  }
+  const download = (shot: GalleryShot, base: string, label: string): string => {
+    const href = siblingHref([base, shot.entry.file].join('/'))
+    const filename = shot.entry.file.split('/').at(-1)!
+    return `<a href="${escapeHtml(href)}" download="${escapeHtml(filename)}">Download ${label}</a>`
+  }
+  const id = `pair-${index}-a`
+  return `<figure><figcaption>A and B identical (same file) · ${image.width}×${image.height} pixels · A: ${metadata(a)} · B: ${metadata(b)}</figcaption><button class="compare-viewer-open viewer-open" type="button" disabled data-viewer-open="${id}" aria-label="View A and B screenshot: ${escapeHtml(a.entry.name)}"><img id="${id}" data-name="${escapeHtml(a.entry.name)}" src="${escapeHtml(image.dataUri)}" alt="${escapeHtml(`A and B ${a.entry.spec} ${a.entry.name}`)}"></button>${download(a, aBase, 'A')} · ${download(b, bBase, 'B')}</figure>`
+}
 function status(shot: GalleryShot | null, model: GalleryCompareModel, side: 'a' | 'b'): string {
   if (!shot) return 'absent'
   const gallery = model[side]
@@ -162,16 +184,21 @@ function renderPair(
     pair.state !== 'unreadable' &&
     a?.image?.dataUri.startsWith('data:') &&
     b?.image?.dataUri.startsWith('data:')
-      ? `<button class="action" type="button" disabled data-viewer-pair-a="pair-${index}-a" data-viewer-pair-b="pair-${index}-b" data-pair-name="${escapeHtml(pair.name)}">Inspect A/B together</button>`
+      ? `<button class="action" type="button" disabled data-viewer-pair-a="pair-${index}-a" data-viewer-pair-b="pair-${index}-${a.image.dataUri === b.image.dataUri ? 'a' : 'b'}" data-pair-name="${escapeHtml(pair.name)}">Inspect A/B together</button>`
       : ''
   const label = changeLabel(pair)
   const ratio =
     pair.kind === 'shot' && pair.state === 'changed' && pair.verdict?.ratio != null
       ? ` data-compare-ratio="${pair.verdict.ratio}"`
       : ''
+  const shared =
+    a?.image?.dataUri.startsWith('data:image/png;base64,') && a.image.dataUri === b?.image?.dataUri
+  const media = shared
+    ? sharedShotMedia(a!, b!, runBase(links, model, 'a'), runBase(links, model, 'b'), index)
+    : `${shotMedia(a, 'A', runBase(links, model, 'a'), index)}${shotMedia(b, 'B', runBase(links, model, 'b'), index)}`
   return `<article class="pair state-${pair.state}${pair.ignored ? ' ignored' : ''}${gated ? ' gated' : ''}" id="pair-${index}" data-compare-state="${pair.state}" data-compare-gated="${gated}"${ratio}>
     <header><h2>${escapeHtml(pair.spec)} / ${escapeHtml(pair.name)}${label ? `<span class="change-label"> · ${escapeHtml(label)}</span>` : ''}</h2><span class="badge">${pair.kind} · ${pair.state}${pair.ignored ? ' · ignored for gate' : ''}${gated ? (failOnChange ? ' · counted by gate' : ' · would count toward gate') : ''}</span></header>
-    ${pair.kind === 'shot' ? `<p>A test: ${escapeHtml(status(a, model, 'a'))} · B test: ${escapeHtml(status(b, model, 'b'))}</p>${inspect}<div class="images">${shotMedia(a, 'A', runBase(links, model, 'a'), index)}${shotMedia(b, 'B', runBase(links, model, 'b'), index)}${diff}</div>${pairWarning()}${numbers}` : artifact}
+    ${pair.kind === 'shot' ? `<p>A test: ${escapeHtml(status(a, model, 'a'))} · B test: ${escapeHtml(status(b, model, 'b'))}</p>${inspect}<div class="images">${media}${diff}</div>${pairWarning()}${numbers}` : artifact}
     ${pair.error ? `<p class="error">${escapeHtml(pair.error)}</p>` : ''}
   </article>`
 }

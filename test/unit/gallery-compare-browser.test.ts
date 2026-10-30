@@ -8,6 +8,83 @@ import { expect, it } from 'vitest'
 import { generateCompareGallery } from '../../src/gallery/generate-compare.js'
 import { makeManifest, makeShot } from '../fixtures/manifest.js'
 
+it('shows a byte-equal pair as one static image and inspects both sides in every mode', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-shared-browser-'))
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const image = new PNG({ width: 1600, height: 800 })
+    image.data.fill(255)
+    const bytes = PNG.sync.write(image)
+    for (const side of ['a', 'b']) {
+      const dir = path.join(root, side)
+      fs.mkdirSync(path.join(dir, 'shots'), { recursive: true })
+      fs.writeFileSync(path.join(dir, 'shots', 'same.png'), bytes)
+      fs.writeFileSync(
+        path.join(dir, 'manifest.json'),
+        JSON.stringify(
+          makeManifest({
+            runId: side,
+            shots: [makeShot({ name: 'same', file: 'shots/same.png' })],
+          }),
+        ),
+      )
+    }
+    const url = pathToFileURL(
+      generateCompareGallery(path.join(root, 'a'), path.join(root, 'b')).outputFile,
+    ).href
+    for (const width of [390, 1280]) {
+      const context = await browser.newContext({ viewport: { width, height: 800 } })
+      const page = await context.newPage()
+      const errors: string[] = []
+      page.on('pageerror', (error) => errors.push(error.message))
+      await page.goto(url)
+      expect(await page.locator('.images img').count()).toBe(1)
+      expect(
+        await page
+          .locator('.images img')
+          .evaluate((img) => (img as unknown as { naturalWidth: number }).naturalWidth),
+      ).toBe(1600)
+      expect(await page.locator('a[download]').count()).toBe(2)
+      await page.locator('[data-viewer-open="pair-0-a"]').click()
+      await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+      expect(await page.locator('.inspection-image').count()).toBe(1)
+      await page.keyboard.press('Escape')
+      await page.locator('[data-viewer-pair-a]').click()
+      await page.locator('#inspection-dialog[data-viewer-state="ready"]').waitFor()
+      expect(await page.locator('.pair-surface img[src]').count()).toBe(2)
+      const sources = await page
+        .locator('.pair-surface img[src]')
+        .evaluateAll((images) => images.map((image) => (image as unknown as { src: string }).src))
+      expect(sources[0]).toBe(sources[1])
+      for (const mode of ['swipe', 'onion', 'side']) {
+        await page.locator(`[data-pair-mode="${mode}"]`).click()
+        expect(await page.locator(`[data-pair-mode="${mode}"]`).getAttribute('aria-pressed')).toBe(
+          'true',
+        )
+      }
+      expect(await page.locator('[data-viewer-toggle]').isHidden()).toBe(false)
+      await page.locator('[data-viewer-toggle]').click()
+      expect(await page.locator('[data-viewer-toggle]').textContent()).toBe('Fit to window')
+      expect(errors).toEqual([])
+      await context.close()
+    }
+    const noScript = await browser.newContext({ javaScriptEnabled: false })
+    const page = await noScript.newPage()
+    await page.goto(url)
+    expect(await page.locator('.images img').count()).toBe(1)
+    expect(
+      await page
+        .locator('.images img')
+        .evaluate((img) => (img as unknown as { naturalWidth: number }).naturalWidth),
+    ).toBe(1600)
+    expect(await page.locator('a[download]').count()).toBe(2)
+    await noScript.close()
+  } finally {
+    await browser.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+}, 30_000)
+
 it('opens A, B, and Diff without CSP violations or network requests and leaves no-JS previews usable', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shotwright-compare-browser-'))
   const browser = await chromium.launch({ headless: true })
