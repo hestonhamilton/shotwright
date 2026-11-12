@@ -1,5 +1,11 @@
 # shotwright
 
+## 0.8.0
+
+### Minor Changes
+
+- 07b3257: Add an `install-deps` input (default true) to the reusable workflow. Set it to false on self-hosted runners without sudo to install Chromium without `--with-deps`.
+
 ## 0.7.0
 
 ### Minor Changes
