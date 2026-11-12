@@ -31,7 +31,7 @@ web-app themes that have no surface in this repo.
    scripts, `NPM_PIN_*` in `release.yml`) — every bump must carry a hash taken
    from the upstream manifest and confirmed against a downloaded artifact;
    an installer must never accept a pre-existing binary by version string.
-4. **Workflows** (`.github/workflows/*.yml`, `.forgejo/workflows/ci.yml`,
+4. **Workflows** (`.github/workflows/*.yml`,
    `templates/github/shotwright.yml`) — `permissions:` stays minimal and
    job-level; `id-token: write` only on the `publish` job under the
    `npm-publish` environment; expressions reach shell via `env:`, never

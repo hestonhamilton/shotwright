@@ -1198,11 +1198,9 @@ describe('consumer workflow contract', () => {
     expect(bytes).toEqual(Buffer.from('--workers=1\0--grep\0x y\0'))
     expect(bytes.toString('utf8').split('\0')).toEqual(['--workers=1', '--grep', 'x y', ''])
   })
-  it('uses the same invocation file in GitHub and forge self lanes', () => {
+  it('uses the shared invocation file in the GitHub lane', () => {
     const selfLane = fs.readFileSync(path.join(workflowRoot, 'scripts/ci/shots.sh'), 'utf8')
-    const forge = fs.readFileSync(path.join(workflowRoot, '.forgejo/workflows/ci.yml'), 'utf8')
     expect(workflow).toContain('scripts/ci/shots.sh "$SHOTWRIGHT_CONFIG_PATH"')
-    expect(forge).toContain('scripts/ci/shots.sh demo/shots.config.ts')
     expect(selfLane).toContain('run_dir="$(cat "$SHOTWRIGHT_RUN_DIR_FILE")"')
     expect(selfLane).not.toContain('readlink shots-output/latest')
   })
