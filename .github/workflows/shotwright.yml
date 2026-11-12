@@ -229,6 +229,7 @@ jobs:
           ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
           COMPLETE: ${{ steps.resolve.outputs.complete }}
         run: |
+          # shellcheck disable=SC2016 # the backticks are literal Markdown
           if [ "$COMPLETE" = true ]; then
             printf '## Shotwright artifacts\n\n- Run: `%s`\n- Run artifact: %s\n' "$RUN_ID" "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
           else
