@@ -1105,7 +1105,14 @@ describe('consumer workflow contract', () => {
       'upload',
       'retention-days',
       'artifact-name',
+      'install-deps',
     ])
+  })
+  it('keeps --with-deps by default and lets callers skip it', () => {
+    expect(workflow).toMatch(/ {6}install-deps:\n(?:.|\n)*? {8}type: boolean\n {8}default: true/)
+    expect(workflow).toContain('INSTALL_DEPS: ${{ inputs.install-deps }}')
+    expect(workflow).toContain('deps_flag=(--with-deps)')
+    expect(workflow).not.toMatch(/install --with-deps chromium/)
   })
   it('decodes runs-on labels and sets package working-directory', () => {
     expect(workflow).toContain('runs-on: ${{ fromJSON(inputs.runs-on) }}')

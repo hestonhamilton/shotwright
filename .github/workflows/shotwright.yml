@@ -43,6 +43,10 @@ on:
         description: "Artifact name; set this when calling the workflow more than once in a run."
         type: string
         default: ''
+      install-deps:
+        description: "Install Chromium system packages (playwright install --with-deps, which needs sudo). Set false on runners without sudo; the runner must already have the browser libraries."
+        type: boolean
+        default: true
     secrets:
       SHOTWRIGHT_BASE_URL:
         required: false
@@ -137,15 +141,18 @@ jobs:
       - name: Install default Playwright Chromium
         env:
           MANAGER: ${{ steps.package.outputs.manager }}
+          INSTALL_DEPS: ${{ inputs.install-deps }}
         run: |
           set -euo pipefail
+          deps_flag=()
+          if [ "$INSTALL_DEPS" = true ]; then deps_flag=(--with-deps); fi
           DEFAULT_BROWSER_CACHE="$HOME/.cache/ms-playwright"
           rm -rf "$DEFAULT_BROWSER_CACHE"
           mkdir -p "$DEFAULT_BROWSER_CACHE"
           case "$MANAGER" in
-            npm) npm exec -- playwright install --with-deps chromium ;;
-            pnpm) pnpm exec playwright install --with-deps chromium ;;
-            yarn) yarn playwright install --with-deps chromium ;;
+            npm) npm exec -- playwright install "${deps_flag[@]}" chromium ;;
+            pnpm) pnpm exec playwright install "${deps_flag[@]}" chromium ;;
+            yarn) yarn playwright install "${deps_flag[@]}" chromium ;;
           esac
       - name: Run shotwright
         id: shot
