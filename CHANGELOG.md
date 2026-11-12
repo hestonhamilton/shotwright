@@ -48,7 +48,7 @@
 ### Minor Changes
 
 - 8c043e9: ## Upgrading from 0.3.0
-  
+
   - `shotwright run` and `--list` now refuse a config that combines explicit
     `projects` with harness top-level `viewport` or `deviceScaleFactor`, which
     were previously ignored; move those values into each `project.use`. `runs`,
@@ -65,9 +65,9 @@
     only with `engine-strict`. This remains an ESM-only package; synchronous
     CommonJS `require()` can load its exports from Node 22.12.0 only while the
     module graph has no top-level `await`.
-  
+
   ## Additions
-  
+
   - Add optional per-shot `note` text to `shot()`. Notes appear on gallery cards
     and in search, with escaped text, bounded keyboard-scrollable cards, and an
     edge shadow when they overflow. Notes do not change shot identity or compare
@@ -111,7 +111,7 @@
 - 80c8e91: Make the reusable CI workflow work with npm, pnpm, or yarn packages in repository subdirectories. Upload the current invocation's run directory after failed captures, with trace recording off by default. `shotwright init` now places workflow and skill files at the containing Git root and prints commands for the selected package manager.
 - b2c6b68: Record run and test outcomes in manifest v2, retain failed-run evidence, allow shot names to repeat across specs, and add `artifact()` and `shot({ check })` for data and verified capture flows. Existing v1 run manifests remain readable; capture paths now omit the `.shots.ts` suffix.
 - 8a54b7d: Add seven-state screenshot and artifact comparison with diff PNGs, `compare.json`, run and test outcome badges, failure evidence and capped data previews. Local gallery serving permits traces on loopback; other binds require an explicit override.
-  
+
   A 250-pair fixture using 390×844, 1280×720 and 1440×960 PNGs measured 8,936 ms generation time, 2,467,946,496 bytes peak RSS, and 6,975,407 output HTML bytes on the implementation worktree (2026-10-22). These are measurements, not limits.
 - c3daa6e: Document the 0.2.0 migration for ordered Playwright flows, manifest v2 and
   legacy v1 reads, retained failure evidence, spec-scoped shot identity, data
