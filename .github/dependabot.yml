@@ -18,11 +18,6 @@
 # `contents: write`, `pull-requests: write` and the GITHUB_TOKEN. Same
 # mutability class as `@main`, in the workflow that opens release PRs.
 #
-# NOT COVERED HERE: .forgejo/workflows/. Dependabot does not scan it, so pinning
-# those to SHAs would freeze them with nothing to thaw them — strictly worse
-# than the mutable tags they carry today. That lane is advisory (ADR 0008),
-# publishes nothing, and is tracked separately.
-#
 # THE NPM ECOSYSTEM IS NOW COVERED, added by shotwright-746.23 (ADR 0019) —
 # which is where this file said that decision belonged. Dependabot is the
 # remediation half of that decision; the blocking half is scripts/ci/audit-gate.sh

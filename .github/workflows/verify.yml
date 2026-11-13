@@ -1,15 +1,12 @@
 # The blocking verify lane on GitHub (shotwright-746.20).
 #
-# Until this existed, scripts/ci/verify.sh was referenced by exactly one wrapper
-# — .forgejo/workflows/ci.yml — and the forge is ADVISORY, with nothing gating
-# merges on it. So no blocking verification ran on a GitHub PR at all. "CI green
-# on PR #26" in earlier handoffs referred to the demo-shots lane only.
+# Until this existed, no blocking verification ran on a GitHub PR at all. "CI
+# green on PR #26" in earlier handoffs referred to the demo-shots lane only.
 #
-# WHAT A LANE RUNS IS DEFINED ONCE, in scripts/ci/verify.sh. This wrapper and the
-# Forgejo one differ only in setup, per CLAUDE.md — a step added to the lane
-# belongs in the script, not here. The two setups genuinely differ (action
-# versions, and Forgejo's artifact fork), which is exactly why the shared part
-# must not be duplicated into either wrapper.
+# WHAT A LANE RUNS IS DEFINED ONCE, in scripts/ci/verify.sh. This wrapper only
+# does setup, per CLAUDE.md — a step added to the lane belongs in the script,
+# not here. (A Forgejo wrapper ran the same script until the forge was retired
+# on 2026-11-12.)
 #
 # THE TRIGGER IS LOAD-BEARING. A required status check only appears in the merge
 # checklist when it reports against the PR's head commit. A workflow triggered on

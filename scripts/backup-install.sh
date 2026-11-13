@@ -14,8 +14,7 @@
 #
 # The unit files are GENERATED here rather than committed, because a systemd
 # unit needs an absolute ExecStart path and a destination host, and this
-# repository must not carry either (public-facing). Same arrangement as
-# scripts/forge-mirror-install.sh.
+# repository must not carry either (public-facing).
 #
 # ---------------------------------------------------------------------------
 # WHY A TIMER AND NOT bd's OWN INTERVAL (plan section 2.2)

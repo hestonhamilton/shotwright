@@ -39,12 +39,6 @@ repos:
     hooks:
       - id: actionlint
 
-  - repo: https://github.com/biomejs/pre-commit
-    rev: v0.6.1
-    hooks:
-      - id: biome-check
-        additional_dependencies: ["@biomejs/biome@2.6.3"]
-
   # Rejects AI attribution in the final commit message, whatever wrote it. pygrep fails on any
   # matching line; the lookahead skips git's comment lines. Same markers as the Claude scaffold's
   # commit-msg hook, moved into pre-commit's commit-msg stage.

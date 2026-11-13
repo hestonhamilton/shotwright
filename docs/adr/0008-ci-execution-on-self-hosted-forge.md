@@ -5,6 +5,11 @@
 - **Bead:** `shotwright-746.14`
 - **Phase the decision landed in:** I
 
+> **Superseded, 2026-11-12 — the forge is retired.** The owner retired the
+> self-hosted forge from every project (`shotwright-1g2`). `.forgejo/`, the
+> forge mirror timer and `scripts/forge-ci-status.sh` are deleted; GitHub
+> Actions is the only CI lane. The record below is kept as history.
+
 > **Update, 2026-08-01 — the outage ended before this landed.** GitHub Actions
 > became available again partway through implementation, and runs went
 > green again on the same branch. The decision below is **unchanged** rather

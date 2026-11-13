@@ -29,8 +29,7 @@
 #    through the job-output channel, separately from the artifact store, and
 #    `publish` refuses a tarball whose hash disagrees.
 #  * Self-hosted runners cannot do trusted publishing, so this must stay on a
-#    GitHub-hosted runner. The Forgejo lane cannot be the publish lane
-#    (E9.R section 1.3, ADR 0008).
+#    GitHub-hosted runner (E9.R section 1.3).
 #  * This workflow runs scripts/ci/verify.sh itself, even though verify.yml runs
 #    the same lane on PRs and main: the publish must not depend on a status
 #    computed for a different checkout, and a required status check could not
