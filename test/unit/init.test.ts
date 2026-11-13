@@ -1105,7 +1105,14 @@ describe('consumer workflow contract', () => {
       'upload',
       'retention-days',
       'artifact-name',
+      'install-deps',
     ])
+  })
+  it('keeps --with-deps by default and lets callers skip it', () => {
+    expect(workflow).toMatch(/ {6}install-deps:\n(?:.|\n)*? {8}type: boolean\n {8}default: true/)
+    expect(workflow).toContain('INSTALL_DEPS: ${{ inputs.install-deps }}')
+    expect(workflow).toContain('deps_flag=(--with-deps)')
+    expect(workflow).not.toMatch(/install --with-deps chromium/)
   })
   it('decodes runs-on labels and sets package working-directory', () => {
     expect(workflow).toContain('runs-on: ${{ fromJSON(inputs.runs-on) }}')
@@ -1191,11 +1198,9 @@ describe('consumer workflow contract', () => {
     expect(bytes).toEqual(Buffer.from('--workers=1\0--grep\0x y\0'))
     expect(bytes.toString('utf8').split('\0')).toEqual(['--workers=1', '--grep', 'x y', ''])
   })
-  it('uses the same invocation file in GitHub and forge self lanes', () => {
+  it('uses the shared invocation file in the GitHub lane', () => {
     const selfLane = fs.readFileSync(path.join(workflowRoot, 'scripts/ci/shots.sh'), 'utf8')
-    const forge = fs.readFileSync(path.join(workflowRoot, '.forgejo/workflows/ci.yml'), 'utf8')
     expect(workflow).toContain('scripts/ci/shots.sh "$SHOTWRIGHT_CONFIG_PATH"')
-    expect(forge).toContain('scripts/ci/shots.sh demo/shots.config.ts')
     expect(selfLane).toContain('run_dir="$(cat "$SHOTWRIGHT_RUN_DIR_FILE")"')
     expect(selfLane).not.toContain('readlink shots-output/latest')
   })

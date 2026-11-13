@@ -322,12 +322,6 @@ that, but it adds an app and a stored private key to a repository that
 otherwise holds no long-lived write credential. One approval per release is the
 cheaper trade for a single-owner repository.
 
-**The forge lane is absent for a Version PR by construction.** The bot's branch
-is pushed by Actions to GitHub only, never through the two-URL `origin` that
-reaches the forge, so `scripts/forge-ci-status.sh` reports no runs for its
-head, which that script treats as not-green. That is expected here, not a
-standby failure, and the forge is advisory in any case.
-
 > Known convention friction: the Version PR's commit is
 > `chore: version packages`, which does not match this repo's
 > `<bead-id>: <subject>` convention. It is created server-side by
@@ -400,8 +394,8 @@ irreversible one. Check before you click:
       for **this run** is green and the packed file set in its log matches the
       check below. Approval is the last point at which nothing has happened.
 - [ ] The packed file set in the run log is what you expect — baseline is
-      **53 files, 92K packed** (after the E11 provenance modules shipped in
-      0.3.0/0.4.0; refreshed by `shotwright-746.37`), and
+      **55 files, 104K packed** (what 0.8.0 packs; refreshed by `shotwright-y7n`,
+      after `shotwright-746.37`'s 53 files / 92K had gone stale), and
       `scripts/ci/expected-files.txt` lists every one of them. The
       authoritative figures are `BASELINE_FILES` and `BASELINE_PACKED` in
       `scripts/ci/leak-gate.sh`, which the gate prints; if this line disagrees

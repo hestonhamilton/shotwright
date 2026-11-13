@@ -85,14 +85,10 @@ auto-discovers the workspace from any worktree — run `bd <subcommand>` with no
   with Claude Code"). A hook blocks it; do not work around it.
 - Confirm before `git push`, PR merge, `bd close`, or any destructive git op.
 - Open questions and authorization asks go through AskUserQuestion, never prose; the Stop hook blocks a turn that ends in a prose question.
-- **CI runs on GitHub, and on the self-hosted forge as a standby second opinion
-  (`shotwright-746.14`, ADR 0008).** One `git push` reaches both remotes —
-  `origin` carries two push URLs. What each lane runs is defined once in
-  `scripts/ci/*.sh`; the two wrappers differ only in setup, so a step added to one
-  belongs in the script, not the wrapper. Read a branch's forge status with
-  `scripts/forge-ci-status.sh <sha>`; it fails closed and treats "no runs" as
-  not-green. **It is advisory — nothing gates merges on it.** Setup and
-  troubleshooting: `local/forge-ci.md` (gitignored).
+- **CI runs on GitHub Actions only.** The self-hosted forge lane (ADR 0008) was
+  retired on 2026-11-12. What a lane runs is defined once in `scripts/ci/*.sh`;
+  a workflow wrapper only does setup, so a step belongs in the script, not the
+  wrapper.
 - Work under the **R/P/I/V** phase contract (`/rpiv`); `/flow` drives the loop.
 - **R/P docs are inputs, not gospel.** Implementation findings that contradict
   them are normal — settle them by experiment when empirically decidable,

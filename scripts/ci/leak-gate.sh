@@ -48,8 +48,11 @@ source "$root/scripts/ci/gitleaks-pin.sh"
 # On 2026-10-27, shotwright-746.37 refreshed the baseline after the E11
 # provenance modules (dist/provenance.* and dist/gallery/provenance.*) shipped
 # in 0.3.0/0.4.0. shotwright-746.32.8/.9 admitted all four to the allowlist.
-BASELINE_FILES=53
-BASELINE_PACKED="92K"
+# On 2026-11-12, shotwright-y7n refreshed the baseline to what 0.8.0 packs: 0.7.0
+# had already shipped 55 files (npm dist.fileCount), so the 53 figure had been
+# stale, and the gate printed its "differs" note on every release since.
+BASELINE_FILES=55
+BASELINE_PACKED="104K"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
